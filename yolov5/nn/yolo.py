@@ -223,6 +223,12 @@ if __name__ == '__main__':
     im = torch.rand(opt.batch_size, 3, 640, 640).to(device)
     model = Model(opt.cfg).to(device)
 
+    ckpt = {
+        'model': deepcopy(model).half(),
+    }
+    model_name = os.path.basename(opt.cfg).split('.')[0]
+    torch.save(ckpt, f"{model_name}.pt")
+
     # Options
     if opt.line_profile:  # profile layer by layer
         model(im, profile=True)
