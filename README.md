@@ -32,4 +32,4 @@ Anyone's participation is welcome! Open an [issue](https://github.com/zjykzj/Fla
 
 ## License
 
-[Apache License 2.0](LICENSE) © 2025 zjykzj
+[AGPL-3.0 License](LICENSE) © 2025 zjykzj
