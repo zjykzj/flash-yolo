@@ -1,31 +1,32 @@
 # Flash-YOLO
 
-A lightweight framework for real-time detection: **train / evaluate / export / infer**.
+> ⚡ **Train · evaluate · export · infer — minimally and readably.** A framework for lightweight real-time detection with every module independent and complete; YOLO26 reproduced as living proof.
 
-The opposite design philosophy of ultralytics: not everything-in-one, but **every module
-independent, complete, and readable on its own**. Core runtime deps: PyTorch + NumPy only —
-inference and evaluation have zero dependency on the ultralytics ecosystem.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python 3.12"></a>
+  <a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-2.13-ee4c2c.svg" alt="PyTorch"></a>
+</p>
 
-## Roadmap
+Not another ultralytics: no monolithic abstractions, no ultralytics dependency — every module is independent, complete, and readable on its own. Core runtime deps: PyTorch + NumPy only.
 
-| Milestone | Scope | Status |
-|---|---|---|
-| **M1** | YOLO26 architecture reproduction + weight alignment (260 layers, 2,572,280 params; zero-mapping strict load; bit-identical to official output) | ✅ Done |
-| **M2** | Inference (.pt / .onnx, E2E NMS-free & NMS paths), pt→onnx export, COCO evaluation (40.27 / 40.89 vs official 40.1 / 40.9) | ✅ Done |
-| **M3** | Training pipeline (ProgLoss, STAL label assignment, MuSGD optimizer) | ⏳ Planned |
-| **M4** | Extend to segmentation / classification | ⏳ Planned |
+The first milestone — a faithful YOLO26 reproduction, verified against the official model on COCO val2017:
 
-## Verified Results (COCO val2017, YOLO26n)
+| Path | mAP@[.5:.95] | mAP@50 | Params | Latency¹ |
+|---|---|---|---|---|
+| Flash-YOLO · E2E (NMS-free) | **40.27** | 55.80 | 2.57M | 20.4ms GPU · 57.2ms ONNX CPU |
+| Official model · E2E² | 40.27 | 55.80 | 2.57M | 18.6ms GPU |
+| Flash-YOLO · NMS (o2m) | **40.89** | 56.88 | 2.57M | 16.5ms GPU |
+| Official model · NMS² | 40.89 | 56.88 | 2.57M | 14.6ms GPU |
 
-| Path | Flash-YOLO | Official | Note |
-|---|---|---|---|
-| E2E (one-to-one, NMS-free) | **40.27** | 40.1 | bit-identical to official inference output |
-| NMS (one-to-many) | **40.89** | 40.9 | raw output matches element-wise (< 1e-4) |
+- 260 layers · 2,572,280 params — identical to the official summary; weights load with `strict=True` zero-key-mapping, and the inference output is **bit-identical** to the official model
+- ¹ Latency = inference stage only, averaged over 20 runs on this machine: RTX 4060 Laptop GPU / WSL2 CPU (onnxruntime)
+- ² The official weights re-run through this repo's pipeline (same preprocessing, postprocessing, and pycocotools metrics, same hardware) — the numbers match Flash-YOLO exactly, which is the expected consequence of bit-identical reproduction
+- The official published 40.1 / 40.9 come from the official metric implementation; the ~0.1 delta to this table is metric-implementation noise, not a model difference
 
-- 2,572,280 parameters, identical to the official summary (260 layers); weights load with
-  `strict=True` zero-key-mapping — a successful load proves structural identity
-- Metrics use pycocotools (the de-facto COCO standard); the official numbers come from
-  ultralytics' own metric implementation, so a ~0.1 gap is expected metric-implementation noise
+## 📜 Releases
+
+- **v0.1.0** (2026-10-04): Initial release — faithful YOLO26 detection reproduction: verified weight alignment (260 layers · 2,572,280 params, zero-mapping strict load, bit-identical to official output), inference (.pt / .onnx, E2E NMS-free & NMS paths, single image or directory), pt→onnx export (fused E2E graph or raw output), COCO evaluation (pycocotools, per-class metrics, three-stage speed breakdown), architecture summary tool, ultralytics-style logging and `runs/` result convention with YOLO-format label output.
 
 ## Quick Start
 
@@ -52,62 +53,32 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/coc
 python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data /path/to/coco   # onnx engine
 ```
 
-### Console output (ultralytics-style)
-
-```
-Flash-YOLO 0.1.0 🚀 Python 3.12.13 · torch 2.13.0+cu130 · CUDA NVIDIA GeForce RTX 4060 Laptop GPU
-YOLO26n · 260 layers · 2,572,280 params · E2E (NMS-free) · engine pt
-image 1/1 assets/bus.jpg: 810x1080 4 persons, 1 bus, 42.0ms
-Speed: 9.0ms preprocess, 32.8ms inference, 0.2ms postprocess per image at shape (1, 3, 640, 640)
-Total: 77.6ms end-to-end (incl. image read + save)
-```
-
-## Results & Logs
-
-Results follow the ultralytics `runs/` convention — task-scoped directories with an
-incrementing suffix, so repeated runs never overwrite each other:
-
-```
-runs/predict/predictN/   annotated images + labels/<same-name>.txt (YOLO format: cls xc yc w h, normalized)
-runs/val/valN/           metrics.txt (table identical to console) + results.json (COCO format, re-evaluatable)
-runs/export/             exported <weights>.onnx (default when --out is omitted)
-logs/                    one timestamped log file per run (10MB × 5 rotation)
-```
-
-Every script logs to console (level-colored) and `logs/<script>_<timestamp>.log` by default.
-Concurrent runs are naturally isolated by timestamped filenames (no cross-process locking).
-
 ## Project Structure
 
 ```
+assets/    demo images (bus.jpg / zidane.jpg, provenance in assets/README.md)
 config/    model config (yolo26.yaml, n/s/m/l/x scales) + default hyperparams
 data/      COCO dataset reader + preprocessing (letterbox)
 eval/      COCO evaluation (pycocotools wrapper)
-model/     assembler (yolo26.py) / dual Detect head (head.py) / weight loading (weights.py) /
-           summary.py (print architecture: `python model/summary.py`)
-  basic/   basic operator layer, split by type — readable file by file:
-           conv.py (Conv/DWConv) · pool.py (SPPF) · block.py (residual/CSP + attention blocks)
-scripts/   download_weights / convert_weights / infer / export / eval
+logs/      runtime logs (gitignored)
+model/     model implementation (assembler / dual Detect head / basic operator layer / weight loading)
+runs/      runtime results (gitignored)
+scripts/   download_weights / convert_weights / infer / export / eval / compare_official
+tests/     three acceptance tests (weight alignment / export parity / metric correctness)
 utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualization / IoU /
            logger (dual console+file) / paths (runs/ increment)
-assets/    demo images (bus.jpg / zidane.jpg, provenance in assets/README.md)
-runs/      runtime results (gitignored)
-logs/      runtime logs (gitignored)
-tests/     three acceptance tests (weight alignment / export parity / metric correctness)
 ```
 
 ## Tests
 
 ```bash
-pytest tests/    # 8 tests: param count, strict weight load, numeric alignment vs official,
-                 # onnx parity, synthetic metric correctness
+pytest tests/    # 8 tests: param count, strict weight load, numeric alignment vs official, onnx parity, synthetic metric correctness
 ```
 
-`tests/test_weight_alignment.py` needs the official .pt as a dev-time reference
-(see requirements-dev.txt).
+`tests/test_weight_alignment.py` needs the official .pt as a dev-time reference (see requirements-dev.txt).
 
-## License
+## 📄 License
 
-- **Code**: Apache-2.0 — independently reimplemented, contains no ultralytics source
-- **Official weights**: AGPL-3.0 — not distributed here; fetched by `scripts/download_weights.py`
-  at the user's own discretion
+The code is licensed under **Apache-2.0** — see [LICENSE](LICENSE) for details.
+
+- **Pretrained weights**: the official YOLO26 weights (AGPL-3.0) are not distributed here — download them via `scripts/download_weights.py` for personal use
