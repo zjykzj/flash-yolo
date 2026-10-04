@@ -1,0 +1,82 @@
+"""模型结构打印：逐层参数表 + 整体 summary（参考 yolov5 models/yolo.py 的打印格式）
+
+用法:
+    python model/summary.py             # 打印 yolo26n
+    python model/summary.py --scale s   # 其他档位
+
+FLOPs 用 torch 内置 FlopCounterMode 统计（纯网络，不含 E2E 图内 top-k），零额外依赖。
+"""
+
+import argparse
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path（直接 python model/summary.py 运行时需要）
+
+import torch
+
+from config import __version__
+from model.yolo26 import CONFIG_PATH, YOLO26
+
+__all__ = ["model_summary", "profile_flops"]
+
+
+def layer_rows(model):
+    """逐层信息: [(idx, from, repeats, params, 模块全名, 构造参数)]"""
+    rows = []
+    for m in model.model:
+        n_params = sum(p.numel() for p in m.parameters())
+        name = f"{type(m).__module__}.{type(m).__name__}"
+        rows.append((m.i, m.f, m.repeats, n_params, name, m.args))
+    return rows
+
+
+def profile_flops(model, imgsz=640, batch=1):
+    """统计纯网络 FLOPs（临时切到 raw 头输出，排除 E2E 图内 top-k）"""
+    from torch.utils.flop_counter import FlopCounterMode
+
+    head = model.model[-1]
+    saved = getattr(head, "end2end", None)
+    if saved is not None:
+        head.end2end = False
+    x = torch.zeros(batch, 3, imgsz, imgsz)
+    model.eval()
+    with torch.no_grad():
+        with FlopCounterMode(display=False) as fcm:
+            model(x)
+    if saved is not None:
+        head.end2end = saved
+    return fcm.get_total_flops()
+
+
+def model_summary(model, imgsz=640, batch=1):
+    """打印逐层表与整体 summary，返回 (层数, 参数量, FLOPs)"""
+    n_layers = sum(1 for m in model.modules() if not list(m.children()))
+    n_params = sum(p.numel() for p in model.parameters())
+    n_grads = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    gflops = profile_flops(model, imgsz, batch) / 1e9
+
+    print(f"{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
+    for idx, f, n, layer_params, name, args in layer_rows(model):
+        print(f"{idx:>3}{str(f):>18}{n:>3}{layer_params:>10}  {name:<40}{str(args):<30}")
+    print(f"YOLO26 summary: {n_layers} layers, {n_params:,} parameters, {n_grads:,} gradients, {gflops:.1f} GFLOPs")
+    return n_layers, n_params, gflops
+
+
+def main():
+    parser = argparse.ArgumentParser(description="print YOLO26 model architecture")
+    parser.add_argument("--scale", default="n", help="model scale (n/s/m/l/x)")
+    parser.add_argument("--imgsz", type=int, default=640)
+    args = parser.parse_args()
+
+    device = f"CUDA {torch.cuda.get_device_name(0)}" if torch.cuda.is_available() else "CPU"
+    print(f"model/summary: cfg={CONFIG_PATH}, scale={args.scale}, imgsz={args.imgsz}")
+    print(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device}\n")
+
+    model = YOLO26(scale=args.scale)
+    model_summary(model, imgsz=args.imgsz)
+
+
+if __name__ == "__main__":
+    main()

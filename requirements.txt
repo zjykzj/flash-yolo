@@ -1,0 +1,9 @@
+# Flash-YOLO 运行时依赖
+torch
+numpy
+opencv-python
+pyyaml
+safetensors
+onnx
+onnxruntime
+pycocotools  # Windows 上若编译失败可用 pycocotools-windows 替代

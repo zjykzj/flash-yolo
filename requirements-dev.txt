@@ -1,0 +1,4 @@
+# 仅开发期使用：官方权重解包（convert_weights.py）与推理数值对照（test_weight_alignment.py）
+# 注意：ultralytics 为 AGPL-3.0，仅作对照/解包，本仓库不包含其代码
+ultralytics
+pytest
