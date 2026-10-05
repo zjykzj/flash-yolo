@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   COCO-stage hyperparameters in `config/train.yaml` (nbs=128 keeps lr semantics independent of
   physical batch size); training defaults to fp32 (half-precision from-scratch training NaNs).
 
+### Changed
+
+- **Training throughput ~5x**: TAL assigner + loss rewritten as batched `(B,N,M)` masked ops
+  (the per-image Python loop was ~105k kernel launches and thousands of device syncs per step)
+  and MuSGD elementwise updates switched to `_foreach_*` with a single device sync per step;
+  measured batch 64 / 640² on RTX 5090: step 1250→250 ms, 51→~250 img/s (245-epoch COCO ETA
+  ~6.5 d → ~1.4 d). Loss forward values and optimizer updates are bit-identical to the previous
+  implementation; gradients no longer flow through the label assignment graph (official
+  `@torch.no_grad()` + detached-input semantics).
+
 ## [0.1.0] - 2026-10-05
 
 ### Added

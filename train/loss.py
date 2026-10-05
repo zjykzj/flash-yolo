@@ -1,4 +1,4 @@
-"""双分支训练损失 + ProgLoss 权重调度
+"""双分支训练损失 + ProgLoss 权重调度（批量口径）
 
 每图每分支：
     L = box_gain*L_ciou + cls_gain*L_bce + dfl_gain*L_l1
@@ -8,6 +8,10 @@
 总损失 = alpha*L_o2m + (1-alpha)*L_o2o（ProgLoss，alpha 逐 epoch 0.8 -> 0.1）；
 o2o 分支 cls 额外乘 cls_w。损失按 batch 求和（x batch），配合 nbs/accum 口径
 （梯度尺度与物理 batch 无关）。
+
+批量口径：所有项对全 batch 一次算完（(B, N[, nc]) 掩码张量），逐图归一化语义不变
+（BCE 等尺寸下「全 batch 均值 ×B」≡「逐图均值求和」）。分配输入 detach 且 assigner
+内部 no_grad（官方口径）：标签分配是离散操作，梯度只经损失项回流。
 """
 
 import torch
@@ -49,6 +53,28 @@ class ComputeLoss:
         feats = [torch.zeros(1, 1, imgsz // int(s), imgsz // int(s), device=self.device) for s in self.strides]
         return make_anchors(feats, self.strides, 0.5)
 
+    def _padded_gt(self, targets, batch_size):
+        """(N, 6) [batch_idx, cls, x1, y1, x2, y2] -> (B, M, 5) 右侧 padding + (B, M) bool 掩码"""
+        if targets.numel() == 0:
+            return (targets.new_zeros(batch_size, 0, 5),
+                    torch.zeros(batch_size, 0, dtype=torch.bool, device=targets.device))
+        bidx = targets[:, 0].long()
+        counts = torch.bincount(bidx, minlength=batch_size)
+        m = int(counts.max())
+        if m == 0:
+            return (targets.new_zeros(batch_size, 0, 5),
+                    torch.zeros(batch_size, 0, dtype=torch.bool, device=targets.device))
+        # 逐图内序号：稳定排序 + 每图起始偏移（O(N) 向量化，无逐图循环）
+        order = torch.argsort(bidx, stable=True)
+        row = bidx[order]
+        starts = torch.cumsum(counts, 0) - counts
+        pos = torch.arange(row.shape[0], device=targets.device) - starts[row]
+        gt = targets.new_zeros(batch_size, m, 5)
+        gt_mask = torch.zeros(batch_size, m, dtype=torch.bool, device=targets.device)
+        gt[row, pos] = targets[order][:, 1:]
+        gt_mask[row, pos] = True
+        return gt, gt_mask
+
     def forward(self, preds, targets, batch_size, imgsz):
         """总损失（fp32 内部计算，兼容 AMP 下的 fp16 输入）
 
@@ -58,9 +84,10 @@ class ComputeLoss:
             batch_size: 本 batch 图像数
         Returns:
             (loss_total, items) — total 为 weight*Σ_img L_img（x batch 与 nbs/accum 口径一致），
-            items 为 per-image 均值口径的分解字典（日志用）
+            items 为 per-image 均值口径的分解字典（日志用，float）
         """
         anchors, strides = self._anchors(imgsz)
+        gt, gt_mask = self._padded_gt(targets, batch_size)
         total = torch.zeros((), device=self.device)
         items = {"box": 0.0, "cls": 0.0, "dfl": 0.0, "o2m": 0.0, "o2o": 0.0}
         has_o2o = "one2one" in preds
@@ -74,33 +101,45 @@ class ComputeLoss:
             boxes = preds[branch]["boxes"].float()  # (B, 4, N) ltrb grid 单位
             scores = preds[branch]["scores"].float()  # (B, nc, N)
             cls_w = self.cfg.cls_w if branch == "one2one" else 1.0
-            l_box = torch.zeros((), device=self.device)
-            l_cls = torch.zeros((), device=self.device)
-            l_l1 = torch.zeros((), device=self.device)
 
-            for bi in range(batch_size):
-                gt_img = targets[targets[:, 0] == bi][:, 1:]
-                a = self.assigner.forward(boxes[bi], scores[bi], anchors, strides, gt_img, one2one=(branch == "one2one"))
-                # 全 anchor 软目标 BCE（无正样本时目标全零，同样有限）
-                l_cls = l_cls + F.binary_cross_entropy_with_logits(scores[bi].T, a["target_scores"], reduction="mean") * cls_w
-                if a["n_pos"] == 0:
-                    continue
-                fg = a["fg_mask"]
-                pred_xyxy = torch.stack(
-                    [anchors[0] - boxes[bi][0], anchors[1] - boxes[bi][1], anchors[0] + boxes[bi][2], anchors[1] + boxes[bi][3]], 1
-                )  # (N, 4) 逐 anchor 解码
-                w = a["target_scores"][fg].sum(-1)  # (n_pos,) 软分数权重（per-GT 归一化）
-                ciou = bbox_iou_torch(pred_xyxy[fg], a["target_boxes"][fg], ciou=True)
-                l_box = l_box + ((1.0 - ciou) * w).sum() / w.sum().clamp_min(1.0)
-                l_l1 = l_l1 + (boxes[bi][:, fg].T - a["target_ltrb"][fg]).abs().sum(-1).mean()
+            # 标签分配（detach + 内部 no_grad，官方口径）
+            a = self.assigner.forward_batch(
+                boxes.detach(), scores.detach(), anchors, strides, gt, gt_mask, one2one=(branch == "one2one")
+            )
+            fg = a["fg_mask"]  # (B, N)
+
+            # 全 anchor 软目标 BCE（等尺寸下全 batch 均值 x B ≡ 逐图均值之和）
+            l_cls = F.binary_cross_entropy_with_logits(
+                scores.permute(0, 2, 1), a["target_scores"], reduction="mean"
+            ) * batch_size * cls_w
+
+            # 正样本 (1-CIoU) 软标签加权，逐图除以软分数总和（clamp 与逐图版一致）
+            ax, ay = anchors[0], anchors[1]
+            pred_xyxy = torch.stack(
+                [ax - boxes[:, 0], ay - boxes[:, 1], ax + boxes[:, 2], ay + boxes[:, 3]], 2
+            )  # (B, N, 4)
+            w = a["target_scores"].sum(-1)  # (B, N) 软分数权重（非 fg 恒 0）
+            ciou = bbox_iou_torch(pred_xyxy, a["target_boxes"], ciou=True)  # (B, N)
+            l_box = torch.where(
+                fg.any(-1), ((1.0 - ciou) * w * fg).sum(-1) / (w * fg).sum(-1).clamp_min(1.0), torch.zeros(())
+            ).sum()
+
+            # 正样本 ltrb L1（逐图对 fg 取均值；无 fg 图贡献 0）
+            l1 = ((boxes.transpose(1, 2) - a["target_ltrb"]).abs().sum(-1) * fg).sum(-1)
+            l_l1 = (l1 / fg.sum(-1).clamp_min(1)).sum()
 
             branch_loss = (self.cfg.box_gain * l_box + self.cfg.cls_gain * l_cls + self.cfg.dfl_gain * l_l1) / batch_size
             total = total + weight * branch_loss * batch_size
-            items[name] = branch_loss.detach().item()
-            items["box"] += l_box.detach().item() / batch_size
-            items["cls"] += l_cls.detach().item() / batch_size
-            items["dfl"] += l_l1.detach().item() / batch_size
+            items[name] = items[name] + branch_loss
+            items["box"] = items["box"] + l_box / batch_size
+            items["cls"] = items["cls"] + l_cls / batch_size
+            items["dfl"] = items["dfl"] + l_l1 / batch_size
 
-        return total, items
+        # 一次性同步取日志值（每 iter 仅此一处 device->host）
+        keys = list(items)
+        vals = torch.stack([
+            torch.as_tensor(items[k], device=self.device, dtype=torch.float32).detach().reshape(()) for k in keys
+        ]).tolist()
+        return total, dict(zip(keys, vals))
 
     __call__ = forward  # 普通类不自动调用 forward，显式别名

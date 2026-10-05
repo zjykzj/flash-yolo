@@ -91,48 +91,74 @@ class MuSGD(torch.optim.Optimizer):
 
     @torch.no_grad()
     def step(self, closure=None):
-        """单步更新（调用方负责 zero_grad；本类不清理梯度）"""
+        """单步更新（调用方负责 zero_grad；本类不清理梯度）
+
+        实现口径：逐元素的动量/参数更新走 _foreach_*（逐元素数学与逐参数版逐位一致，
+        但 kernel 数与 Python 分发开销降一个量级）；非有限梯度检查在设备侧聚合成一个
+        标量、每步仅同步一次（原逐参数 bool 转换 = 366 次 device 同步，实测为纯 CPU
+        发射瓶颈）。NS 迭代仍逐参数（矩阵乘法，属另一瓶颈层级）。
+        """
         loss = None
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
 
+        # 设备侧聚合非有限标记：全程无同步，最后一次性判定
+        finite = None
         for group in self.param_groups:
-            momentum = group["momentum"]
-            lr = group["lr"]
-            nesterov = group.get("nesterov", True)
-            wd = group.get("wd", 0.0)
             for p in group["params"]:
                 g = p.grad
                 if g is None:
                     continue
                 if g.is_sparse:
                     raise RuntimeError("MuSGD does not support sparse gradients")
-                if not torch.isfinite(g).all():
-                    raise ValueError(f"non-finite gradient detected (MuSGD) — 训练发散，见 assigner clamp 修复")
-                state = self.state[p]
-                if group.get("muon", False):
-                    if "muon_m" not in state:
-                        state["muon_m"] = torch.zeros_like(p)
-                        state["sgd_b"] = torch.zeros_like(p)
-                    # ---- Muon 更新 ----
-                    m = state["muon_m"]
-                    m.mul_(momentum).add_(g, alpha=1 - momentum)  # m <- beta*m + (1-beta)*g
-                    u = m.mul(momentum).add(g, alpha=1 - momentum) if nesterov else m
+                f = torch.isfinite(g).all()
+                finite = f if finite is None else (finite & f)
+        if finite is not None and not bool(finite):
+            raise ValueError("non-finite gradient detected (MuSGD) — 训练发散，见 assigner clamp 修复")
+
+        for group in self.param_groups:
+            momentum = group["momentum"]
+            lr = group["lr"]
+            nesterov = group.get("nesterov", True)
+            wd = group.get("wd", 0.0)
+            params = [p for p in group["params"] if p.grad is not None]
+            if not params:
+                continue
+            grads = [p.grad for p in params]
+            state = self.state
+            if group.get("muon", False):
+                for p in params:
+                    if "muon_m" not in state[p]:
+                        state[p]["muon_m"] = torch.zeros_like(p)
+                        state[p]["sgd_b"] = torch.zeros_like(p)
+                ms = [state[p]["muon_m"] for p in params]
+                # ---- Muon 更新 ----
+                torch._foreach_mul_(ms, momentum)
+                torch._foreach_add_(ms, grads, alpha=1 - momentum)  # m <- beta*m + (1-beta)*g
+                us = torch._foreach_add(torch._foreach_mul(ms, momentum), grads, alpha=1 - momentum) \
+                    if nesterov else ms
+                u_orths = []
+                for p, u in zip(params, us):
                     u2d = u.reshape(u.shape[0], -1) if u.ndim > 1 else u.reshape(1, -1)  # 防御 1D（分组契约 ndim∈{2,4}）
-                    u_orth = _ortho(u2d, group["ns_iters"])
-                    p.add_(u_orth.reshape_as(p), alpha=-lr * group["muon_w"])
-                    # ---- SGD 更新（独立缓冲，wd 只在此生效）----
-                    b = state["sgd_b"]
-                    d = g.add(p, alpha=wd)
-                    b.mul_(momentum).add_(d)
-                    p.add_(b.mul(momentum).add_(d) if nesterov else b, alpha=-lr * group["sgd_w"])
-                else:
-                    # ---- 纯 Nesterov SGD ----
-                    if "sgd_b" not in state:
-                        state["sgd_b"] = torch.zeros_like(p)
-                    b = state["sgd_b"]
-                    d = g.add(p, alpha=wd)
-                    b.mul_(momentum).add_(d)
-                    p.add_(b.mul(momentum).add_(d) if nesterov else b, alpha=-lr)
+                    u_orths.append(_ortho(u2d, group["ns_iters"]).reshape_as(p))
+                torch._foreach_add_(params, u_orths, alpha=-lr * group["muon_w"])
+                # ---- SGD 更新（独立缓冲，wd 只在此生效；d 在 muon 更新后的 p 上计算）----
+                bs = [state[p]["sgd_b"] for p in params]
+                ds = torch._foreach_add(grads, params, alpha=wd)
+                torch._foreach_mul_(bs, momentum)
+                torch._foreach_add_(bs, ds)
+                ws = torch._foreach_add(torch._foreach_mul(bs, momentum), ds) if nesterov else bs
+                torch._foreach_add_(params, ws, alpha=-lr * group["sgd_w"])
+            else:
+                # ---- 纯 Nesterov SGD ----
+                for p in params:
+                    if "sgd_b" not in state[p]:
+                        state[p]["sgd_b"] = torch.zeros_like(p)
+                bs = [state[p]["sgd_b"] for p in params]
+                ds = torch._foreach_add(grads, params, alpha=wd)
+                torch._foreach_mul_(bs, momentum)
+                torch._foreach_add_(bs, ds)
+                ws = torch._foreach_add(torch._foreach_mul(bs, momentum), ds) if nesterov else bs
+                torch._foreach_add_(params, ws, alpha=-lr)
         return loss
