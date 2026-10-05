@@ -54,16 +54,19 @@ def profile_flops(model, imgsz=640, batch=1, device=None):
     return fcm.get_total_flops()
 
 
-def summary_lines(model, imgsz=640, batch=1, device=None):
-    """逐层表 + 汇总行（字符串列表，trainer 启动块复用），返回 (lines, 层数, 参数量, GFLOPs)"""
+def summary_lines(model, imgsz=640, batch=1, device=None, name="YOLO26"):
+    """逐层表 + 汇总行（字符串列表，trainer 启动块复用），返回 (lines, 层数, 参数量, GFLOPs)
+
+    name: 汇总行的模型名（trainer 传 YOLO26{scale}，独立工具用通用 YOLO26）
+    """
     n_layers = sum(1 for m in model.modules() if not list(m.children()))
     n_params = sum(p.numel() for p in model.parameters())
     gflops = profile_flops(model, imgsz, batch, device=device) / 1e9
 
     lines = [f"{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}"]
-    for idx, f, n, layer_params, name, args in layer_rows(model):
-        lines.append(f"{idx:>3}{str(f):>18}{n:>3}{layer_params:>10}  {name:<40}{str(args):<30}")
-    lines.append(f"YOLO26 summary: {n_layers} layers, {n_params:,} parameters, {gflops:.1f} GFLOPs")
+    for idx, f, n, layer_params, name_, args in layer_rows(model):
+        lines.append(f"{idx:>3}{str(f):>18}{n:>3}{layer_params:>10}  {name_:<40}{str(args):<30}")
+    lines.append(f"{name} summary: {n_layers} layers, {n_params:,} parameters, {gflops:.1f} GFLOPs")
     return lines, n_layers, n_params, gflops
 
 

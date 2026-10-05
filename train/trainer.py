@@ -139,12 +139,13 @@ class Trainer:
         logger.info(f"hyperparameters: {asdict(self.cfg)}")
 
         # ② 模型：逐层参数表 + 汇总（profile_flops 会切 eval，打印后恢复 train）
+        # 汇总行由 summary_lines 统一输出（带档位名，如 YOLO26n），避免重复打印
         logger.info("")
-        lines, n_layers, n_params, gflops = summary_lines(self.model, self.cfg.imgsz, device=self.device)
-        for line in lines:
+        lines, _, _, _ = summary_lines(self.model, self.cfg.imgsz, device=self.device, name=f"YOLO26{self.cfg.scale}")
+        for line in lines[:-1]:
             logger.info(line)
+        logger.info(bold(lines[-1]))
         self.model.train()
-        logger.info(bold(f"YOLO26{self.cfg.scale} summary: {n_layers} layers, {n_params:,} params, {gflops:.1f} GFLOPs"))
 
         # ③ 数据集
         logger.info("")
