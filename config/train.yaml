@@ -1,0 +1,66 @@
+# YOLO26 训练超参（默认值 = 官方 yolo26n COCO 段配方，独立重写口径）
+# scripts/train.py 的 CLI 参数可覆盖任意字段（yaml 为单一事实源）
+
+# ---- data / io ----
+data_dir: /home/zjykzj/datasets/coco
+train_split: train2017   # 冒烟/调试可指到 val2017 子集
+scale: n
+epochs: 245
+batch: 16          # 物理 batch：默认 16 开箱即用（8GB 笔记本可用）；大显存可调大（BN 更稳、更快），
+                   # 梯度语义由 nbs 保证与物理 batch 无关
+nbs: 128           # 名义 batch = 官方配方的有效 batch（lr0=0.0054 对此量级调优）
+                   # -> accum = max(round(nbs/batch), 1)，任何物理 batch 下 lr 语义不变
+imgsz: 640
+workers: 8
+seed: 0
+close_mosaic: 10   # 最后 N epoch 关闭 mosaic/mixup/copy_paste
+val_epochs: 1
+val_limit: 0       # 0 = 全量 val2017
+limit: 0           # 训练子集（前 N 张；0 = 全量）
+
+# ---- optimizer (MuSGD) ----
+lr0: 0.0054
+lrf: 0.0495
+momentum: 0.947
+weight_decay: 0.00064
+muon_w: 0.528      # Muon 更新权重
+sgd_w: 0.674       # SGD 更新权重
+warmup_epochs: 0.98
+cos_lr: false      # false = 线性衰减
+ns_iters: 5        # Newton-Schulz 迭代次数
+
+# ---- loss ----
+box_gain: 5.63     # CIoU
+cls_gain: 0.56     # BCE（软目标）
+dfl_gain: 9.04     # box-L1（复用 dfl 槽位，reg_max=1 无 DFL）
+cls_w: 2.74        # o2o 分支 cls 额外权重（官方内部旋钮）
+tal_alpha: 0.5
+tal_beta: 6.0
+topk: 10           # o2m TAL top-k
+topk_o2o: 7        # o2o 第一阶段 top-k
+topk2: 1           # o2o 第二阶段 top-k（真一对一）
+prog_alpha_init: 0.8
+prog_alpha_final: 0.1
+stal_s_min: 8.0    # STAL 代理框阈值（px）
+stal_s_ref: 16.0   # STAL 代理框目标边长（px）
+
+# ---- ema / amp ----
+ema_decay: 0.9999
+ema_tau: 2000
+amp: false         # 默认 fp32（从零训练稳定）；fp16 AMP 在 640² 从零训练会 NaN（见 CLAUDE.md #10），
+                   # 微调（--weights 官方权重初始化）场景可试 --amp
+
+# ---- augment ----
+mosaic: 0.909
+mixup: 0.012
+copy_paste: 0.075
+aug_scale: 0.562
+degrees: 1.11
+shear: 1.46
+translate: 0.071
+fliplr: 0.606
+flipud: 0.0
+hsv_h: 0.014
+hsv_s: 0.645
+hsv_v: 0.566
+bgr: 0.106

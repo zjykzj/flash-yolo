@@ -1,5 +1,10 @@
 """Flash-YOLO 默认配置（M1：yolo26n 推理 + COCO 评估）"""
 
+from pathlib import Path
+
+# ---- 训练配置路径（超参本身在 config/train.yaml，此处只放路径常量）----
+TRAIN_CONFIG_PATH = Path(__file__).resolve().parent / "train.yaml"
+
 # ---- 推理 / 评估默认超参（与官方 val 口径一致）----
 IMGSZ = 640          # 推理输入尺寸
 CONF_THRES = 0.001   # 置信度阈值（评估时与官方 val 相同）

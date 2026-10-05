@@ -32,15 +32,19 @@ def layer_rows(model):
     return rows
 
 
-def profile_flops(model, imgsz=640, batch=1):
-    """统计纯网络 FLOPs（临时切到 raw 头输出，排除 E2E 图内 top-k）"""
+def profile_flops(model, imgsz=640, batch=1, device=None):
+    """统计纯网络 FLOPs（临时切到 raw 头输出，排除 E2E 图内 top-k）
+
+    device: 统计张量的设备（None = CPU；模型在 GPU 上时必须传入对应设备）。
+    注意：本函数会切 model.eval() 且不恢复训练模式，调用方需自行恢复。
+    """
     from torch.utils.flop_counter import FlopCounterMode
 
     head = model.model[-1]
     saved = getattr(head, "end2end", None)
     if saved is not None:
         head.end2end = False
-    x = torch.zeros(batch, 3, imgsz, imgsz)
+    x = torch.zeros(batch, 3, imgsz, imgsz, device=device)
     model.eval()
     with torch.no_grad():
         with FlopCounterMode(display=False) as fcm:
@@ -50,17 +54,24 @@ def profile_flops(model, imgsz=640, batch=1):
     return fcm.get_total_flops()
 
 
-def model_summary(model, imgsz=640, batch=1):
-    """打印逐层表与整体 summary，返回 (层数, 参数量, FLOPs)"""
+def summary_lines(model, imgsz=640, batch=1, device=None):
+    """逐层表 + 汇总行（字符串列表，trainer 启动块复用），返回 (lines, 层数, 参数量, GFLOPs)"""
     n_layers = sum(1 for m in model.modules() if not list(m.children()))
     n_params = sum(p.numel() for p in model.parameters())
-    n_grads = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    gflops = profile_flops(model, imgsz, batch) / 1e9
+    gflops = profile_flops(model, imgsz, batch, device=device) / 1e9
 
-    print(f"{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
+    lines = [f"{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}"]
     for idx, f, n, layer_params, name, args in layer_rows(model):
-        print(f"{idx:>3}{str(f):>18}{n:>3}{layer_params:>10}  {name:<40}{str(args):<30}")
-    print(f"YOLO26 summary: {n_layers} layers, {n_params:,} parameters, {n_grads:,} gradients, {gflops:.1f} GFLOPs")
+        lines.append(f"{idx:>3}{str(f):>18}{n:>3}{layer_params:>10}  {name:<40}{str(args):<30}")
+    lines.append(f"YOLO26 summary: {n_layers} layers, {n_params:,} parameters, {gflops:.1f} GFLOPs")
+    return lines, n_layers, n_params, gflops
+
+
+def model_summary(model, imgsz=640, batch=1):
+    """打印逐层表与整体 summary，返回 (层数, 参数量, FLOPs)"""
+    lines, n_layers, n_params, gflops = summary_lines(model, imgsz, batch)
+    for line in lines:
+        print(line)
     return n_layers, n_params, gflops
 
 

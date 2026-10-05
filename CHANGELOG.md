@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Training pipeline (M3)**: complete from-scratch COCO training — `train/` package with
+  TAL+STAL assigner, dual-head loss (CIoU + BCE + box-L1) with ProgLoss schedule (o2m 0.8→0.1),
+  MuSGD optimizer (Muon+Newton-Schulz orthogonalization blended with Nesterov SGD), EMA,
+  warmup + linear LR, resume checkpoints (safetensors weights + resume.pt state), per-epoch
+  COCO validation and `scripts/train.py` (finetune via `--weights`, resume via `--resume`);
+  Detect head train mode (o2o branch trained on detached features); official yolo26n
+  COCO-stage hyperparameters in `config/train.yaml` (nbs=128 keeps lr semantics independent of
+  physical batch size); training defaults to fp32 (half-precision from-scratch training NaNs).
+
 ## [0.1.0] - 2026-10-05
 
 ### Added

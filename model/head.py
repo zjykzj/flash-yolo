@@ -24,6 +24,7 @@ class Detect(nn.Module):
     推理两种模式：
         end2end=True  -> 前向直接输出 (B, max_det, 6) = [x1, y1, x2, y2, conf, cls]（NMS-free）
         end2end=False -> 输出 (B, 4+nc, N) 原始预测（ltrb + logits），NMS 在外部处理
+    训练模式（model.train() 时自动切换）：双分支原始输出 dict（见 _forward_train）
     """
 
     max_det = 300
@@ -76,11 +77,24 @@ class Detect(nn.Module):
 
     # ---- 前向 ----
     def forward(self, x):
+        if self.training and getattr(self, "one2one_cv2", None) is not None:
+            return self._forward_train(x)
         if self.end2end:
             y = self._forward_head(x, self.one2one_cv2, self.one2one_cv3)
             return self._e2e_postprocess(y, x)
         y = self._forward_head(x, self.cv2, self.cv3)
         return torch.cat((y["boxes"], y["scores"]), 1)  # (B, 4+nc, N) 原始输出
+
+    def _forward_train(self, x):
+        """训练模式：双分支原始输出 dict {"one2many": …, "one2one": …}
+
+        o2o 分支吃 detached 特征——梯度只经 o2m 分支流向 backbone/neck，
+        o2o 头仅训练自身卷积权重（官方口径）。
+        """
+        o2m = self._forward_head(x, self.cv2, self.cv3)
+        x_detached = [feat.detach() for feat in x]
+        o2o = self._forward_head(x_detached, self.one2one_cv2, self.one2one_cv3)
+        return {"one2many": o2m, "one2one": o2o}
 
     def _forward_head(self, x, box_head, cls_head):
         bs = x[0].shape[0]

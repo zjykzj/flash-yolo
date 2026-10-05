@@ -1,10 +1,10 @@
-"""权重加载：safetensors -> 模型（strict load，成功即证明拓扑一致）"""
+"""权重读写：safetensors <-> 模型（strict load，成功即证明拓扑一致）"""
 
 import logging
 
-from safetensors.torch import load_file
+from safetensors.torch import load_file, save_file
 
-__all__ = ["load_weights"]
+__all__ = ["load_weights", "save_weights"]
 
 logger = logging.getLogger(__name__)
 
@@ -26,3 +26,8 @@ def load_weights(model, path, strict=True):
         if unexpected:
             logger.warning(f"unexpected sample: {unexpected[:5]}")
     return missing, unexpected
+
+
+def save_weights(model, path):
+    """模型 state_dict -> safetensors（纯权重交付物，配合 load_weights strict 回载）"""
+    save_file(model.state_dict(), path)
