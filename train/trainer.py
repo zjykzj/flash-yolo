@@ -8,6 +8,7 @@ import logging
 import sys
 import time
 from collections import deque
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -85,6 +86,7 @@ class Trainer:
 
         self.results_csv = self.run_dir / "results.csv"
         self.accumulate = max(round(cfg.nbs / cfg.batch), 1)
+        self.val_enabled = cfg.val_epochs > 0  # val_epochs=0 时全程不验证（小数据集冒烟用）
         self.val_dataset = None  # 懒构建（JSON 解析 ~数秒，仅需一次）
         self.csv_fields = ["epoch", "time_s", "box", "cls", "dfl", "o2m", "o2o", "loss", "lr", "mAP", "mAP50", "AR@100"]
         # close_mosaic 自动适配短跑：官方语义 = 最后 N 个 epoch 关 mosaic，但不超过总轮数的 1/5
@@ -124,7 +126,7 @@ class Trainer:
 
     # ---- 启动信息块 ----
     def _print_startup(self):
-        """训练开始前打印完整参数快照（四模块：环境 / 模型 / 数据 / 训练，复盘无需翻 yaml）"""
+        """训练开始前打印完整参数快照（四模块：环境 / 超参 / 模型 / 数据，复盘无需翻 yaml）"""
         # ① 环境
         if self.device.type == "cuda":
             props = torch.cuda.get_device_properties(self.device)
@@ -133,7 +135,11 @@ class Trainer:
             dev_str = str(self.device)
         logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {dev_str}"))
 
+        # 超参数快照（dict 直出，快速核对用）
+        logger.info(f"hyperparameters: {asdict(self.cfg)}")
+
         # ② 模型：逐层参数表 + 汇总（profile_flops 会切 eval，打印后恢复 train）
+        logger.info("")
         lines, n_layers, n_params, gflops = summary_lines(self.model, self.cfg.imgsz, device=self.device)
         for line in lines:
             logger.info(line)
@@ -142,13 +148,16 @@ class Trainer:
 
         # ③ 数据集
         logger.info("")
-        if self.val_dataset is None:
-            self.val_dataset = CocoDataset(self.cfg.data_dir, "val2017")
-        val_str = f"{len(self.val_dataset)} images · {self.val_dataset.n_instances:,} instances" + \
-            (f" (limit {self.cfg.val_limit})" if self.cfg.val_limit else " (full)")
         logger.info(f"train: {self.cfg.train_split} {len(self.dataset)} images · {self.dataset.n_instances:,} instances · "
                     f"{self.dataset.n_categories} categories · load {self.data_load_time:.1f}s")
-        logger.info(f"val:   val2017 {val_str}")
+        if self.val_enabled:
+            if self.val_dataset is None:
+                self.val_dataset = CocoDataset(self.cfg.data_dir, "val2017")
+            val_str = f"{len(self.val_dataset)} images · {self.val_dataset.n_instances:,} instances" + \
+                (f" (limit {self.cfg.val_limit})" if self.cfg.val_limit else " (full)")
+            logger.info(f"val:   val2017 {val_str}")
+        else:
+            logger.info("val:   disabled (val_epochs=0)")
         logger.info(f"image size {self.cfg.imgsz} · batch {self.cfg.batch} (nbs {self.cfg.nbs}, accum {self.accumulate}) "
                     f"· workers {self.cfg.workers} · AMP {'fp16' if self.cfg.amp else 'off'}")
 
@@ -180,12 +189,12 @@ class Trainer:
     # ---- 主循环 ----
     def train(self):
         self._print_startup()
-        # 指标表头（ultralytics 风格：一次打印，每 epoch 一行内刷新；列统一 11 宽）
-        logger.info("%11s" * 10 % ("Epoch", "GPU_mem", "box", "cls", "dfl", "o2m", "o2o", "Instances", "Size", "lr"))
 
         for epoch in range(self.start_epoch, self.cfg.epochs):
             if epoch > self.start_epoch:
                 logger.info("")  # epoch 间空行分隔（bar 不落日志，节奏靠它划分）
+            # 指标表头（每轮重复；列统一 11 宽，与数据行对齐）
+            logger.info("%11s" * 10 % ("Epoch", "GPU_mem", "box", "cls", "dfl", "o2m", "o2o", "Instances", "Size", "lr"))
             if epoch >= self.cfg.epochs - self.close_mosaic and self.cfg.mosaic > 0:
                 self.dataset.close_mosaic()
                 logger.info(f"close_mosaic: mosaic/mixup/copy_paste off from epoch {epoch + 1}")
@@ -288,7 +297,7 @@ class Trainer:
 
             # ---- 验证 ----
             metrics = None
-            if (epoch + 1) % self.cfg.val_epochs == 0 or epoch == self.cfg.epochs - 1:
+            if self.val_enabled and ((epoch + 1) % self.cfg.val_epochs == 0 or epoch == self.cfg.epochs - 1):
                 t_val = time.monotonic()
                 metrics = self._validate()
                 val_elapsed = time.monotonic() - t_val

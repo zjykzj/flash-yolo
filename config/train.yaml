@@ -14,7 +14,7 @@ imgsz: 640
 workers: 8
 seed: 0
 close_mosaic: 10   # 最后 N epoch 关闭 mosaic/mixup/copy_paste
-val_epochs: 1
+val_epochs: 1      # 0 = 全程不验证（小数据集冒烟用）
 val_limit: 0       # 0 = 全量 val2017
 limit: 0           # 训练子集（前 N 张；0 = 全量）
 
