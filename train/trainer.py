@@ -204,7 +204,8 @@ class Trainer:
             if epoch > self.start_epoch:
                 logger.info("")  # epoch 间空行分隔（bar 不落日志，节奏靠它划分）
             # 指标表头（每轮重复；列统一 11 宽右对齐，与数据行同 6 格缩进）
-            logger.info("      " + "%11s" * 10 % ("Epoch", "GPU_mem", "box", "cls", "dfl", "o2m", "o2o", "Instances", "Size", "lr"))
+            logger.info("      " + "%11s" * 10 % ("Epoch", "GPU_mem", "box_loss", "cls_loss", "dfl_loss",
+                                                "o2m_loss", "o2o_loss", "Instances", "Size", "lr"))
             if epoch >= self.cfg.epochs - self.close_mosaic and self.cfg.mosaic > 0:
                 self.dataset.close_mosaic()
                 logger.info(f"close_mosaic: mosaic/mixup/copy_paste off from epoch {epoch + 1}")
@@ -300,10 +301,11 @@ class Trainer:
                 metrics = self._validate()
                 val_elapsed = time.monotonic() - t_val
                 # 与训练表同 11 宽右对齐 + 同 6 格缩进；每轮重复表头，行尾评估耗时
-                logger.info("      " + "%11s" * 8 % ("Class", "Images", "Instances", "Box(P", "R", "mAP50", "mAP50-95", "AR"))
+                # （AR@100 不展示，保留在 results.csv 供曲线分析）
+                logger.info("      " + "%11s" * 7 % ("Class", "Images", "Instances", "P", "R", "mAP50", "mAP50-95"))
                 logger.info(
                     "      " + "%11s" % "all" + "%11d" * 2 % (metrics["images"], metrics["instances"])
-                    + "%11.4f" * 5 % (metrics["P"], metrics["R"], metrics["mAP@50"], metrics["mAP@[.5:.95]"], metrics["AR@100"])
+                    + "%11.4f" * 4 % (metrics["P"], metrics["R"], metrics["mAP@50"], metrics["mAP@[.5:.95]"])
                     + f" · {val_elapsed:.1f}s"
                 )
                 fitness = metrics["mAP@[.5:.95]"]
