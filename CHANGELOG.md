@@ -14,3 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inference (.pt/.onnx, E2E NMS-free & NMS paths), pt→onnx export, COCO evaluation
   (40.27 / 40.89 vs official 40.1 / 40.9), ultralytics-style logging, progress bar and
   runs/ result layout.
+- **Export `--dynamic` flag**: dynamic batch opt-in, default fixed batch=1 (edge toolchains
+  prefer fixed shapes); ONNX weights embedded in a single file — `dynamo=False` pins the
+  TorchScript exporter (torch 2.13's dynamo default split weights into `.onnx.data`).
