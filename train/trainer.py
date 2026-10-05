@@ -158,8 +158,9 @@ class Trainer:
 
         # ③ 数据集
         logger.info("")
-        logger.info(f"train: {self.cfg.train_split} {len(self.dataset)} images · {self.dataset.n_instances:,} instances · "
-                    f"{self.dataset.n_categories} categories · load {self.data_load_time:.1f}s")
+        logger.info(f"train: {self.cfg.train_split} @ {self.cfg.data_dir} · {len(self.dataset)} images · "
+                    f"{self.dataset.n_instances:,} instances · {self.dataset.n_categories} categories · "
+                    f"load {self.data_load_time:.1f}s")
         if self.val_enabled:
             if self.val_dataset is None:
                 self.val_dataset = CocoDataset(self.cfg.data_dir, "val2017")
@@ -168,8 +169,8 @@ class Trainer:
             logger.info(f"val:   val2017 {val_str}")
         else:
             logger.info("val:   disabled (val_epochs=0)")
-        logger.info(f"image size {self.cfg.imgsz} · batch {self.cfg.batch} (nbs {self.cfg.nbs}, accum {self.accumulate}) "
-                    f"· workers {self.cfg.workers} · AMP {'fp16' if self.cfg.amp else 'off'}")
+        logger.info(f"imgsz {self.cfg.imgsz} · batch {self.cfg.batch} · nbs {self.cfg.nbs} (accum {self.accumulate}) · "
+                    f"workers {self.cfg.workers} · seed {self.cfg.seed} · AMP {'fp16' if self.cfg.amp else 'off'}")
 
         # ④ 训练组件与超参
         logger.info("")
@@ -177,19 +178,27 @@ class Trainer:
         n_muon = sum(len(g["params"]) for g in groups if g.get("muon"))
         n_nodecay = sum(len(g["params"]) for g in groups if not g.get("muon") and g.get("wd", 0.0) == 0.0)
         n_lr3 = sum(len(g["params"]) for g in groups if g.get("lr_mult", 1.0) == 3.0)
-        logger.info(f"optimizer: MuSGD(lr0={self.cfg.lr0}, momentum={self.cfg.momentum}, muon_w={self.cfg.muon_w}, "
-                    f"sgd_w={self.cfg.sgd_w}) · groups: muon {n_muon} · no-decay {n_nodecay} · lr×3 {n_lr3}")
+        logger.info(f"optimizer: MuSGD(lr0 {self.cfg.lr0} · momentum {self.cfg.momentum} · wd {self.cfg.weight_decay} · "
+                    f"muon_w {self.cfg.muon_w} · sgd_w {self.cfg.sgd_w} · ns_iters {self.cfg.ns_iters})")
+        logger.info(f"           groups: muon {n_muon} · no-decay {n_nodecay} · lr×3 {n_lr3}")
         close_epoch = max(self.cfg.epochs - self.close_mosaic, 0)
+        # 只有真被 min(close_mosaic, epochs//5) 缩过才提示缩放来源
+        scale_note = f", scaled from {self.cfg.close_mosaic}" if self.close_mosaic != self.cfg.close_mosaic else ""
         logger.info(f"lr: warmup {self.cfg.warmup_epochs}ep -> {'cosine' if self.cfg.cos_lr else 'linear'} "
-                    f"{self.cfg.lr0} -> {self.cfg.lr0 * self.cfg.lrf:.6f} · close_mosaic {self.close_mosaic} "
-                    f"(scaled from {self.cfg.close_mosaic})")
+                    f"{self.cfg.lr0} -> {self.cfg.lr0 * self.cfg.lrf:.6f} · "
+                    f"close_mosaic last {self.close_mosaic} epochs (from epoch {close_epoch}{scale_note})")
         logger.info(f"loss: box {self.cfg.box_gain} CIoU · cls {self.cfg.cls_gain} BCE · l1 {self.cfg.dfl_gain} · "
                     f"cls_w {self.cfg.cls_w} · EMA {self.cfg.ema_decay} (tau {self.cfg.ema_tau})")
-        logger.info(f"TAL topk {self.cfg.topk} / {self.cfg.topk_o2o}+{self.cfg.topk2} · STAL {self.cfg.stal_s_min}->"
-                    f"{self.cfg.stal_s_ref}px · ProgLoss alpha {self.cfg.prog_alpha_init}->{self.cfg.prog_alpha_final} · "
-                    f"mosaic {self.cfg.mosaic} (close from epoch {close_epoch})")
-        logger.info(f"aug: copy_paste {self.cfg.copy_paste} · mixup {self.cfg.mixup} · fliplr {self.cfg.fliplr} · "
-                    f"hsv {self.cfg.hsv_h}/{self.cfg.hsv_s}/{self.cfg.hsv_v} · seed {self.cfg.seed}")
+        logger.info(f"TAL: topk o2m {self.cfg.topk} · o2o {self.cfg.topk_o2o}->{self.cfg.topk2} · "
+                    f"STAL {self.cfg.stal_s_min}->{self.cfg.stal_s_ref}px · "
+                    f"ProgLoss alpha {self.cfg.prog_alpha_init}->{self.cfg.prog_alpha_final}")
+        logger.info(f"aug: mosaic {self.cfg.mosaic} · copy_paste {self.cfg.copy_paste} · mixup {self.cfg.mixup} · "
+                    f"fliplr {self.cfg.fliplr} · flipud {self.cfg.flipud} · "
+                    f"hsv h/s/v {self.cfg.hsv_h}/{self.cfg.hsv_s}/{self.cfg.hsv_v} · bgr {self.cfg.bgr}")
+        inv_scale = 1 / self.cfg.aug_scale
+        logger.info(f"     affine (every sample): degrees +/-{self.cfg.degrees} · shear +/-{self.cfg.shear} · "
+                    f"translate +/-{self.cfg.translate} · scale {min(self.cfg.aug_scale, inv_scale):.3f}-"
+                    f"{max(self.cfg.aug_scale, inv_scale):.3f}")
 
         # 开始
         logger.info("")
