@@ -10,7 +10,7 @@
 
 No monolithic abstractions, no heavyweight dependencies — core runtime deps: PyTorch + NumPy only.
 
-The first milestone — a faithful YOLO26 reproduction, verified against the official model on COCO val2017:
+Detection performance — YOLO26n on COCO val2017:
 
 | Path | mAP@[.5:.95] | mAP@50 | Params | Latency¹ |
 |---|---|---|---|---|
@@ -23,12 +23,6 @@ The first milestone — a faithful YOLO26 reproduction, verified against the off
 - ¹ Latency = inference stage only, averaged over 20 runs on this machine: RTX 4060 Laptop GPU / WSL2 CPU (onnxruntime)
 - ² The official weights re-run through this repo's pipeline (same preprocessing, postprocessing, and pycocotools metrics, same hardware) — the numbers match Flash-YOLO exactly, which is the expected consequence of bit-identical reproduction
 - The official published 40.1 / 40.9 come from the official metric implementation; the ~0.1 delta to this table is metric-implementation noise, not a model difference
-
-<!--
-## 📜 Releases
-
-- **v0.1.0** (2026-10-04): Initial release — a YOLO26 detection reproduction (inference · export · COCO evaluation), bit-identical to the official model.
--->
 
 ## Quick Start
 
@@ -78,7 +72,13 @@ utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualiz
 pytest tests/    # 8 tests: param count, strict weight load, numeric alignment vs official, onnx parity, synthetic metric correctness
 ```
 
-`tests/test_weight_alignment.py` needs the official .pt as a dev-time reference (see requirements-dev.txt).
+`tests/test_weight_alignment.py` compares against the official .pt as a dev-time reference — install requirements-dev.txt to run it.
+
+## 🚀 Changelog
+
+- **v0.1.0** (2026-10-04): Initial release — a faithful YOLO26 reproduction, verified against the official model on COCO val2017 (inference · export · evaluation), bit-identical to the official model.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
 ## 📄 License
 
