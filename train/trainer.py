@@ -27,20 +27,11 @@ from train.ema import ModelEMA
 from train.loss import ComputeLoss
 from train.lr import cosine_lr, linear_lr, set_epoch_lr, warmup_lr
 from train.optimizer import MuSGD, build_param_groups
-from train.validator import validate
-from utils.logger import bold
-from utils.progress import ProgressBar
+from train.validator import VAL_HEADER, format_val_row, validate
+from utils.logger import bold, log_file_only
+from utils.progress import ProgressBar, fmt_elapsed
 
 logger = logging.getLogger(__name__)
-
-
-def _fmt_duration(seconds):
-    """训练总耗时人性化单位：<1min 秒 / <1h 分钟 / 其余小时（ultralytics 用小时，短跑不友好）"""
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    if seconds < 3600:
-        return f"{seconds / 60:.1f} min"
-    return f"{seconds / 3600:.2f} hours"
 
 
 class Trainer:
@@ -296,28 +287,24 @@ class Trainer:
                 mean_w = {k: (sum(v) / len(v)) for k, v in window.items()}
                 desc = "      " + self._epoch_row(epoch, mem, mean_w, len(dl.dataset), lr_last)
                 bar.update(bi + 1, speed, desc=desc)
-            bar.close(clear=True)  # 进度条清屏，epoch 定格行（下方 logger）是唯一记录
-
-            # ---- epoch 汇总（与表头同构右对齐，落日志为最终记录）----
+            # ---- epoch 定格（ultralytics 机制）：进度条行即记录，结束后保留 ----
             mean = {k: v / n_batch for k, v in sums.items()}
             elapsed = time.monotonic() - t0
-            # 数据行与表头同 6 格缩进 + 行尾该轮训练耗时（time_s 同时入 results.csv）
-            logger.info("      " + self._epoch_row(epoch, mem_last, mean, len(dl.dataset), lr_last) + f" · {elapsed:.1f}s")
+            row = "      " + self._epoch_row(epoch, mem_last, mean, len(dl.dataset), lr_last)
+            bar.update(n_batch, speed, desc=row)  # 末次刷新换真均值（非 10 batch 窗口值）
+            bar.close()  # 换行保留，不再清屏
+            # 控制台定格行=进度条行；文件日志另落真均值行（time_s 同时入 results.csv）
+            log_file_only(row + f" · {fmt_elapsed(elapsed)}", name=logger.name)
 
             # ---- 验证（训练中趋势口径；正式数字用 scripts/eval.py）----
             metrics = None
             if self.val_enabled and ((epoch + 1) % self.cfg.val_epochs == 0 or epoch == self.cfg.epochs - 1):
                 t_val = time.monotonic()
+                logger.info(VAL_HEADER)  # 表头先行（进度条实时行挂在表头下）；AR@100 不展示，保留在 results.csv
                 metrics = self._validate()
                 val_elapsed = time.monotonic() - t_val
-                # 与训练表同 11 宽右对齐 + 同 6 格缩进；每轮重复表头，行尾评估耗时
-                # （AR@100 不展示，保留在 results.csv 供曲线分析）
-                logger.info("      " + "%11s" * 7 % ("Class", "Images", "Instances", "P", "R", "mAP50", "mAP50-95"))
-                logger.info(
-                    "      " + "%11s" % "all" + "%11d" * 2 % (metrics["images"], metrics["instances"])
-                    + "%11.4f" * 4 % (metrics["P"], metrics["R"], metrics["mAP@50"], metrics["mAP@[.5:.95]"])
-                    + f" · {val_elapsed:.1f}s"
-                )
+                # 控制台定格行=进度条行；文件日志另落一行（带评估耗时）
+                log_file_only(format_val_row(metrics) + f" · {fmt_elapsed(val_elapsed)}", name=logger.name)
                 fitness = metrics["mAP@[.5:.95]"]
             else:
                 fitness = self.best_fitness
@@ -332,7 +319,7 @@ class Trainer:
         elapsed_total = time.monotonic() - t_start
         n_epochs = self.cfg.epochs - self.start_epoch
         logger.info(f"training done -> {self.run_dir} · {n_epochs} epoch{'s' if n_epochs != 1 else ''} "
-                    f"completed in {_fmt_duration(elapsed_total)}")
+                    f"completed in {fmt_elapsed(elapsed_total)}")
         if self.val_enabled:  # 正式口径评估提示（best.safetensors 仅在有验证时落盘）
             logger.info(f"official eval: python scripts/eval.py --weights {self.run_dir / 'weights' / 'best.safetensors'} "
                         f"--data {self.cfg.data_dir}")

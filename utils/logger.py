@@ -22,7 +22,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-__all__ = ["setup_logging", "get_logger", "bold", "redirect_prints"]
+__all__ = ["setup_logging", "get_logger", "bold", "redirect_prints", "log_file_only"]
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 
@@ -98,6 +98,18 @@ def setup_logging(log_name=None, level="INFO", to_file=True):
 def get_logger(name):
     """带命名空间的 logger（建议传 __name__，日志可溯源到模块）"""
     return logging.getLogger(name)
+
+
+def log_file_only(msg, name="flash_yolo"):
+    """只写日志文件（控制台行已由进度条定格行承担时使用，避免双行）
+
+    无文件 handler（如测试进程未 setup_logging）时静默跳过。
+    """
+    record = logging.LogRecord(name, logging.INFO, "", 0, msg, (), None)
+    for handler in logging.getLogger().handlers:
+        if isinstance(handler, logging.handlers.RotatingFileHandler):
+            handler.handle(record)
+            break
 
 
 @contextlib.contextmanager

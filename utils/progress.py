@@ -15,13 +15,25 @@
 import sys
 import time
 
-__all__ = ["ProgressBar"]
+__all__ = ["ProgressBar", "fmt_elapsed"]
+
+
+def fmt_elapsed(seconds):
+    """耗时人性化：<1min '45.2s' / <1h '4 min 27 s' / 其余 '1 h 05 min'（进度条与定格行统一）"""
+    s = max(seconds, 0.0)
+    if s < 60:
+        return f"{s:.1f}s"
+    m, sec = divmod(round(s), 60)
+    if m < 60:
+        return f"{m} min {sec:02d} s"
+    h, m = divmod(m, 60)
+    return f"{h} h {m:02d} min"
 
 
 class ProgressBar:
     """单行进度条：百分比条 + 计数 + 瞬时速度 + ETA"""
 
-    def __init__(self, total, desc="", width=30, file=None):
+    def __init__(self, total, desc="", width=10, file=None):
         self.total = total
         self.desc = desc
         self.width = width
@@ -45,7 +57,7 @@ class ProgressBar:
         speed_str = f"{speed:.1f}it/s" if speed is not None else "----it/s"
         # 耗时单调递增显示（ultralytics 风格）；结束后自然停在总耗时，无需额外处理
         elapsed = time.monotonic() - self.start
-        line = f"\r{self.desc} [{bar}] {n}/{self.total} · {speed_str} · {elapsed:.1f}s"
+        line = f"\r{self.desc} [{bar}] {n}/{self.total} · {speed_str} · {fmt_elapsed(elapsed)}"
         self.file.write(line + " " * max(0, self.last_len - len(line)))
         self.file.flush()
         self.last_len = len(line)
