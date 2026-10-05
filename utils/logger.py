@@ -9,7 +9,8 @@
     - 每次运行独立的时间戳文件，多程序并发天然隔离（不做跨进程锁）
     - 多卡训练时仅 rank 0 落文件：setup_logging(to_file=(rank == 0))
     - 文件轮转 10MB x 5 份，防长跑写爆
-    - 控制台按级别着色，文件永远纯文本
+    - 控制台纯消息 + 级别着色（无时间戳，与进度条等 UI 元素对齐；ultralytics 风格）；
+      文件带完整时间戳前缀且永远纯文本
 """
 
 import contextlib
@@ -36,7 +37,8 @@ _LEVEL_COLORS = {
 _RESET = "\033[0m"
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
-_FMT = "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"
+_FMT = "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"  # 文件格式（完整前缀）
+_CONSOLE_FMT = "%(message)s"  # 控制台纯消息（与进度条从第 0 列对齐）
 _DATEFMT = "%Y-%m-%d %H:%M:%S"
 
 
@@ -63,7 +65,7 @@ class _PlainFormatter(logging.Formatter):
 
 def _console_handler():
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(_ColoredFormatter(_FMT, datefmt=_DATEFMT))
+    handler.setFormatter(_ColoredFormatter(_CONSOLE_FMT))
     return handler
 
 
