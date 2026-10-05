@@ -46,6 +46,8 @@ def main():
     parser.add_argument("--scale", dest="scale", default=None, help="model scale (n/s/m/l/x)")
     parser.add_argument("--train-split", dest="train_split", default=None, help="training split (default train2017)")
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=None, help="mixed precision (default: on)")
+    parser.add_argument("--channels-last", dest="channels_last", action=argparse.BooleanOptionalAction, default=None,
+                        help="NHWC training memory format (default: yaml)")
     parser.add_argument("--cos-lr", dest="cos_lr", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--verbose", action="store_true", help="DEBUG logging (third-party output)")
     # TrainConfig 字段（默认 None -> 不覆盖 yaml）

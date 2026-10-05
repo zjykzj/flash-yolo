@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ~6.5 d → ~1.4 d). Loss forward values and optimizer updates are bit-identical to the previous
   implementation; gradients no longer flow through the label assignment graph (official
   `@torch.no_grad()` + detached-input semantics).
+- **Training throughput, round 2 (~1.4x)**: channels_last (NHWC, `channels_last: true` in
+  train.yaml, `--channels-last/--no-channels-last`) + MuSGD Newton-Schulz batched across
+  same-shape parameter groups + `_foreach_*` EMA updates; measured end-to-end 408.8→287.8 ms/step
+  at batch 64 (156→222 img/s on RTX 5090). `save_weights` normalizes tensors to contiguous
+  (NHWC parameter strides are rejected by safetensors) and C2PSA/Detect use `reshape` instead
+  of `view` for channels_last compatibility; inference/export stay NCHW, bit-identical parity
+  untouched.
 
 ## [0.1.0] - 2026-10-05
 

@@ -11,6 +11,7 @@ batch: 16          # 物理 batch：默认 16 开箱即用（8GB 笔记本可用
 nbs: 128           # 名义 batch = 官方配方的有效 batch（lr0=0.0054 对此量级调优）
                    # -> accum = max(round(nbs/batch), 1)，任何物理 batch 下 lr 语义不变
 imgsz: 640
+channels_last: true  # NHWC 训练（cuDNN 反向快 ~33%，实测 bwd 85->57ms）；推理/导出不受影响
 workers: 8
 seed: 0
 close_mosaic: 10   # 最后 N epoch 关闭 mosaic/mixup/copy_paste

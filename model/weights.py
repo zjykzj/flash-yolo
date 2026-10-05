@@ -29,5 +29,9 @@ def load_weights(model, path, strict=True):
 
 
 def save_weights(model, path):
-    """模型 state_dict -> safetensors（纯权重交付物，配合 load_weights strict 回载）"""
-    save_file(model.state_dict(), path)
+    """模型 state_dict -> safetensors（纯权重交付物，配合 load_weights strict 回载）
+
+    保存前统一转连续：channels_last 训练时参数为 NHWC 步长，safetensors 只接受连续
+    张量（仅规范化内存布局，数值不变；回载时按目标参数布局 copy，不受影响）。
+    """
+    save_file({k: v.detach().cpu().contiguous() for k, v in model.state_dict().items()}, path)

@@ -51,27 +51,33 @@ def build_param_groups(model, cfg, head):
     return groups
 
 
-def _ortho(u2d, iters=5):
-    """Newton-Schulz 松弛正交化（Muon 口径）
+def _ortho_batched(u3d, iters=5):
+    """批量 Newton-Schulz 松弛正交化（Muon 口径）
 
-    u2d: (rows, cols) 2D 张量；rows > cols 时对转置做迭代后转回。
+    u3d: (G, rows, cols) 同形状矩阵组；rows > cols 时对转置做迭代后转回。
     输出奇异值落在 ~[0.5, 1.5]（非严格 {0,1} 投影，经验性松弛收敛），
     随后按原始矩阵方向缩放 sqrt(max(1, rows/cols))。
+    数学与逐矩阵 _ortho 等价；组内走 batched matmul，末位舍入可能与逐矩阵不同。
     """
-    rows, cols = u2d.shape
+    rows, cols = u3d.shape[1], u3d.shape[2]
     scale = math.sqrt(max(1.0, rows / cols))
     transposed = False
     if rows > cols:
-        u2d = u2d.T
+        u3d = u3d.transpose(1, 2)
         transposed = True
-    u2d = u2d / (u2d.norm() + 1e-7)
+    u3d = u3d / (u3d.norm(dim=(1, 2), keepdim=True) + 1e-7)
     a, b, c = NS_COEFFS
     for _ in range(iters):
-        A = u2d @ u2d.T
-        u2d = a * u2d + (b * A + c * (A @ A)) @ u2d
+        A = u3d @ u3d.transpose(1, 2)
+        u3d = a * u3d + (b * A + c * (A @ A)) @ u3d
     if transposed:
-        u2d = u2d.T
-    return u2d * scale
+        u3d = u3d.transpose(1, 2)
+    return u3d * scale
+
+
+def _ortho(u2d, iters=5):
+    """单矩阵 NS（兼容入口/测试用；与批量版同一实现路径）"""
+    return _ortho_batched(u2d.unsqueeze(0), iters)[0]
 
 
 class MuSGD(torch.optim.Optimizer):
@@ -138,10 +144,16 @@ class MuSGD(torch.optim.Optimizer):
                 torch._foreach_add_(ms, grads, alpha=1 - momentum)  # m <- beta*m + (1-beta)*g
                 us = torch._foreach_add(torch._foreach_mul(ms, momentum), grads, alpha=1 - momentum) \
                     if nesterov else ms
-                u_orths = []
-                for p, u in zip(params, us):
+                # 按 2D 形状分组，组内一次 batched NS（数学同逐矩阵，末位舍入可能不同）
+                by_shape = {}
+                for i, u in enumerate(us):
                     u2d = u.reshape(u.shape[0], -1) if u.ndim > 1 else u.reshape(1, -1)  # 防御 1D（分组契约 ndim∈{2,4}）
-                    u_orths.append(_ortho(u2d, group["ns_iters"]).reshape_as(p))
+                    by_shape.setdefault(tuple(u2d.shape), []).append((i, u2d))
+                u_orths = [None] * len(params)
+                for idxs in by_shape.values():
+                    O = _ortho_batched(torch.stack([u2d for _, u2d in idxs]), group["ns_iters"])
+                    for (i, _), o in zip(idxs, O):
+                        u_orths[i] = o.reshape_as(params[i])
                 torch._foreach_add_(params, u_orths, alpha=-lr * group["muon_w"])
                 # ---- SGD 更新（独立缓冲，wd 只在此生效；d 在 muon 更新后的 p 上计算）----
                 bs = [state[p]["sgd_b"] for p in params]

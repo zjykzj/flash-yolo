@@ -25,6 +25,7 @@ class TrainConfig:
     batch: int = 16  # 物理 batch（开箱即用值；nbs 累积保证梯度语义不变）
     nbs: int = 64
     imgsz: int = 640
+    channels_last: bool = True  # 训练走 NHWC（cuDNN 反向快 ~33%）；推理/导出链路不受影响
     workers: int = 8
     seed: int = 0
     close_mosaic: int = 10

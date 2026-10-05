@@ -98,8 +98,8 @@ class Detect(nn.Module):
 
     def _forward_head(self, x, box_head, cls_head):
         bs = x[0].shape[0]
-        boxes = torch.cat([box_head[i](x[i]).view(bs, 4 * self.reg_max, -1) for i in range(self.nl)], dim=-1)
-        scores = torch.cat([cls_head[i](x[i]).view(bs, self.nc, -1) for i in range(self.nl)], dim=-1)
+        boxes = torch.cat([box_head[i](x[i]).reshape(bs, 4 * self.reg_max, -1) for i in range(self.nl)], dim=-1)
+        scores = torch.cat([cls_head[i](x[i]).reshape(bs, self.nc, -1) for i in range(self.nl)], dim=-1)
         return {"boxes": boxes, "scores": scores}
 
     def _e2e_postprocess(self, y, feats):

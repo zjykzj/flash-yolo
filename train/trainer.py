@@ -50,6 +50,8 @@ class Trainer:
             load_weights(model, weights, strict=True)
             logger.info(f"initialized from {weights} (finetune)")
         model.to(self.device).train()
+        if cfg.channels_last:  # NHWC 训练（在 EMA deepcopy 之前，副本继承布局）
+            model.to(memory_format=torch.channels_last)
         self.model = model
         self.head = model.model[-1]
 
@@ -244,7 +246,8 @@ class Trainer:
                 set_epoch_lr(self.optimizer, lr_base)
                 lr_last = self.optimizer.param_groups[0]["lr"]
 
-                imgs = imgs.to(self.device, non_blocking=True)
+                imgs = imgs.to(self.device, non_blocking=True,
+                               memory_format=torch.channels_last if self.cfg.channels_last else torch.preserve_format)
                 targets = targets.to(self.device)
                 with torch.autocast(device_type=self.device.type, enabled=self.cfg.amp and self.device.type == "cuda"):
                     preds = self.model(imgs)

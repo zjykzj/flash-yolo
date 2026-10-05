@@ -100,10 +100,10 @@ class Attention(nn.Module):
     def forward(self, x):
         b, c, h, w = x.shape
         n = h * w
-        qkv = self.qkv(x).view(b, self.num_heads, self.key_dim * 2 + self.head_dim, n)
+        qkv = self.qkv(x).reshape(b, self.num_heads, self.key_dim * 2 + self.head_dim, n)
         q, k, v = qkv.split([self.key_dim, self.key_dim, self.head_dim], dim=2)
         attn = ((q * self.scale).transpose(-2, -1) @ k).softmax(dim=-1)
-        x = (v @ attn.transpose(-2, -1)).view(b, c, h, w) + self.pe(v.reshape(b, c, h, w))
+        x = (v @ attn.transpose(-2, -1)).reshape(b, c, h, w) + self.pe(v.reshape(b, c, h, w))
         return self.proj(x)
 
 
