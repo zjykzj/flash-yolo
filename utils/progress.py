@@ -43,23 +43,21 @@ class ProgressBar:
         filled = int(self.width * frac)
         bar = "█" * filled + "░" * (self.width - filled)
         speed_str = f"{speed:.1f}it/s" if speed is not None else "----it/s"
-        if n >= self.total:
-            # 完成：显示该轮耗时（ETA 恒为 0，无信息量）
-            tail = f"· {time.monotonic() - self.start:.1f}s"
-        else:
-            # ETA 优先用瞬时速度（平均速度含数据加载等启动开销，早期严重失真）
-            if speed is not None and speed > 0:
-                eta = (self.total - n) / speed
-            else:
-                elapsed = time.monotonic() - self.start
-                eta = (self.total - n) / (n / elapsed) if n > 0 else 0.0
-            tail = f"· ETA {time.strftime('%H:%M:%S', time.gmtime(max(eta, 0)))}"
-        line = f"\r{self.desc} [{bar}] {n}/{self.total} · {speed_str} {tail}"
+        # 耗时单调递增显示（ultralytics 风格）；结束后自然停在总耗时，无需额外处理
+        elapsed = time.monotonic() - self.start
+        line = f"\r{self.desc} [{bar}] {n}/{self.total} · {speed_str} · {elapsed:.1f}s"
         self.file.write(line + " " * max(0, self.last_len - len(line)))
         self.file.flush()
         self.last_len = len(line)
 
-    def close(self):
-        """结束进度条（换行）"""
-        self.file.write("\n")
+    def close(self, clear=False):
+        """结束进度条
+
+        clear=True: 清掉当前行（配合调用方随后打印定格记录行，避免视觉重复）
+        否则仅换行。
+        """
+        if clear:
+            self.file.write("\r" + " " * self.last_len + "\r")
+        else:
+            self.file.write("\n")
         self.file.flush()

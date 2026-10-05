@@ -63,11 +63,16 @@ class CocoDataset:
             raise FileNotFoundError(f"cannot read image: {self.img_dir / info['file_name']}")
         return img
 
-    def targets(self, idx):
-        """第 idx 张图的 GT：[(xyxy, cls_idx), ...]（含 crowd 标注，与官方 val 口径一致）"""
+    def targets(self, idx, include_crowd=True):
+        """第 idx 张图的 GT：[(xyxy, cls_idx), ...]（默认含 crowd 标注，与官方 val 口径一致）
+
+        include_crowd=False: 剔除 crowd（训练中快速指标用——crowd 不参与匹配）
+        """
         info = self.images[idx]
         out = []
         for a in self.annotations[info["id"]]:
+            if not include_crowd and a.get("iscrowd", 0):
+                continue
             x, y, w, h = a["bbox"]
             out.append(([x, y, x + w, y + h], self.cat_id_to_idx[a["category_id"]]))
         return out

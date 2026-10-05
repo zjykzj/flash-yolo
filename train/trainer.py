@@ -28,7 +28,7 @@ from train.loss import ComputeLoss
 from train.lr import cosine_lr, linear_lr, set_epoch_lr, warmup_lr
 from train.optimizer import MuSGD, build_param_groups
 from train.validator import validate
-from utils.logger import bold, redirect_prints
+from utils.logger import bold
 from utils.progress import ProgressBar
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,8 @@ class Trainer:
         self.accumulate = max(round(cfg.nbs / cfg.batch), 1)
         self.val_enabled = cfg.val_epochs > 0  # val_epochs=0 时全程不验证（小数据集冒烟用）
         self.val_dataset = None  # 懒构建（JSON 解析 ~数秒，仅需一次）
-        self.csv_fields = ["epoch", "time_s", "box", "cls", "dfl", "o2m", "o2o", "loss", "lr", "mAP", "mAP50", "AR@100"]
+        self.csv_fields = ["epoch", "time_s", "box", "cls", "dfl", "o2m", "o2o", "loss", "lr",
+                           "mAP", "mAP50", "P", "R", "AR@100"]
         # close_mosaic 自动适配短跑：官方语义 = 最后 N 个 epoch 关 mosaic，但不超过总轮数的 1/5
         # （缩放结果在 _print_startup 的 mosaic 行体现）
         self.close_mosaic = min(cfg.close_mosaic, cfg.epochs // 5)
@@ -112,9 +113,7 @@ class Trainer:
         ema_model = self.ema.eval_model()
         if self.val_dataset is None:
             self.val_dataset = CocoDataset(self.cfg.data_dir, "val2017")
-        # pycocotools 的裸 print 噪音 -> DEBUG（控制台只留一行 val 指标）
-        with redirect_prints(logger):
-            return validate(ema_model, self.val_dataset, self.device, limit=self.cfg.val_limit)
+        return validate(ema_model, self.val_dataset, self.device, limit=self.cfg.val_limit)
 
     # ---- 保存 ----
     def _save(self, epoch, is_best):
@@ -122,6 +121,16 @@ class Trainer:
         save_resume(
             self.run_dir / "resume.pt", self.model, self.ema, self.optimizer, self.scaler,
             epoch, self.best_fitness, self.cfg, self.run_dir,
+        )
+
+    def _epoch_row(self, epoch, mem, means, n_img, lr):
+        """训练数据行（与表头同构：11 宽右对齐）——进度条 desc 与 epoch 定格行共用，杜绝两处漂移"""
+        return (
+            "%11s" * 2 + "%11.3f" + "%11.4f" + "%11.3f" + "%11.2f" * 2 + "%11d" * 2 + "%11.5f"
+        ) % (
+            f"{epoch + 1}/{self.cfg.epochs}", f"{mem:.2f}G",
+            means["box"], means["cls"], means["dfl"], means["o2m"], means["o2o"],
+            n_img, self.cfg.imgsz, lr,
         )
 
     # ---- 启动信息块 ----
@@ -194,8 +203,8 @@ class Trainer:
         for epoch in range(self.start_epoch, self.cfg.epochs):
             if epoch > self.start_epoch:
                 logger.info("")  # epoch 间空行分隔（bar 不落日志，节奏靠它划分）
-            # 指标表头（每轮重复；列统一 11 宽，与数据行对齐）
-            logger.info("%11s" * 10 % ("Epoch", "GPU_mem", "box", "cls", "dfl", "o2m", "o2o", "Instances", "Size", "lr"))
+            # 指标表头（每轮重复；列统一 11 宽右对齐，与数据行同 6 格缩进）
+            logger.info("      " + "%11s" * 10 % ("Epoch", "GPU_mem", "box", "cls", "dfl", "o2m", "o2o", "Instances", "Size", "lr"))
             if epoch >= self.cfg.epochs - self.close_mosaic and self.cfg.mosaic > 0:
                 self.dataset.close_mosaic()
                 logger.info(f"close_mosaic: mosaic/mixup/copy_paste off from epoch {epoch + 1}")
@@ -274,37 +283,28 @@ class Trainer:
                 mem = torch.cuda.memory_reserved() / 1e9 if self.device.type == "cuda" else 0.0
                 mem_last = mem  # epoch 汇总行复用
                 mean_w = {k: (sum(v) / len(v)) for k, v in window.items()}
-                desc = (
-                    "%11s" * 2 + "%11.3f" + "%11.4f" + "%11.3f" + "%11.2f" * 2 + "%11d" * 2 + "%11.5f"
-                ) % (
-                    f"{epoch + 1}/{self.cfg.epochs}", f"{mem:.2f}G",
-                    mean_w["box"], mean_w["cls"], mean_w["dfl"], mean_w["o2m"], mean_w["o2o"],
-                    len(dl.dataset), self.cfg.imgsz, lr_last,
-                )
+                desc = "      " + self._epoch_row(epoch, mem, mean_w, len(dl.dataset), lr_last)
                 bar.update(bi + 1, speed, desc=desc)
-            bar.close()
+            bar.close(clear=True)  # 进度条清屏，epoch 定格行（下方 logger）是唯一记录
 
-            # ---- epoch 汇总（与表头同格式，落日志为最终记录）----
+            # ---- epoch 汇总（与表头同构右对齐，落日志为最终记录）----
             mean = {k: v / n_batch for k, v in sums.items()}
             elapsed = time.monotonic() - t0
-            epoch_line = (
-                "%11s" * 2 + "%11.3f" + "%11.4f" + "%11.3f" + "%11.2f" * 2 + "%11d" * 2 + "%11.5f"
-            ) % (
-                f"{epoch + 1}/{self.cfg.epochs}", f"{mem_last:.2f}G",
-                mean["box"], mean["cls"], mean["dfl"], mean["o2m"], mean["o2o"],
-                len(dl.dataset), self.cfg.imgsz, lr_last,
-            )
-            logger.info(f"{epoch_line} · {elapsed:.1f}s · {n_batch / elapsed:.1f}it/s")
+            # 数据行与表头同 6 格缩进 + 行尾该轮训练耗时（time_s 同时入 results.csv）
+            logger.info("      " + self._epoch_row(epoch, mem_last, mean, len(dl.dataset), lr_last) + f" · {elapsed:.1f}s")
 
-            # ---- 验证 ----
+            # ---- 验证（训练中趋势口径；正式数字用 scripts/eval.py）----
             metrics = None
             if self.val_enabled and ((epoch + 1) % self.cfg.val_epochs == 0 or epoch == self.cfg.epochs - 1):
                 t_val = time.monotonic()
                 metrics = self._validate()
                 val_elapsed = time.monotonic() - t_val
+                # 与训练表同 11 宽右对齐 + 同 6 格缩进；每轮重复表头，行尾评估耗时
+                logger.info("      " + "%11s" * 8 % ("Class", "Images", "Instances", "Box(P", "R", "mAP50", "mAP50-95", "AR"))
                 logger.info(
-                    f"val: mAP@[.5:.95] {metrics['mAP@[.5:.95]']:.4f} · mAP@50 {metrics['mAP@50']:.4f} · "
-                    f"AR {metrics['AR@100']:.4f} · {metrics['images']} images · {val_elapsed:.1f}s"
+                    "      " + "%11s" % "all" + "%11d" * 2 % (metrics["images"], metrics["instances"])
+                    + "%11.4f" * 5 % (metrics["P"], metrics["R"], metrics["mAP@50"], metrics["mAP@[.5:.95]"], metrics["AR@100"])
+                    + f" · {val_elapsed:.1f}s"
                 )
                 fitness = metrics["mAP@[.5:.95]"]
             else:
@@ -327,7 +327,8 @@ class Trainer:
             "loss": round(mean["total"], 4), "lr": lr,
         }
         if metrics:
-            row.update({"mAP": metrics["mAP@[.5:.95]"], "mAP50": metrics["mAP@50"], "AR@100": metrics["AR@100"]})
+            row.update({"mAP": metrics["mAP@[.5:.95]"], "mAP50": metrics["mAP@50"],
+                        "P": metrics["P"], "R": metrics["R"], "AR@100": metrics["AR@100"]})
         new_file = not self.results_csv.exists()
         with open(self.results_csv, "a", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=self.csv_fields)  # 固定列（无验证的 epoch 留空）
