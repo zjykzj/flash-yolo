@@ -34,6 +34,15 @@ from utils.progress import ProgressBar
 logger = logging.getLogger(__name__)
 
 
+def _fmt_duration(seconds):
+    """训练总耗时人性化单位：<1min 秒 / <1h 分钟 / 其余小时（ultralytics 用小时，短跑不友好）"""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    if seconds < 3600:
+        return f"{seconds / 60:.1f} min"
+    return f"{seconds / 3600:.2f} hours"
+
+
 class Trainer:
     """YOLO26 训练器（--weights 初始化微调 / --resume 断点续训）"""
 
@@ -198,6 +207,7 @@ class Trainer:
 
     # ---- 主循环 ----
     def train(self):
+        t_start = time.monotonic()  # 整段训练墙钟（含启动块与验证）
         self._print_startup()
 
         for epoch in range(self.start_epoch, self.cfg.epochs):
@@ -319,7 +329,13 @@ class Trainer:
             self._save(epoch, is_best)
             self._append_results(epoch, elapsed, mean, lr_last, metrics)
 
-        logger.info(f"training done -> {self.run_dir}")
+        elapsed_total = time.monotonic() - t_start
+        n_epochs = self.cfg.epochs - self.start_epoch
+        logger.info(f"training done -> {self.run_dir} · {n_epochs} epoch{'s' if n_epochs != 1 else ''} "
+                    f"completed in {_fmt_duration(elapsed_total)}")
+        if self.val_enabled:  # 正式口径评估提示（best.safetensors 仅在有验证时落盘）
+            logger.info(f"official eval: python scripts/eval.py --weights {self.run_dir / 'weights' / 'best.safetensors'} "
+                        f"--data {self.cfg.data_dir}")
 
     def _append_results(self, epoch, elapsed, mean, lr, metrics):
         row = {
