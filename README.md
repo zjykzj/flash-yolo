@@ -1,6 +1,6 @@
 # Flash-YOLO
 
-> ⚡ **Train · evaluate · export · infer — minimally and readably.** A framework for lightweight real-time detection with every module independent and complete; YOLO26 reproduced as living proof.
+> ⚡ **Real-time speed, end-to-end training.** A complete, independent framework for lightweight detection — train · evaluate · export · infer, every module readable on its own.
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
@@ -8,7 +8,7 @@
   <a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-2.13-ee4c2c.svg" alt="PyTorch"></a>
 </p>
 
-Not another ultralytics: no monolithic abstractions, no ultralytics dependency — every module is independent, complete, and readable on its own. Core runtime deps: PyTorch + NumPy only.
+No monolithic abstractions, no heavyweight dependencies — core runtime deps: PyTorch + NumPy only.
 
 The first milestone — a faithful YOLO26 reproduction, verified against the official model on COCO val2017:
 
@@ -24,9 +24,11 @@ The first milestone — a faithful YOLO26 reproduction, verified against the off
 - ² The official weights re-run through this repo's pipeline (same preprocessing, postprocessing, and pycocotools metrics, same hardware) — the numbers match Flash-YOLO exactly, which is the expected consequence of bit-identical reproduction
 - The official published 40.1 / 40.9 come from the official metric implementation; the ~0.1 delta to this table is metric-implementation noise, not a model difference
 
+<!--
 ## 📜 Releases
 
-- **v0.1.0** (2026-10-04): Initial release — faithful YOLO26 detection reproduction: verified weight alignment (260 layers · 2,572,280 params, zero-mapping strict load, bit-identical to official output), inference (.pt / .onnx, E2E NMS-free & NMS paths, single image or directory), pt→onnx export (fused E2E graph or raw output), COCO evaluation (pycocotools, per-class metrics, three-stage speed breakdown), architecture summary tool, ultralytics-style logging and `runs/` result convention with YOLO-format label output.
+- **v0.1.0** (2026-10-04): Initial release — a YOLO26 detection reproduction (inference · export · COCO evaluation), bit-identical to the official model.
+-->
 
 ## Quick Start
 
@@ -44,7 +46,8 @@ python scripts/convert_weights.py --src weights/yolo26n.pt --dst weights/yolo26n
 python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/bus.jpg
 python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/
 
-# 4. Export pt -> onnx (E2E fused graph, single output (B,300,6); --raw for the raw head output)
+# 4. Export pt -> onnx (E2E fused graph, single output (B,300,6); --raw for the raw head output;
+#    --dynamic for dynamic batch, default fixed batch=1)
 python scripts/export.py --weights weights/yolo26n.safetensors --out weights/yolo26n.onnx
 
 # 5. COCO evaluation (both paths verified against official numbers)
