@@ -1,40 +1,44 @@
-# YOLO26 训练超参（默认值 = 官方 yolo26n COCO 段配方，独立重写口径）
-# scripts/train.py 的 CLI 参数可覆盖任意字段（yaml 为单一事实源）
+# YOLO26 训练超参：通用默认（recipe: default）+ 官方发布配方段（recipe: official）
+# 优先序：基础值 -> recipe 覆盖（official 按 scale 分档）-> CLI 覆盖；yaml 为单一事实源
+
+# ---- 配方选择 ----
+recipe: default     # default  = 通用训练默认（100 轮，对齐 ultralytics 默认量级）
+                    # official = 官方 YOLO26 发布配方（论文口径，按 scale 分档，见文末）
+                    # CLI: --recipe official
 
 # ---- data / io ----
 data_dir: /home/zjykzj/datasets/coco
 train_split: train2017   # 冒烟/调试可指到 val2017 子集
 scale: n
-epochs: 245
+epochs: 100
 batch: 16          # 物理 batch：默认 16 开箱即用（8GB 笔记本可用）；大显存可调大（BN 更稳、更快），
                    # 梯度语义由 nbs 保证与物理 batch 无关
-nbs: 128           # 名义 batch = 官方配方的有效 batch（lr0=0.0054 对此量级调优）
-                   # -> accum = max(round(nbs/batch), 1)，任何物理 batch 下 lr 语义不变
+nbs: 64            # 名义 batch：accum = max(round(nbs/batch), 1)，任何物理 batch 下 lr 语义不变
 imgsz: 640
 channels_last: true  # NHWC 训练（cuDNN 反向快 ~33%，实测 bwd 85->57ms）；推理/导出不受影响
 workers: 8
 seed: 0
-close_mosaic: 10   # 最后 N epoch 关闭 mosaic/mixup/copy_paste
+close_mosaic: 10   # 最后 N epoch 关闭 mosaic/mixup/copy_paste（trainer 按 min(N, epochs//5) 缩放）
 val_epochs: 1      # 0 = 全程不验证（小数据集冒烟用）
 val_limit: 0       # 0 = 全量 val2017
 limit: 0           # 训练子集（前 N 张；0 = 全量）
 
 # ---- optimizer (MuSGD) ----
-lr0: 0.0054
-lrf: 0.0495
-momentum: 0.947
-weight_decay: 0.00064
-muon_w: 0.528      # Muon 更新权重
-sgd_w: 0.674       # SGD 更新权重
-warmup_epochs: 0.98
+lr0: 0.01
+lrf: 0.01
+momentum: 0.937
+weight_decay: 0.0005
+muon_w: 0.528      # Muon 更新权重（MuSGD 算法常量，非配方项，两档共用）
+sgd_w: 0.674       # SGD 更新权重（同上）
+warmup_epochs: 3.0
 cos_lr: false      # false = 线性衰减
 ns_iters: 5        # Newton-Schulz 迭代次数
 
 # ---- loss ----
-box_gain: 5.63     # CIoU
-cls_gain: 0.56     # BCE（软目标）
-dfl_gain: 9.04     # box-L1（复用 dfl 槽位，reg_max=1 无 DFL）
-cls_w: 2.74        # o2o 分支 cls 额外权重（官方内部旋钮）
+box_gain: 7.5      # CIoU
+cls_gain: 0.5      # BCE（软目标）
+dfl_gain: 1.5      # box-L1（复用 dfl 槽位，reg_max=1 无 DFL）
+cls_w: 2.74        # o2o 分支 cls 额外权重（YOLO26 算法常量，非配方项，两档共用）
 tal_alpha: 0.5
 tal_beta: 6.0
 topk: 10           # o2m TAL top-k
@@ -52,16 +56,51 @@ amp: false         # 默认 fp32（从零训练稳定）；fp16 AMP 在 640² �
                    # 微调（--weights 官方权重初始化）场景可试 --amp
 
 # ---- augment ----
-mosaic: 0.909
-mixup: 0.012
-copy_paste: 0.075
-aug_scale: 0.562
-degrees: 1.11
-shear: 1.46
-translate: 0.071
-fliplr: 0.606
+mosaic: 1.0
+mixup: 0.0
+copy_paste: 0.0
+aug_scale: 0.5
+degrees: 0.0
+shear: 0.0
+translate: 0.1
+fliplr: 0.5
 flipud: 0.0
-hsv_h: 0.014
-hsv_s: 0.645
-hsv_v: 0.566
-bgr: 0.106
+hsv_h: 0.015
+hsv_s: 0.7
+hsv_v: 0.4
+bgr: 0.0
+
+# ---- 官方 YOLO26 配方（recipe: official）----
+# base = 官方 n 档全量，同时作为其余档位的公共值；scale_overrides 为各档增量。
+# 来源：官方训练配方文档（O365v1 预训练 150 轮 + COCO 微调段，下表为 COCO 段）。
+# 注意：官方没有任何模型从随机权重直接训 COCO；从零训练用此配方属近似补偿口径。
+recipes:
+  official:
+    base:
+      epochs: 245
+      nbs: 128
+      lr0: 0.0054
+      lrf: 0.0495
+      momentum: 0.947
+      weight_decay: 0.00064
+      warmup_epochs: 0.98
+      box_gain: 5.63
+      cls_gain: 0.56
+      dfl_gain: 9.04
+      mosaic: 0.909
+      mixup: 0.012
+      copy_paste: 0.075
+      aug_scale: 0.562
+      degrees: 1.11
+      shear: 1.46
+      translate: 0.071
+      fliplr: 0.606
+      hsv_h: 0.014
+      hsv_s: 0.645
+      hsv_v: 0.566
+      bgr: 0.106
+    scale_overrides:
+      s: {epochs: 70, lr0: 0.00038, lrf: 0.882, momentum: 0.948, weight_decay: 0.00027, warmup_epochs: 0.99}
+      m: {epochs: 80, lr0: 0.00038, lrf: 0.882, momentum: 0.948, weight_decay: 0.00027, warmup_epochs: 0.99}
+      l: {epochs: 60, lr0: 0.00038, lrf: 0.882, momentum: 0.948, weight_decay: 0.00027, warmup_epochs: 0.99}
+      x: {epochs: 40, lr0: 0.00038, lrf: 0.882, momentum: 0.948, weight_decay: 0.00027, warmup_epochs: 0.99}

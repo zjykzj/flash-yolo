@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   image at a time — steady 89.5→146 img/s (~56→~34 s per val2017 epoch); assigner chunk trimming
   now needs a single host transfer (≤8 device syncs/step → 1) and preds NaN diagnostics are
   sampled every 10 steps (loss finiteness still checked every step).
+- **Training recipes — default is now the general 100-epoch recipe**: `config/train.yaml` ships
+  two recipes: `default` (100 epochs, ultralytics-aligned lr/loss/aug defaults) and `official`
+  (published YOLO26 recipe per scale — 245/70/80/60/40 epochs for n/s/m/l/x, lr0 0.0054/0.00038,
+  selectable via `--recipe official`). Previously the file only contained the official yolo26n
+  COCO-stage values (245 epochs) as the defaults.
 
 ## [0.1.0] - 2026-10-05
 

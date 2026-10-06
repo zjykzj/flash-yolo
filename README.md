@@ -52,9 +52,12 @@ python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data /path
 
 # 6. Train from scratch (COCO-format dataset: images/<split>/ + annotations/instances_<split>.json;
 #    fp32 by default, per-epoch validation, best/last weights -> runs/train/<name>/weights/;
-#    official 40.1 = Objects365 pretrain + COCO finetune, from-scratch COCO is not a like-for-like
-#    comparison; YOLO labels -> COCO json: dataflow-cv convert yolo2coco <images> <labels> <classes.txt> <out.json>)
-python scripts/train.py --data /path/to/coco --epochs 20
+#    default recipe = 100 epochs; --recipe official switches to the published YOLO26 recipe
+#    per scale (n/s/m/l/x = 245/70/80/60/40 epochs); official 40.1 = Objects365 pretrain +
+#    COCO finetune, from-scratch COCO is not a like-for-like comparison;
+#    YOLO labels -> COCO json: dataflow-cv convert yolo2coco <images> <labels> <classes.txt> <out.json>)
+python scripts/train.py --data /path/to/coco                     # default recipe (100 epochs)
+python scripts/train.py --data /path/to/coco --recipe official   # published YOLO26 recipe (n: 245)
 
 # 7. Evaluate trained weights (official pycocotools numbers)
 python scripts/eval.py --weights runs/train/<name>/weights/best.safetensors --data /path/to/coco
@@ -87,7 +90,7 @@ pytest tests/    # 50+ tests: weight alignment / export parity / metric correctn
 
 ## 🚀 Changelog
 
-- **Unreleased**: M3 training pipeline — from-scratch YOLO26 dual-head training (ProgLoss · STAL · MuSGD), FastMetrics validation, best/last checkpoints
+- **Unreleased**: M3 training pipeline — from-scratch YOLO26 dual-head training (ProgLoss · STAL · MuSGD), FastMetrics validation, best/last checkpoints; two training recipes — `default` (100 epochs) and `official` (published YOLO26 per-scale recipe, `--recipe official`)
 - **v0.1.0** (2026-10-04): Initial release — a faithful YOLO26 reproduction, verified against the official model on COCO val2017 (inference · export · evaluation), bit-identical to the official model.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.

@@ -1,11 +1,10 @@
-"""训练配置：TrainConfig dataclass + yaml 加载 + CLI 合并（与 config/train.yaml 同包相邻）
+"""训练配置：TrainConfig dataclass + yaml 加载（含配方合并）+ CLI 合并（与 config/train.yaml 同包相邻）
 
-优先序：config/train.yaml 为单一事实源，CLI 参数只覆盖显式提供的字段
-（argparse 默认 None，避免 yaml 被硬编码默认值遮蔽）。
+优先序：config/train.yaml 基础值 -> `recipes.<recipe>` 覆盖（official 按 scale 取增量）
+-> CLI 显式字段（argparse 默认 None，避免 yaml 被硬编码默认值遮蔽）。
 """
 
 import logging
-import warnings
 from dataclasses import dataclass, fields
 
 import yaml
@@ -15,13 +14,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TrainConfig:
-    """训练超参（默认值 = 官方 yolo26n COCO 段配方，见 config/train.yaml）"""
+    """训练超参（默认值 = 通用训练默认 recipe: default，见 config/train.yaml）"""
+
+    recipe: str = "default"  # default = 通用默认 | official = 官方 YOLO26 发布配方（按 scale 分档）
 
     # data / io
     data_dir: str = "/home/zjykzj/datasets/coco"
     train_split: str = "train2017"  # 冒烟/调试可指到 val2017 子集
     scale: str = "n"
-    epochs: int = 245
+    epochs: int = 100
     batch: int = 16  # 物理 batch（开箱即用值；nbs 累积保证梯度语义不变）
     nbs: int = 64
     imgsz: int = 640
@@ -34,20 +35,20 @@ class TrainConfig:
     limit: int = 0  # 训练子集（前 N 张；0 = 全量）
 
     # optimizer (MuSGD)
-    lr0: float = 0.0054
-    lrf: float = 0.0495
-    momentum: float = 0.947
-    weight_decay: float = 0.00064
+    lr0: float = 0.01
+    lrf: float = 0.01
+    momentum: float = 0.937
+    weight_decay: float = 0.0005
     muon_w: float = 0.528
     sgd_w: float = 0.674
-    warmup_epochs: float = 0.98
+    warmup_epochs: float = 3.0
     cos_lr: bool = False
     ns_iters: int = 5
 
     # loss
-    box_gain: float = 5.63
-    cls_gain: float = 0.56
-    dfl_gain: float = 9.04
+    box_gain: float = 7.5
+    cls_gain: float = 0.5
+    dfl_gain: float = 1.5
     cls_w: float = 2.74
     tal_alpha: float = 0.5
     tal_beta: float = 6.0
@@ -62,33 +63,59 @@ class TrainConfig:
     # ema / amp
     ema_decay: float = 0.9999
     ema_tau: int = 2000
-    amp: bool = True
+    amp: bool = False
 
     # augment
-    mosaic: float = 0.909
-    mixup: float = 0.012
-    copy_paste: float = 0.075
-    aug_scale: float = 0.562  # 仿射缩放增益（与模型档位 scale 字段区分）
-    degrees: float = 1.11
-    shear: float = 1.46
-    translate: float = 0.071
-    fliplr: float = 0.606
+    mosaic: float = 1.0
+    mixup: float = 0.0
+    copy_paste: float = 0.0
+    aug_scale: float = 0.5  # 仿射缩放增益（与模型档位 scale 字段区分）
+    degrees: float = 0.0
+    shear: float = 0.0
+    translate: float = 0.1
+    fliplr: float = 0.5
     flipud: float = 0.0
-    hsv_h: float = 0.014
-    hsv_s: float = 0.645
-    hsv_v: float = 0.566
-    bgr: float = 0.106
+    hsv_h: float = 0.015
+    hsv_s: float = 0.7
+    hsv_v: float = 0.4
+    bgr: float = 0.0
 
 
-def load_train_config(path) -> TrainConfig:
-    """yaml -> TrainConfig（未知 key 告警，不静默丢弃）"""
+def load_train_config(path, recipe=None, scale=None) -> TrainConfig:
+    """yaml -> TrainConfig（优先序：基础值 -> recipe 覆盖 -> 传入的 recipe/scale）
+
+    Args:
+        path: config/train.yaml 路径
+        recipe: 覆盖 yaml 的 recipe 字段（CLI --recipe）
+        scale: 覆盖 yaml 的 scale 字段（official 配方按档位取增量）
+    """
     with open(path) as f:
         raw = yaml.safe_load(f) or {}
+    recipes = raw.get("recipes") or {}
     known = {fld.name for fld in fields(TrainConfig)}
-    unknown = set(raw) - known
+    recipe = recipe or raw.get("recipe", "default")
+    scale = scale or raw.get("scale", "n")
+
+    overrides = {}
+    if recipe != "default":
+        entry = recipes.get(recipe)
+        if entry is None:
+            raise ValueError(f"unknown recipe {recipe!r} (train.yaml 提供: {sorted(recipes)})")
+        overrides = dict(entry.get("base") or {})
+        per_scale = entry.get("scale_overrides") or {}
+        if scale in per_scale:
+            overrides.update(per_scale[scale])
+        elif scale != "n":  # n 档即 base 本身
+            raise ValueError(f"recipe {recipe!r} 没有 scale {scale!r} 的配方（提供: n, {sorted(per_scale)}）")
+
+    unknown = (set(raw) - known - {"recipes"}) | (set(overrides) - known)
     if unknown:
         logger.warning(f"train.yaml 未识别字段（忽略）: {sorted(unknown)}")
-    return TrainConfig(**{k: v for k, v in raw.items() if k in known})
+    merged = {k: v for k, v in raw.items() if k in known}
+    merged.update({k: v for k, v in overrides.items() if k in known})
+    merged["recipe"] = recipe
+    merged["scale"] = scale
+    return TrainConfig(**merged)
 
 
 def apply_cli(cfg: TrainConfig, args) -> TrainConfig:

@@ -44,8 +44,12 @@ def main():
     parser.add_argument("--device", default=None, help="torch device (default: auto)")
     parser.add_argument("--name", default=None, help="run dir suffix (runs/train/train-<name>)")
     parser.add_argument("--scale", dest="scale", default=None, help="model scale (n/s/m/l/x)")
+    parser.add_argument("--recipe", default=None, help="training recipe preset (default: yaml `recipe`; "
+                                                       "e.g. official = published YOLO26 recipe, per scale)")
     parser.add_argument("--train-split", dest="train_split", default=None, help="training split (default train2017)")
-    parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=None, help="mixed precision (default: on)")
+    parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=None,
+                        help="mixed precision fp16+GradScaler (default: yaml `amp`, false; from-scratch "
+                             "training NaNs — intended for --weights finetune)")
     parser.add_argument("--channels-last", dest="channels_last", action=argparse.BooleanOptionalAction, default=None,
                         help="NHWC training memory format (default: yaml)")
     parser.add_argument("--cos-lr", dest="cos_lr", action=argparse.BooleanOptionalAction, default=None)
@@ -60,7 +64,7 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel("DEBUG")
 
-    cfg = load_train_config(TRAIN_CONFIG_PATH)
+    cfg = load_train_config(TRAIN_CONFIG_PATH, recipe=args.recipe, scale=args.scale)
     if args.data:
         cfg.data_dir = args.data
     apply_cli(cfg, args)
