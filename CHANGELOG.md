@@ -74,6 +74,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Training-time mAP was under-reported ~10x (FastMetrics accumulated the PR curve in
+  per-image order instead of global score order)** — AP was accumulated over detections
+  concatenated image-by-image; COCOeval semantics require all detections of a class sorted
+  globally by score (`_prepare`) before the precision/recall sweep. With interleaved scores
+  across images the precision envelope collapses: on one fixed set of detections (1000 val
+  images) mAP50 was 0.0183 before and 0.1973 after the fix, matching pycocotools' 0.197; on
+  the full val2017 the fixed FastMetrics matches `scripts/eval.py` to 3 decimals (5.71% vs
+  5.74%). P/R/AR were unaffected (they were already computed in global score order). Impact:
+  the in-training log / results.csv / best-selection mAP was systematically 9–14x too low —
+  one full run displayed mAP50 0.62% at epoch 2 where the true value was 5.74%. Regression
+  gate: `tests/test_metrics.py::test_global_score_order_across_images`.
 - **Training loss normalization now matches the official implementation (ultralytics E2ELoss)** —
   from-scratch runs never converged because two of the three loss terms were mis-normalized
   versus the reference the recipe is calibrated against (diagnosed from a 12-epoch run: every cls

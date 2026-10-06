@@ -5,7 +5,8 @@
 
 口径近似（文档化）:
     - 贪婪匹配：每图每类按分数降序，IoU >= 阈值匹配未用 GT（同 COCOeval）
-    - 101 点 PR 插值（同 COCOeval）；AP = 10 个 IoU 阈值（0.5:0.05:0.95）的均值
+    - 101 点 PR 插值（同 COCOeval）；AP = 10 个 IoU 阈值（0.5:0.05:0.95）的均值；
+      累积前按分数全局排序（同 COCOeval `_prepare`——跨图拼接序会 10 倍级低估）
     - mAP = 各类 AP 的均值；AR@100 = 各阈值召回（maxDets=100）对类与阈值的均值
     - P/R = IoU 0.5 下 max-F1 置信度点的精度/召回（ultralytics 训练 val 同口径）
     - crowd 标注不参与（validator 传入 GT 时已剔除）
@@ -142,15 +143,19 @@ class FastMetrics:
                     per_thr_tp[ti].append(tps[:, ti])
                     per_thr_fp[ti].append(~tps[:, ti])
 
+            # COCOeval 口径：该类全部检测先按分数全局排序再累积 PR——逐图拼接顺序
+            # 不等价（曾按图序直接累积，跨图高分/低分交错时 mAP 被低估 10 倍级，
+            # 用同一批检测框对拍 pycocotools 定位；分数序与逐图匹配结果无关，仅影响累积）
+            order = np.argsort(-scores_all, kind="stable")
             ap_by_thr = []
             rec_by_thr = []
             for ti, thr in enumerate(_IOU_THRESHOLDS):
                 tp = np.concatenate(per_thr_tp[ti]) if per_thr_tp[ti] else np.zeros(0, bool)
                 fp = np.concatenate(per_thr_fp[ti]) if per_thr_fp[ti] else np.zeros(0, bool)
+                tp, fp = tp[order], fp[order]
                 if ti == 0:  # IoU=0.5：全局按分数降序累积 -> max-F1 置信度点的 P/R
                     if len(tp):
-                        order = np.argsort(-scores_all, kind="stable")
-                        tpc, fpc = np.cumsum(tp[order]), np.cumsum(fp[order])
+                        tpc, fpc = np.cumsum(tp), np.cumsum(fp)
                         prec = tpc / np.maximum(tpc + fpc, 1)
                         rec = tpc / n_gt_c
                         f1 = 2 * prec * rec / np.maximum(prec + rec, 1e-9)

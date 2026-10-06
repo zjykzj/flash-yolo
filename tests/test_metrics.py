@@ -59,6 +59,24 @@ def test_iou_threshold_behavior():
     print(f"  IoU=0.6: AP50=1.0, AP[.5:.95]={r['mAP@[.5:.95]']:.4f}")
 
 
+def test_global_score_order_across_images():
+    """跨图检测必须按分数全局排序累积 PR（COCOeval 口径）——图序拼接是错的
+
+    图1: GT1；检测 [TP(0.5), FP(0.1)]；图2: GT2；检测 [FP(0.9), TP(0.8)]。
+    全局分数序 = [FP.9, TP.8, TP.5, FP.1] -> recall [0,.5,1,1]、precision [0,.5,2/3,.5]
+    -> 精度包络 [2/3,2/3,2/3,.5] -> AP50 = 2/3（图序累积会得到 0.752，回归闸门）。
+    """
+    m = FastMetrics(nc=1)
+    m.update(np.array([[0, 0, 10, 10], [100, 100, 110, 110]]), np.array([0.5, 0.1]), np.array([0, 0]),
+             np.array([[0, 0, 10, 10]]), np.array([0]))
+    m.update(np.array([[100, 100, 110, 110], [0, 0, 10, 10]]), np.array([0.9, 0.8]), np.array([0, 0]),
+             np.array([[0, 0, 10, 10]]), np.array([0]))
+    r = m.compute()
+    assert abs(r["mAP@50"] - 2 / 3) < 1e-3, r["mAP@50"]
+    assert abs(r["P"] - 2 / 3) < 1e-3 and abs(r["R"] - 1.0) < 1e-3, (r["P"], r["R"])
+    print(f"  跨图全局排序: AP50={r['mAP@50']:.4f} (=2/3), P={r['P']:.2f}, R={r['R']:.2f}")
+
+
 def test_multi_class_mean():
     """类 0 完美、类 1 无检测 -> mAP50 = 0.5"""
     m = FastMetrics(nc=2)
