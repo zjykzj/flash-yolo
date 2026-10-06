@@ -108,10 +108,10 @@ class YOLO26(nn.Module):
             ch.append(c2)
         return nn.Sequential(*layers), save
 
-    def forward(self, x):
-        """按 from 路由执行：-1 用当前张量，非负索引取历史层输出，列表取多个层"""
+    def _forward_layers(self, x, layers):
+        """按 from 路由执行层序列；返回 (最终张量, 已保存层的输出表)"""
         y = {}
-        for m in self.model:
+        for m in layers:
             f = m.f
             if isinstance(f, int):
                 if f != -1:
@@ -121,7 +121,24 @@ class YOLO26(nn.Module):
             x = m(x)
             if m.i in self.save:
                 y[m.i] = x
+        return x, y
+
+    def forward(self, x):
+        """按 from 路由执行：-1 用当前张量，非负索引取历史层输出，列表取多个层"""
+        x, _ = self._forward_layers(x, self.model)
         return x
+
+    def forward_feats(self, x):
+        """backbone+neck 前向：返回 head 的输入特征列表
+
+        训练中 val 验证复用同一次前向：特征既供 head 的训练口径双分支输出（算 val 损失），
+        又供 E2E 后处理（算指标）——与整模型前向的数值一致（同一路由、同一层序列）。
+        """
+        x, y = self._forward_layers(x, self.model[:-1])
+        f = self.model[-1].f
+        if isinstance(f, int):
+            return [x] if f == -1 else [y[f]]
+        return [x if j == -1 else y[j] for j in f]
 
 
 def build_yolo26(scale="n", cfg_path=None):

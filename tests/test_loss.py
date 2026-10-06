@@ -40,7 +40,7 @@ def test_loss_empty_batch():
         _, preds = _preds(model)
     total, items = loss_fn(preds, torch.zeros(0, 6), batch_size=1, imgsz=640)
     assert torch.isfinite(total) and total.item() >= 0
-    assert items["box"] == 0.0 and items["dfl"] == 0.0
+    assert items["box"] == 0.0 and items["l1"] == 0.0
     print(f"  空批有限: total={total.item():.3f}")
 
 

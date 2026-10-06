@@ -30,6 +30,16 @@ def fmt_elapsed(seconds):
     return f"{h} h {m:02d} min"
 
 
+def fmt_num(v, width=11, prec=4):
+    """定宽数值文本：常规用定点（与历史输出逐字符一致）；超宽回退科学计数
+
+    训练/验证损失在退化状态可能到 1e12 量级——定点会把 11 宽列撑破、串列错位；
+    回退 2 位小数的科学计数（含 11 字符内）保证列永远对齐。
+    """
+    s = f"{v:{width}.{prec}f}"
+    return s if len(s) <= width else f"{v:{width}.2e}"
+
+
 class ProgressBar:
     """单行进度条：百分比条 + 计数 + 瞬时速度 + ETA"""
 

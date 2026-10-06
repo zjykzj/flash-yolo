@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Validation losses (results.csv only)**: every validation round also computes the val loss
+  with the same `ComputeLoss` on the same EMA model, from the *same* backbone/neck forward
+  (`YOLO26.forward_feats`; eval-mode BN, no running-stat pollution — metrics stay bit-identical
+  to the previous validator, 200-image baseline diff 0.0). The five items (box/cls/l1/o2m/o2o,
+  same definitions as the train row) are written to `results.csv` as
+  `val_box, val_cls, val_l1, val_o2m, val_o2o` (empty on non-validation epochs) and are
+  deliberately **not printed** — matching the official behavior (ultralytics' console shows no
+  val loss either; its values live in `val/*_loss` CSV columns). Cost ≈ +10 s per full val2017
+  round (~2% of a 100-epoch run). Val letterbox size now follows the configured `imgsz` (was
+  hardcoded 640, which mis-sized the loss anchors for non-640 runs); the train row's loss
+  columns use a width-aware formatter (fixed-point as before, scientific fallback for
+  degenerate values, so a diverging run cannot break column alignment); the gated smoke asserts
+  the new CSV columns.
 - **Training pipeline (M3)**: complete from-scratch COCO training — `train/` package with
   TAL+STAL assigner, dual-head loss (CIoU + BCE + box-L1) with ProgLoss schedule (o2m 0.8→0.1),
   MuSGD optimizer (Muon+Newton-Schulz orthogonalization blended with Nesterov SGD), EMA,
@@ -20,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`dfl_loss` renamed to `l1_loss`** in the epoch table header, `results.csv` column and val
+  row (reg_max=1 has no DFL — the term is a plain L1; this matches the official ultralytics
+  loss names for YOLO26). The config field stays `dfl_gain` (same name as `hyp.dfl` in the
+  official implementation).
 - **Training throughput ~5x**: TAL assigner + loss rewritten as batched `(B,N,M)` masked ops
   (the per-image Python loop was ~105k kernel launches and thousands of device syncs per step)
   and MuSGD elementwise updates switched to `_foreach_*` with a single device sync per step;

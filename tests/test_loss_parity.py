@@ -79,7 +79,7 @@ def test_loss_parity_vs_ultralytics():
         assert _rel(it[name] * BATCH, ref_totals[name].item()) < 1e-4, (name, it[name])
         assert _rel(it["box"] * cfg.box_gain, ref_items["box_loss"].item()) < 1e-4
         assert _rel(it["cls"] * cfg.cls_gain, ref_items["cls_loss"].item()) < 1e-4
-        assert _rel(it["dfl"] * cfg.dfl_gain, ref_items["l1_loss"].item()) < 1e-4
+        assert _rel(it["l1"] * cfg.dfl_gain, ref_items["l1_loss"].item()) < 1e-4
 
     # ProgLoss 加权总损失（双分支一次运行）
     total, _ = loss_fn(preds, targets, BATCH, IMGSZ)

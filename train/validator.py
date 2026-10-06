@@ -4,6 +4,11 @@
 
 控制台节奏（与训练行同机制）：调用方先打印 VAL_HEADER，进度条 desc 用实时 all 行
 （图数/实例数真实增长，指标列 '-' 占位），结束时定格为真实指标行并保留。
+val 损失（可选，传入 loss_fn 时启用）：与训练完全相同的损失实现（同一 ComputeLoss），
+复用同一次 backbone/neck 前向（forward_feats → head 训练口径双分支输出 → 损失与 E2E
+指标双用途，eval 模式 BN 不污染统计）；逐 batch 累加、按 batch 数平均，返回的
+result["loss"] = box/cls/l1/o2m/o2o（与训练行同义）。**仅写入 results.csv，控制台不
+展示**——官方 ultralytics 同口径（其控制台同样无 val 损失，值只在 val/*_loss CSV 列）。
 """
 
 import time
@@ -11,7 +16,7 @@ import time
 import numpy as np
 import torch
 
-from config.defaults import CONF_THRES
+from config.defaults import CONF_THRES, IMGSZ
 from data.preprocess import preprocess
 from train.metrics import FastMetrics
 from utils.engine import Detections
@@ -21,6 +26,8 @@ from utils.progress import ProgressBar
 __all__ = ["validate", "VAL_HEADER", "format_val_row"]
 
 VAL_HEADER = "      " + "%11s" * 7 % ("Class", "Images", "Instances", "P", "R", "mAP50", "mAP50-95")
+
+_LOSS_KEYS = ("box", "cls", "l1", "o2m", "o2o")
 
 
 def format_val_row(metrics=None, images=0, instances=0):
@@ -37,34 +44,57 @@ def format_val_row(metrics=None, images=0, instances=0):
     return "      " + "%11s" % "all" + "%11d" * 2 % (images, instances) + tail
 
 
-def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16):
+def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn=None, imgsz=IMGSZ):
     """EMA 模型（已 eval）在数据集上评估
 
-    前向按 batch 合并（逐图 batch-1 前向是验证侧的主要开销），后处理/指标逐图不变。
+    前向按 batch 合并（逐图 batch-1 前向是验证侧的主要开销），后处理/指标逐图不变；
+    loss_fn 传入时同一批特征（forward_feats + head 训练口径双分支输出）另算 val 损失。
 
     Returns:
         metrics dict：mAP@50 / mAP@[.5:.95] / AR@100 / P / R / images / instances
+        （loss_fn 非空时另有 result["loss"] = {box, cls, l1, o2m, o2o}，逐 batch 平均）
     """
     model.model[-1].end2end = True
+    head = model.model[-1]
     metrics = FastMetrics(nc=len(dataset.names))
 
     n = len(dataset) if not limit else min(limit, len(dataset))
     if n == 0:
-        return metrics.compute()
+        result = metrics.compute()
+        if loss_fn is not None:
+            result["loss"] = dict.fromkeys(_LOSS_KEYS, 0.0)
+        return result
 
     bar = ProgressBar(n, desc=format_val_row())
     t0 = time.monotonic()
     n_inst_seen = 0
     speed = None
+    loss_sums = dict.fromkeys(_LOSS_KEYS, 0.0)
+    n_batches = 0
     pending = []  # (idx, image, tensor, ratio, pad)
     for i in range(n):
         image = dataset.load_image(i)
-        img, ratio, pad = preprocess(image)
+        img, ratio, pad = preprocess(image, imgsz)  # letterbox 尺寸 = 训练 imgsz（与损失锚点/训练侧一致）
         pending.append((i, image, img, ratio, pad))
         if len(pending) < batch and i != n - 1:
             continue
         with torch.no_grad():
-            outs = model(torch.cat([p[2] for p in pending], 0).to(device)).cpu().numpy()  # (b, 300, 6)
+            feats = model.forward_feats(torch.cat([p[2] for p in pending], 0).to(device))
+            preds = head._forward_train(feats)  # 训练口径双分支原始输出（eval 模式 BN，更新统计已停用）
+            outs = head._e2e_postprocess(preds["one2one"], feats).cpu().numpy()  # (b, 300, 6)
+            if loss_fn is not None:
+                # 目标变换到 letterbox 空间（scale_boxes 的逆变换），与训练损失同像素口径
+                tgt = []
+                for bi, (j, _img, _t, ratio, pad) in enumerate(pending):
+                    for (x1, y1, x2, y2), c in dataset.targets(j, include_crowd=False):
+                        tgt.append([bi, c, x1 * ratio + pad[1], y1 * ratio + pad[0],
+                                    x2 * ratio + pad[1], y2 * ratio + pad[0]])
+                tg = (torch.tensor(tgt, dtype=torch.float32, device=device) if tgt
+                      else torch.zeros((0, 6), device=device))
+                _, items = loss_fn(preds, tg, len(pending), imgsz)
+                for k in loss_sums:
+                    loss_sums[k] += items[k]
+                n_batches += 1
         for (j, img_j, _t, ratio, pad), out in zip(pending, outs):
             mask = out[:, 4] > conf
             boxes = scale_boxes(out[mask][:, :4], ratio, pad, *img_j.shape[:2])
@@ -85,4 +115,6 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16):
     # 定格：末次刷新换成真实指标行（保留末段速度），换行保留（与训练行同机制）
     bar.update(n, speed, desc=format_val_row(result))
     bar.close()
+    if loss_fn is not None:
+        result["loss"] = {k: v / max(n_batches, 1) for k, v in loss_sums.items()}
     return result

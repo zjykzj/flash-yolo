@@ -7,7 +7,7 @@
                 （官方分母是 Σtarget_scores 而非元素数 B·N·nc——曾用全元素均值把
                 cls 梯度稀释 ~10^6 倍，分类头整轮不动、mAP 恒 0，见 CHANGELOG）
         L_l1:   Σ_fg mean_4(|Δltrb|·stride/imgsz)·t / Σt
-                （ltrb 按 stride/imgsz 归一化后再取 4 边均值；dfl 槽位复用，reg_max=1 无 DFL）
+                （ltrb 按 stride/imgsz 归一化后再取 4 边均值；reg_max=1 无 DFL）
 总损失 = alpha*L_o2m + (1-alpha)*L_o2o（ProgLoss，alpha 逐 epoch 0.8 -> 0.1）；两项同增益，
 不额外加权（官方 E2ELoss 口径）。损失按 batch 求和（x batch），配合 nbs/accum 口径
 （梯度尺度与物理 batch 无关）。
@@ -92,7 +92,7 @@ class ComputeLoss:
         anchors, strides = self._anchors(imgsz)
         gt, gt_mask = self._padded_gt(targets, batch_size)
         total = torch.zeros((), device=self.device)
-        items = {"box": 0.0, "cls": 0.0, "dfl": 0.0, "o2m": 0.0, "o2o": 0.0}
+        items = {"box": 0.0, "cls": 0.0, "l1": 0.0, "o2m": 0.0, "o2o": 0.0}
         has_o2o = "one2one" in preds
 
         for branch, name in (("one2many", "o2m"), ("one2one", "o2o")):
@@ -135,7 +135,7 @@ class ComputeLoss:
             items[name] = items[name] + branch_loss
             items["box"] = items["box"] + l_box / batch_size
             items["cls"] = items["cls"] + l_cls / batch_size
-            items["dfl"] = items["dfl"] + l_l1 / batch_size
+            items["l1"] = items["l1"] + l_l1 / batch_size
 
         # 一次性同步取日志值（每 iter 仅此一处 device->host）
         keys = list(items)

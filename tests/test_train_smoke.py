@@ -80,7 +80,14 @@ def test_train_smoke(tmp_path):
     assert all(np.isfinite(v) for v in losses + o2m), f"出现 NaN 损失: {losses} {o2m}"
     assert all(v < 100 for v in o2m), f"损失疑似发散: {o2m}"
     assert all(r["mAP"] for r in rows), "每 epoch 都应有验证指标"
-    print(f"  冒烟通过: o2m {o2m[0]:.2f} -> {o2m[-1]:.2f}（32 图小样本波动属正常）")
+    # val 损失：有限且非负即可——toy 短跑在 eval 模式下框可能整体退化（BN 统计未收敛、
+    # 与 GT 全无重叠 -> 软标签 t=0 -> box/l1 恰为 0，属损失的正确语义；cls 仍 > 0）
+    val_box = [float(r["val_box"]) for r in rows]
+    val_cls = [float(r["val_cls"]) for r in rows]
+    assert all(np.isfinite(v) and v >= 0 for v in val_box), f"val box 损失异常: {val_box}"
+    assert all(np.isfinite(v) and v > 0 for v in val_cls), f"val cls 损失异常: {val_cls}"
+    print(f"  冒烟通过: o2m {o2m[0]:.2f} -> {o2m[-1]:.2f}（32 图小样本波动属正常）· "
+          f"val_box {val_box[0]:.3f} -> {val_box[-1]:.3f} · val_cls {val_cls[0]:.2f}")
 
 
 def csv_reader(path):
