@@ -63,9 +63,15 @@ def test_tal_known_answer():
     assert out["target_scores"][10].argmax().item() == 0, "竞争 anchor 应归 CIoU 更高的 GT1"
     assert out["target_scores"][5].argmax().item() == 0
     assert out["target_scores"][15].argmax().item() == 1
-    # 软标签 per-GT 归一化
-    assert abs(out["target_scores"][[5, 6, 9, 10], 0].sum().item() - 1.0) < 1e-5
-    assert abs(out["target_scores"][[11, 14, 15], 1].sum().item() - 1.0) < 1e-5
+    # 软标签官方口径：t = align/align_max × CIoU_max（对正样本用公开原语复算）
+    pos0 = torch.tensor([5, 6, 9, 10])
+    cx, cy = anchors[0][pos0], anchors[1][pos0]
+    pred0 = torch.stack([cx - 1, cy - 1, cx + 1, cy + 1], -1)  # ltrb=1 -> 2x2 grid 框
+    ciou0 = bbox_iou_torch(pred0, torch.tensor([1.0, 1.0, 3.0, 3.0])).clamp_min(0)
+    align0 = scores[0, pos0].sigmoid().pow(0.5) * ciou0.pow(6)
+    expect0 = align0 / align0.max() * ciou0.max()
+    np.testing.assert_allclose(out["target_scores"][pos0, 0].tolist(), expect0.tolist(), rtol=1e-5)
+    assert out["target_scores"][pos0, 1].abs().max().item() == 0.0, "GT2 列不应有 GT1 正样本"
     # 回归目标（逐 anchor grid 单位，原始框）
     np.testing.assert_allclose(out["target_ltrb"][10].tolist(), [1.5, 1.5, 0.5, 0.5], atol=1e-5)  # GT1 [1,1,3,3]
     np.testing.assert_allclose(out["target_boxes"][10].tolist(), [1, 1, 3, 3], atol=1e-5)

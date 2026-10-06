@@ -1,17 +1,20 @@
-"""双分支训练损失 + ProgLoss 权重调度（批量口径）
+"""双分支训练损失 + ProgLoss 权重调度（批量口径，归一化与官方 ultralytics 逐项对齐）
 
-每图每分支：
+每图每分支（三项共用归一化分母 Σt = 全 batch 软标签之和，官方 `target_scores_sum`）：
     L = box_gain*L_ciou + cls_gain*L_bce + dfl_gain*L_l1
-        L_ciou: 正样本 (1-CIoU)，按软标签加权，除以正样本软分数总和（per-GT 归一化后即 GT 数）
-        L_bce:  全 anchor BCEWithLogits 软目标（均值口径）
-        L_l1:   正样本 ltrb 距离 L1（grid 单位，均值口径；dfl 槽位复用，reg_max=1 无 DFL）
-总损失 = alpha*L_o2m + (1-alpha)*L_o2o（ProgLoss，alpha 逐 epoch 0.8 -> 0.1）；
-o2o 分支 cls 额外乘 cls_w。损失按 batch 求和（x batch），配合 nbs/accum 口径
+        L_ciou: Σ_fg (1-CIoU)·t / Σt（软标签加权；无正样本时为 0）
+        L_bce:  Σ_all BCEWithLogits(软目标 t) / Σt
+                （官方分母是 Σtarget_scores 而非元素数 B·N·nc——曾用全元素均值把
+                cls 梯度稀释 ~10^6 倍，分类头整轮不动、mAP 恒 0，见 CHANGELOG）
+        L_l1:   Σ_fg mean_4(|Δltrb|·stride/imgsz)·t / Σt
+                （ltrb 按 stride/imgsz 归一化后再取 4 边均值；dfl 槽位复用，reg_max=1 无 DFL）
+总损失 = alpha*L_o2m + (1-alpha)*L_o2o（ProgLoss，alpha 逐 epoch 0.8 -> 0.1）；两项同增益，
+不额外加权（官方 E2ELoss 口径）。损失按 batch 求和（x batch），配合 nbs/accum 口径
 （梯度尺度与物理 batch 无关）。
 
-批量口径：所有项对全 batch 一次算完（(B, N[, nc]) 掩码张量），逐图归一化语义不变
-（BCE 等尺寸下「全 batch 均值 ×B」≡「逐图均值求和」）。分配输入 detach 且 assigner
-内部 no_grad（官方口径）：标签分配是离散操作，梯度只经损失项回流。
+批量口径：所有项对全 batch 一次算完（(B, N[, nc]) 掩码张量）。分配输入 detach 且
+assigner 内部 no_grad（官方口径）：标签分配是离散操作，梯度只经损失项回流。
+tests/test_loss_parity.py 以固定输入对官方 E2ELoss 做逐项数值 parity。
 """
 
 import torch
@@ -100,33 +103,32 @@ class ComputeLoss:
                 weight = 1.0  # 无 o2o 分支时 o2m 独占
             boxes = preds[branch]["boxes"].float()  # (B, 4, N) ltrb grid 单位
             scores = preds[branch]["scores"].float()  # (B, nc, N)
-            cls_w = self.cfg.cls_w if branch == "one2one" else 1.0
 
             # 标签分配（detach + 内部 no_grad，官方口径）
             a = self.assigner.forward_batch(
                 boxes.detach(), scores.detach(), anchors, strides, gt, gt_mask, one2one=(branch == "one2one")
             )
             fg = a["fg_mask"]  # (B, N)
+            t = a["target_scores"]  # (B, N, nc) 软标签（官方口径，逐 GT 归一）
+            t_sum = t.sum().clamp_min(1.0)  # 官方三项损失共用的归一化分母 Σtarget_scores
+            w = t.sum(-1)  # (B, N) 逐 anchor 软权重（非 fg 恒 0）
 
-            # 全 anchor 软目标 BCE（等尺寸下全 batch 均值 x B ≡ 逐图均值之和）
+            # 分类：官方 `bce.sum() / target_scores_sum`（×batch 维持 Σ_img 口径）
             l_cls = F.binary_cross_entropy_with_logits(
-                scores.permute(0, 2, 1), a["target_scores"], reduction="mean"
-            ) * batch_size * cls_w
+                scores.permute(0, 2, 1), t, reduction="sum"
+            ) / t_sum * batch_size
 
-            # 正样本 (1-CIoU) 软标签加权，逐图除以软分数总和（clamp 与逐图版一致）
+            # 框：软加权 (1-CIoU) 求和 / Σt（官方 box 项同式；无正样本时自然为 0）
             ax, ay = anchors[0], anchors[1]
             pred_xyxy = torch.stack(
                 [ax - boxes[:, 0], ay - boxes[:, 1], ax + boxes[:, 2], ay + boxes[:, 3]], 2
             )  # (B, N, 4)
-            w = a["target_scores"].sum(-1)  # (B, N) 软分数权重（非 fg 恒 0）
             ciou = bbox_iou_torch(pred_xyxy, a["target_boxes"], ciou=True)  # (B, N)
-            l_box = torch.where(
-                fg.any(-1), ((1.0 - ciou) * w * fg).sum(-1) / (w * fg).sum(-1).clamp_min(1.0), torch.zeros(())
-            ).sum()
+            l_box = ((1.0 - ciou) * w * fg).sum() / t_sum * batch_size
 
-            # 正样本 ltrb L1（逐图对 fg 取均值；无 fg 图贡献 0）
-            l1 = ((boxes.transpose(1, 2) - a["target_ltrb"]).abs().sum(-1) * fg).sum(-1)
-            l_l1 = (l1 / fg.sum(-1).clamp_min(1)).sum()
+            # l1：ltrb 按 stride/imgsz 归一化后取 4 边均值、软加权 / Σt（官方 reg_max=1 分支同式）
+            d = (boxes.transpose(1, 2) - a["target_ltrb"]) * strides[0][None, :, None] / imgsz
+            l_l1 = (d.abs().mean(-1) * w * fg).sum() / t_sum * batch_size
 
             branch_loss = (self.cfg.box_gain * l_box + self.cfg.cls_gain * l_cls + self.cfg.dfl_gain * l_l1) / batch_size
             total = total + weight * branch_loss * batch_size

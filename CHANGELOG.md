@@ -55,6 +55,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a single `bincount` for per-class GT counts. Outputs are bit-identical to the previous
   implementation (49-case baseline, max diff 0.0), so the metric semantics are unchanged.
 
+### Fixed
+
+- **Training loss normalization now matches the official implementation (ultralytics E2ELoss)** —
+  from-scratch runs never converged because two of the three loss terms were mis-normalized
+  versus the reference the recipe is calibrated against (diagnosed from a 12-epoch run: every cls
+  head bias still at its init value, val mAP 0.0000, BN `running_var` up to 1e9, all losses
+  rising):
+  - **cls** divided the BCE by the raw element count (B·N·nc ≈ 4.3e7) instead of the official
+    soft-target sum `Σtarget_scores` (~10² per batch), diluting the classification gradient by
+    ~10⁶ — the head received effectively zero gradient (predictions stayed at the bias-init
+    sigmoid ≈ 1e-5, so every detection was filtered and mAP was 0 by construction). Now
+    `ΣBCE / Σt`, the same denominator the box and L1 terms use;
+  - **L1** summed `|Δltrb|` in grid units; the official reg_max=1 branch normalizes ltrb by
+    `stride/imgsz`, takes the mean over the 4 sides and soft-weights by t (grid units made the
+    term 10¹–10²× too strong relative to CIoU — L1 was 94% of the total loss, official balance
+    is ≈1:1);
+  - label-assignment soft targets now follow the official TAL normalization
+    (`align/align_max × CIoU_max`, value ⊂ (0, 1] — previously "sums to 1 per GT"), and the o2o
+    second-stage top-k selects by alignment (was CIoU).
+  `tests/test_loss_parity.py` pins all three items and the ProgLoss-weighted total of both
+  branches against the installed ultralytics E2ELoss on fixed inputs (rel < 1e-4).
+- **Removed the extra `cls_w` factor on the o2o classification loss** — the published-recipe
+  doc's "algorithm constant" 2.74 had no counterpart in the official implementation (ultralytics
+  E2ELoss applies no branch-specific cls multiplier; effective o2o:o2m cls weight there is 9×,
+  ours was 24.7×). With it, once ProgLoss pushes the o2o weight to 0.9 the o2o cls P3 head
+  enters a BN-masked compounding growth (loss stays healthy while the head's weights grow
+  geometrically 1.8 → 1e10, then explode; reproduced and A/B-tested by resuming from the
+  epoch-1 checkpoint: with `cls_w=2.74` it blew up within ~110 batches, with `cls_w=1.0` the
+  same schedule ran stable). The field is removed from `TrainConfig` / `train.yaml` / CLI.
+
 ## [0.1.0] - 2026-10-05
 
 ### Added

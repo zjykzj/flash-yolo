@@ -38,7 +38,6 @@ ns_iters: 5        # Newton-Schulz 迭代次数
 box_gain: 7.5      # CIoU
 cls_gain: 0.5      # BCE（软目标）
 dfl_gain: 1.5      # box-L1（复用 dfl 槽位，reg_max=1 无 DFL）
-cls_w: 2.74        # o2o 分支 cls 额外权重（YOLO26 算法常量，非配方项，两档共用）
 tal_alpha: 0.5
 tal_beta: 6.0
 topk: 10           # o2m TAL top-k

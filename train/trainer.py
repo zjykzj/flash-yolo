@@ -189,7 +189,7 @@ class Trainer:
                     f"{self.cfg.lr0} -> {self.cfg.lr0 * self.cfg.lrf:.6f} · "
                     f"close_mosaic last {self.close_mosaic} epochs (from epoch {close_epoch}{scale_note})")
         logger.info(f"loss: box {self.cfg.box_gain} CIoU · cls {self.cfg.cls_gain} BCE · l1 {self.cfg.dfl_gain} · "
-                    f"cls_w {self.cfg.cls_w} · EMA {self.cfg.ema_decay} (tau {self.cfg.ema_tau})")
+                    f"EMA {self.cfg.ema_decay} (tau {self.cfg.ema_tau})")
         logger.info(f"TAL: topk o2m {self.cfg.topk} · o2o {self.cfg.topk_o2o}->{self.cfg.topk2} · "
                     f"STAL {self.cfg.stal_s_min}->{self.cfg.stal_s_ref}px · "
                     f"ProgLoss alpha {self.cfg.prog_alpha_init}->{self.cfg.prog_alpha_final}")

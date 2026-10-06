@@ -45,7 +45,12 @@ def test_loss_empty_batch():
 
 
 def test_loss_batch_scaling():
-    """同一图 batch=2 的损失 ≈ 2x batch=1（梯度口径线性）"""
+    """同一图 batch=2 的损失 ≈ 2x batch=1（梯度口径线性）
+
+    注意区间：官方三项损失共用分母 Σt 且 clamp(min=1)。init 时单 GT 的
+    ciou_max ≈ 0.004 < 1（大 GT 覆盖小预测框），Σt 落进 clamp 区间则非线性
+    （官方同款行为）；本测试用 8 个 ~50px GT 保证 Σt ≫ 1。
+    """
     model = YOLO26(scale="n").train()
     head = model.model[-1]
     loss_fn = ComputeLoss(TrainConfig(), head, torch.device("cpu"))
@@ -53,8 +58,11 @@ def test_loss_batch_scaling():
         x1, preds1 = _preds(model, batch=1)
         x2 = torch.cat([x1, x1])
         preds2 = model(x2)
-    t1 = torch.tensor([[0, 5, 10, 10, 500, 500]], dtype=torch.float32)
-    t2 = torch.tensor([[0, 5, 10, 10, 500, 500], [1, 5, 10, 10, 500, 500]], dtype=torch.float32)
+    boxes = [(40, 40), (120, 40), (200, 40), (280, 40), (40, 120), (120, 120), (200, 120), (280, 120)]
+    t1 = torch.tensor([[0, k, x, y, x + 50, y + 50] for k, (x, y) in enumerate(boxes)], dtype=torch.float32)
+    t2b = t1.clone()
+    t2b[:, 0] = 1.0
+    t2 = torch.cat([t1, t2b])
 
     total1, _ = loss_fn(preds1, t1, batch_size=1, imgsz=640)
     total2, _ = loss_fn(preds2, t2, batch_size=2, imgsz=640)

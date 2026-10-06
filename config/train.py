@@ -49,7 +49,6 @@ class TrainConfig:
     box_gain: float = 7.5
     cls_gain: float = 0.5
     dfl_gain: float = 1.5
-    cls_w: float = 2.74
     tal_alpha: float = 0.5
     tal_beta: float = 6.0
     topk: int = 10

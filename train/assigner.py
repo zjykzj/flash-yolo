@@ -2,8 +2,10 @@
 
 TAL（Task Aligned Label Assignment）：
     对齐度 align = sigmoid(score)^alpha * CIoU^beta，per-GT 取 top-k 为正样本；
-    多 GT 竞争的 anchor 只保留 CIoU 最高的 GT；软标签 = one-hot * 每 GT 归一化 align。
-o2o 分支二次 top-k（topk_o2o 后按 CIoU 取 topk2）实现真一对一。
+    多 GT 竞争的 anchor 只保留 CIoU 最高的 GT；
+    软标签 = one-hot * (align/align_max * CIoU_max)（官方口径：逐 GT 最大归一，
+    再乘该 GT 正样本的最大 CIoU——值域 (0, 1]，不再是"逐 GT 求和为 1"）。
+o2o 分支二次 top-k（topk_o2o 后按对齐度取 topk2）实现真一对一。
 
 STAL（Small-Target-Aware Label Assignment）：
     仅候选筛选阶段，GT 短边 < s_min 时按中心扩到 s_ref 参与 anchor 中心包含测试；
@@ -174,10 +176,11 @@ class TaskAlignedAssigner:
         mask_pos = (align >= topk_align[:, -1:, :]) & candidate
 
         if one2one:
-            # 二次 top-k：per-GT 按 CIoU 只留 topk2（真一对一）
-            ciou_masked = ciou * mask_pos
-            top2, _ = ciou_masked.topk(min(self.topk2, N), dim=1)
-            mask_pos = mask_pos & (ciou_masked >= top2[:, -1:, :])
+            # 二次 top-k：per-GT 在正样本中按对齐度只留 topk2（官方口径；真一对一）
+            top2 = (align * mask_pos).topk(min(self.topk2, N), dim=1).indices  # (B, k2, M)
+            keep = torch.zeros_like(mask_pos)
+            keep.scatter_(1, top2, True)
+            mask_pos = mask_pos & keep
 
         # 多 GT 竞争消解
         mask_pos = select_highest_overlaps(mask_pos, ciou)
@@ -187,13 +190,14 @@ class TaskAlignedAssigner:
             return
         gt_idx = mask_pos.float().argmax(dim=2)  # (B, N)（非 fg 行取 0，下方被 fg 掩码清零）
 
-        # 软标签：per-GT 归一化 align
-        align_sum = align.masked_fill(~mask_pos, 0).sum(1).clamp_min(1e-16)  # (B, M)
-        soft = align / align_sum[:, None, :]  # (B, N, M)
-        soft = soft * mask_pos
+        # 软标签官方口径：t = align/align_max * CIoU_max（逐 GT 最大归一，再乘正样本最大 CIoU；
+        # 官方 overlaps 已 clamp 到 >=0，除法 +eps 防 0/0——无正样本的 GT 结果为 0）
+        am = align * mask_pos                                       # (B, N, M)
+        ov = ciou.clamp_min(0) * mask_pos                           # (B, N, M)
+        norm = am * ov.amax(1, keepdim=True) / (am.amax(1, keepdim=True) + 1e-9)
 
         cls_of = gt_cls.gather(1, gt_idx)  # (B, N)
-        val = soft.gather(2, gt_idx[:, :, None]).squeeze(2) * fg_mask  # (B, N)
+        val = norm.amax(2) * fg_mask  # (B, N)（每 anchor 至多归属 1 个 GT，取该 GT 列）
         out["target_scores"][i:j].scatter_(2, cls_of[:, :, None], val[:, :, None])
 
         # 回归目标（逐 anchor grid 单位，原始框）：l = ax-gx1, t = ay-gy1, r = gx2-ax, b = gy2-ay
