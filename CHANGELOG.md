@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (NHWC parameter strides are rejected by safetensors) and C2PSA/Detect use `reshape` instead
   of `view` for channels_last compatibility; inference/export stay NCHW, bit-identical parity
   untouched.
+- **Faster in-training validation**: validation forwards are batched (16 images) instead of one
+  image at a time — steady 89.5→146 img/s (~56→~34 s per val2017 epoch); assigner chunk trimming
+  now needs a single host transfer (≤8 device syncs/step → 1) and preds NaN diagnostics are
+  sampled every 10 steps (loss finiteness still checked every step).
 
 ## [0.1.0] - 2026-10-05
 

@@ -119,10 +119,11 @@ class TaskAlignedAssigner:
             return out
 
         M = gt.shape[1]
+        counts = gt_mask.sum(1).tolist()  # 唯一一次同步：每图 GT 数取回 CPU，供分块裁剪
         chunk = max(1, self.CHUNK_ELEMS // max(N * M, 1))
         for i in range(0, B, chunk):
             j = min(i + chunk, B)
-            m = int(gt_mask[i:j].sum(1).max())  # 块内裁剪 padding 列（唯一一处同步，每块一次）
+            m = max(counts[i:j])  # 块内裁剪 padding 列（纯 Python，无 device 同步）
             if m == 0:
                 continue
             self._assign_chunk(pred_boxes[i:j], pred_scores[i:j], anchors, strides,

@@ -252,7 +252,9 @@ class Trainer:
                 with torch.autocast(device_type=self.device.type, enabled=self.cfg.amp and self.device.type == "cuda"):
                     preds = self.model(imgs)
                     loss, items = self.loss_fn(preds, targets, imgs.shape[0], self.cfg.imgsz)
-                preds_bad = any(
+                # preds 诊断按 10 步窗口取样：每次 8 个 isfinite+bool 转换（同步）≈ 1.2ms，
+                # NaN 检出延迟 ≤10 步（loss 本身的有限性检查仍每步执行）
+                preds_bad = ((bi + 1) % 10 == 0 or bi == n_batch - 1) and any(
                     not torch.isfinite(preds[b]["boxes"]).all() or not torch.isfinite(preds[b]["scores"]).all()
                     for b in preds
                 )

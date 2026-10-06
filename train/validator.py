@@ -37,8 +37,10 @@ def format_val_row(metrics=None, images=0, instances=0):
     return "      " + "%11s" % "all" + "%11d" * 2 % (images, instances) + tail
 
 
-def validate(model, dataset, device, conf=CONF_THRES, limit=0):
+def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16):
     """EMA 模型（已 eval）在数据集上评估
+
+    前向按 batch 合并（逐图 batch-1 前向是验证侧的主要开销），后处理/指标逐图不变。
 
     Returns:
         metrics dict：mAP@50 / mAP@[.5:.95] / AR@100 / P / R / images / instances
@@ -54,22 +56,28 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0):
     t0 = time.monotonic()
     n_inst_seen = 0
     speed = None
+    pending = []  # (idx, image, tensor, ratio, pad)
     for i in range(n):
         image = dataset.load_image(i)
         img, ratio, pad = preprocess(image)
+        pending.append((i, image, img, ratio, pad))
+        if len(pending) < batch and i != n - 1:
+            continue
         with torch.no_grad():
-            out = model(img.to(device))[0].cpu().numpy()  # (300, 6)
-        mask = out[:, 4] > conf
-        boxes = scale_boxes(out[mask][:, :4], ratio, pad, *image.shape[:2])
-        dets = Detections(boxes, out[mask][:, 4], out[mask][:, 5].astype("int64"))
-        gt = np.array([[x1, y1, x2, y2, c] for (x1, y1, x2, y2), c in dataset.targets(i, include_crowd=False)], np.float32)
-        gt = gt.reshape(-1, 5)
-        n_inst_seen += len(gt)
-        metrics.update(
-            dets.boxes, dets.scores, dets.class_ids,
-            gt[:, :4] if len(gt) else np.zeros((0, 4), np.float32),
-            gt[:, 4].astype(np.int64) if len(gt) else np.zeros(0, np.int64),
-        )
+            outs = model(torch.cat([p[2] for p in pending], 0).to(device)).cpu().numpy()  # (b, 300, 6)
+        for (j, img_j, _t, ratio, pad), out in zip(pending, outs):
+            mask = out[:, 4] > conf
+            boxes = scale_boxes(out[mask][:, :4], ratio, pad, *img_j.shape[:2])
+            dets = Detections(boxes, out[mask][:, 4], out[mask][:, 5].astype("int64"))
+            gt = np.array([[x1, y1, x2, y2, c] for (x1, y1, x2, y2), c in dataset.targets(j, include_crowd=False)], np.float32)
+            gt = gt.reshape(-1, 5)
+            n_inst_seen += len(gt)
+            metrics.update(
+                dets.boxes, dets.scores, dets.class_ids,
+                gt[:, :4] if len(gt) else np.zeros((0, 4), np.float32),
+                gt[:, 4].astype(np.int64) if len(gt) else np.zeros(0, np.int64),
+            )
+        pending.clear()
         if (i + 1) % 10 == 0 or i == n - 1:
             speed = (i + 1) / max(time.monotonic() - t0, 1e-6)
             bar.update(i + 1, speed, desc=format_val_row(images=i + 1, instances=n_inst_seen))
