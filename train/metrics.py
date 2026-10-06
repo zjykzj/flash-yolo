@@ -22,35 +22,57 @@ _RECALL_POINTS = np.linspace(0, 1, 101)  # 101 点插值
 _MAX_DETS = 100  # 每图每类最多参与匹配的检测数（COCO maxDets=100 口径）
 
 
-def _greedy_match(dets_xyxy, dets_scores, gt_xyxy, thr):
-    """单图单类贪婪匹配 -> tp (n,) bool（分数降序，IoU>=thr 匹配未用 GT）"""
-    order = np.argsort(-dets_scores)
-    tp = np.zeros(len(dets_xyxy), bool)
-    matched = np.zeros(len(gt_xyxy), bool)
-    for i in order:
-        if matched.all():
+def _greedy_match_all_thr(iou, det_scores):
+    """单图单类贪婪匹配，全部 IoU 阈值一次遍历 -> tp (n_det, n_thr) bool
+
+    iou: (n_det, n_gt) 与 det_scores 同序（均为分数降序）。每个阈值维护独立的
+    已匹配集合，检测按分数降序依次取"未匹配 GT 中 IoU 最大者"，IoU >= 该阈值才匹配
+    —— 与逐阈值分别遍历的旧实现逐位一致（同顺序、平局取小索引、已全匹配的阈值
+    对后续检测只记 FP）。IoU 恒 >= 0，已匹配位置置 -1 即可让 argmax 只在未匹配
+    集合上选；再用 ~matched 兜底，防止某阈值全匹配后 argmax 落到已匹配项。
+    """
+    n_det, n_gt = iou.shape
+    n_thr = len(_IOU_THRESHOLDS)
+    tp = np.zeros((n_det, n_thr), bool)
+    if n_det == 0 or n_gt == 0:
+        return tp
+    # 整块 IoU 上限 < 最小阈值：任何阈值都不可能匹配（早期训练绝大多数检测属此类），
+    # 直接全 FP 返回，跳过全部阈值循环
+    if iou.max() < _IOU_THRESHOLDS[0]:
+        return tp
+    matched = np.zeros((n_thr, n_gt), bool)
+    ti_idx = np.arange(n_thr)
+    remaining = n_thr * n_gt  # Python 计数器：避免每迭代的 matched.all() 缩减（实测热点）
+    for i in np.argsort(-det_scores):
+        if remaining == 0:
             break
-        rem = np.where(~matched)[0]
-        ious = box_iou_matrix(dets_xyxy[i : i + 1], gt_xyxy[rem])[0]
-        j = int(ious.argmax())
-        if ious[j] >= thr:
-            tp[i] = True
-            matched[rem[j]] = True
+        row = np.where(matched, -1.0, iou[i])  # (n_thr, n_gt)
+        j = row.argmax(1)  # (n_thr,) 各阈值选中的 GT
+        ok = (iou[i][j] >= _IOU_THRESHOLDS) & (~matched[ti_idx, j])
+        if ok.any():
+            tp[i] = ok
+            matched[ti_idx[ok], j[ok]] = True
+            remaining -= int(ok.sum())
     return tp
 
 
 def _ap_from_tp_fp(tp, fp, n_gt):
-    """tp/fp 按分数降序累积 -> 101 点插值 AP"""
+    """tp/fp 按分数降序累积 -> 101 点插值 AP（向量化：右侧运行最大值 + searchsorted）
+
+    与逐点循环版逐位等价：recall 单调不减，`recall >= r` 的精度最大值 = 从首个
+    recall>=r 位置起的右侧运行最大值；无命中点贡献 0。
+    """
+    if len(tp) == 0:
+        return 0.0
     tp_cum = np.cumsum(tp)
     fp_cum = np.cumsum(fp)
     recall = tp_cum / max(n_gt, 1)
     precision = tp_cum / np.maximum(tp_cum + fp_cum, 1)
-    ap = 0.0
-    for r in _RECALL_POINTS:
-        mask = recall >= r
-        if mask.any():
-            ap += float(precision[mask].max())
-    return ap / len(_RECALL_POINTS)
+    prec_right_max = np.maximum.accumulate(precision[::-1])[::-1]
+    idx = np.searchsorted(recall, _RECALL_POINTS, side="left")
+    hit = idx < len(recall)
+    pr = np.where(hit, prec_right_max[np.minimum(idx, len(recall) - 1)], 0.0)
+    return float(pr.sum() / len(_RECALL_POINTS))
 
 
 class FastMetrics:
@@ -90,28 +112,44 @@ class FastMetrics:
                 order = np.argsort(-self.det_scores[i][m])[:_MAX_DETS]
                 per_class[int(c)].append((i, self.det_boxes[i][m][order], self.det_scores[i][m][order]))
 
+        # 每类 GT 计数：一次 bincount（替代 nc x n_images 的逐图扫描）
+        gt_all = np.concatenate(self.gt_cls) if self.n_images else np.zeros(0, np.int64)
+        n_gt_by_cls = np.bincount(gt_all, minlength=self.nc)
+
         ap50s, aps, ars = [], [], []
         prs, rcs = [], []  # IoU=0.5 下 max-F1 点的 P/R（每类）
         for c in range(self.nc):
             items = per_class[c]
-            n_gt_c = sum(len(self.gt_cls[i][self.gt_cls[i] == c]) for i in range(self.n_images))
+            n_gt_c = int(n_gt_by_cls[c])
             if n_gt_c == 0:
                 continue
+            # 每 (图, 类) 的 IoU 矩阵只算一次（与阈值无关），10 个阈值复用；
+            # 该类在本图无 GT 的组合只需记 FP（跳过 IoU 计算，早期训练/散类场景大头）
+            prepared = []
+            for img_idx, d_boxes, d_scores in items:
+                m_gt = self.gt_cls[img_idx] == c
+                prepared.append((d_scores, d_boxes, self.gt_boxes[img_idx][m_gt]))
+            scores_all = np.concatenate([d_scores for d_scores, _, _ in prepared]) if prepared else np.zeros(0)
+            # 阈值维度向量化：每 (图, 类) 的检测序列只遍历一次，再按阈值拆分
+            per_thr_tp = [[] for _ in _IOU_THRESHOLDS]
+            per_thr_fp = [[] for _ in _IOU_THRESHOLDS]
+            for d_scores, d_boxes, gt_boxes in prepared:
+                if len(gt_boxes):
+                    tps = _greedy_match_all_thr(box_iou_matrix(d_boxes, gt_boxes), d_scores)
+                else:
+                    tps = np.zeros((len(d_scores), len(_IOU_THRESHOLDS)), bool)
+                for ti in range(len(_IOU_THRESHOLDS)):
+                    per_thr_tp[ti].append(tps[:, ti])
+                    per_thr_fp[ti].append(~tps[:, ti])
+
             ap_by_thr = []
             rec_by_thr = []
             for ti, thr in enumerate(_IOU_THRESHOLDS):
-                tp_all, fp_all = [], []
-                for img_idx, d_boxes, d_scores in items:
-                    m_gt = self.gt_cls[img_idx] == c
-                    tp = _greedy_match(d_boxes, d_scores, self.gt_boxes[img_idx][m_gt], thr)
-                    tp_all.append(tp)
-                    fp_all.append(~tp)
-                tp = np.concatenate(tp_all) if tp_all else np.zeros(0, bool)
-                fp = np.concatenate(fp_all) if fp_all else np.zeros(0, bool)
+                tp = np.concatenate(per_thr_tp[ti]) if per_thr_tp[ti] else np.zeros(0, bool)
+                fp = np.concatenate(per_thr_fp[ti]) if per_thr_fp[ti] else np.zeros(0, bool)
                 if ti == 0:  # IoU=0.5：全局按分数降序累积 -> max-F1 置信度点的 P/R
                     if len(tp):
-                        scores = np.concatenate([d_scores for _, _, d_scores in items])
-                        order = np.argsort(-scores, kind="stable")
+                        order = np.argsort(-scores_all, kind="stable")
                         tpc, fpc = np.cumsum(tp[order]), np.cumsum(fp[order])
                         prec = tpc / np.maximum(tpc + fpc, 1)
                         rec = tpc / n_gt_c

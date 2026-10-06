@@ -48,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the frozen epoch mean at epoch end) and speed as the cumulative average (`n/elapsed`, tqdm
   semantics) instead of 10-batch sliding windows; the memory column now reports the process peak
   (`max_memory_reserved`, header renamed `GPU_peak`) instead of the jumpy current reserved value.
+- **Faster in-training metrics (~4x)**: `FastMetrics.compute()` vectorized — one IoU matrix per
+  (image, class) reused across all 10 IoU thresholds, all thresholds matched in a single
+  detection pass, short-circuit when a block's max IoU is below the lowest threshold, IoU skipped
+  for (image, class) pairs without GT (counted as FP only), vectorized 101-point AP interpolation
+  and a single `bincount` for per-class GT counts. Outputs are bit-identical to the previous
+  implementation (49-case baseline, max diff 0.0), so the metric semantics are unchanged.
 
 ## [0.1.0] - 2026-10-05
 
