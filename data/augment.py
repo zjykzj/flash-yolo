@@ -113,9 +113,9 @@ def random_perspective(img, labels, hyp, rng):
     S = hyp.imgsz
     h, w = img.shape[:2]
     angle = float(rng.uniform(-hyp.degrees, hyp.degrees))
-    # 缩放增益: aug_scale<1 时 g ∈ [aug_scale, 1/aug_scale]（官方口径，0.562 -> [0.562, 1.779]）
-    lo, hi = (hyp.aug_scale, 1 / hyp.aug_scale) if hyp.aug_scale < 1 else (1 / hyp.aug_scale, hyp.aug_scale)
-    g = float(rng.uniform(lo, hi))
+    # 缩放增益 g ~ U(1-aug_scale, 1+aug_scale)（官方 random_perspective 口径：
+    # 0.5 -> [0.5, 1.5]；曾用 [s, 1/s] = [0.5, 2.0]，上采样端偏强，见 CHANGELOG）
+    g = float(rng.uniform(1 - hyp.aug_scale, 1 + hyp.aug_scale))
     shear = float(rng.uniform(-hyp.shear, hyp.shear))
     tx = float(rng.uniform(-hyp.translate, hyp.translate)) * w
     ty = float(rng.uniform(-hyp.translate, hyp.translate)) * h

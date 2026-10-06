@@ -202,10 +202,9 @@ class Trainer:
         logger.info(f"aug: mosaic {self.cfg.mosaic} · copy_paste {self.cfg.copy_paste} · mixup {self.cfg.mixup} · "
                     f"fliplr {self.cfg.fliplr} · flipud {self.cfg.flipud} · "
                     f"hsv h/s/v {self.cfg.hsv_h}/{self.cfg.hsv_s}/{self.cfg.hsv_v} · bgr {self.cfg.bgr}")
-        inv_scale = 1 / self.cfg.aug_scale
         logger.info(f"     affine (every sample): degrees +/-{self.cfg.degrees} · shear +/-{self.cfg.shear} · "
-                    f"translate +/-{self.cfg.translate} · scale {min(self.cfg.aug_scale, inv_scale):.3f}-"
-                    f"{max(self.cfg.aug_scale, inv_scale):.3f}")
+                    f"translate +/-{self.cfg.translate} · scale {1 - self.cfg.aug_scale:.3f}-"
+                    f"{1 + self.cfg.aug_scale:.3f}")
 
         # 开始
         logger.info("")
@@ -278,10 +277,17 @@ class Trainer:
                 else:
                     loss.backward()
                 if (bi + 1) % self.accumulate == 0 or bi == n_batch - 1:
+                    # 梯度全局范数裁剪 max_norm=10（官方 optimizer_step 同口径，无条件执行）：
+                    # 缺它时 o2o 分类头在"小数据 + 快速到高 lr"下会进入 BN 掩蔽式复利增长
+                    # （train loss 正常但 one2one_cv3 权重 0.68→5.8e18，5-7 轮 NaN；官方同配
+                    # 方同数据 12 轮稳定）。AMP 路径须先 unscale 再裁剪（官方同顺序）。
                     if self.scaler is not None:
+                        self.scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
                         self.scaler.step(self.optimizer)
                         self.scaler.update()
                     else:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
                         self.optimizer.step()
                     self.optimizer.zero_grad(set_to_none=True)
                     self.ema.update(self.model)

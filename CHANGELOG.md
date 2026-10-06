@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Three training-loop parity fixes vs the official implementation (EMA / BN momentum / scale
+  aug)** — (a) **EMA decay**: now the official `decay * (1 - exp(-steps/tau))` ramp; the previous
+  `min(decay, (1+s)/(tau+s))` formula never reaches `decay` (at 100 epochs the weight was 0.989,
+  a ~90-step window ≈ the raw model, where the official saturates at ~0.9999 / ~10k-step
+  window). (b) **BN momentum 0.03** (official yaml-built models use 0.03 on all 114 BatchNorm
+  layers; we had PyTorch's 0.1 default) — running-stats update rate only, the training forward
+  (batch stats) is unaffected; inference numeric alignment is untouched (eps stays 0.001).
+  (c) **Affine scale gain** now `U(1 - s, 1 + s)` (`0.5 → [0.5, 1.5]`), matching the official
+  `random_perspective`; ours was `[s, 1/s]` (`[0.5, 2.0]`), a stronger upsample-side
+  augmentation than the reference.
 - **`dfl_loss` renamed to `l1_loss`** in the epoch table header, `results.csv` column and val
   row (reg_max=1 has no DFL — the term is a plain L1; this matches the official ultralytics
   loss names for YOLO26). The config field stays `dfl_gain` (same name as `hyp.dfl` in the
@@ -85,6 +95,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the in-training log / results.csv / best-selection mAP was systematically 9–14x too low —
   one full run displayed mAP50 0.62% at epoch 2 where the true value was 5.74%. Regression
   gate: `tests/test_metrics.py::test_global_score_order_across_images`.
+- **Added the official gradient clipping (global norm, max_norm=10)** — the official
+  optimizer_step clips unconditionally every step (AMP order: unscale → clip → step); ours
+  had no clipping. A/B on the tiny regime (1000 images, mosaic off, batch 64, 12 epochs):
+  without clipping the run NaNs at epoch 7 — the o2o classification head (`one2one_cv3`)
+  enters a BN-masked compounding growth (0.68 → 7e7 → 5.8e18 while the train losses stayed
+  normal for 4 epochs); with clipping it is stable for 12/12 epochs (0.37 → 0.99, bounded),
+  and the official implementation on the same data/recipe is stable 12/12. A single-variable
+  A/B also showed the MuSGD blend constants (0.528/0.674 vs the official 0.2/1.0) cannot
+  prevent the divergence (NaNs at epoch 4). A full-data probe shows ||g|| ~800-28000 from
+  initialization (every step > 10), and at full lr the unclipped run explodes within 15
+  steps — the clip is load-bearing for lr=0.01 from scratch, not just a safety net.
 - **Training loss normalization now matches the official implementation (ultralytics E2ELoss)** —
   from-scratch runs never converged because two of the three loss terms were mis-normalized
   versus the reference the recipe is calibrated against (diagnosed from a 12-epoch run: every cls

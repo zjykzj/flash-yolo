@@ -8,10 +8,14 @@ from config.train import TrainConfig
 
 
 def _identity_hyp(**over):
-    """透视恒等、其余关闭的最小增强配置"""
+    """透视恒等、其余关闭的最小增强配置
+
+    aug_scale 是增益幅度（官方 random_perspective 语义：g ~ U(1-s, 1+s)），
+    恒等对应 0.0（旧实现为 [s, 1/s] 约定、用 1.0 表示恒等）。
+    """
     hyp = TrainConfig(
         mosaic=0.0, mixup=0.0, copy_paste=0.0, degrees=0.0, shear=0.0, translate=0.0,
-        aug_scale=1.0, fliplr=0.0, flipud=0.0, hsv_h=0.0, hsv_s=0.0, hsv_v=0.0, bgr=0.0,
+        aug_scale=0.0, fliplr=0.0, flipud=0.0, hsv_h=0.0, hsv_s=0.0, hsv_v=0.0, bgr=0.0,
         imgsz=640,
     )
     for k, v in over.items():
