@@ -7,7 +7,6 @@ import csv
 import logging
 import sys
 import time
-from collections import deque
 from dataclasses import asdict
 from pathlib import Path
 
@@ -216,7 +215,7 @@ class Trainer:
             if epoch > self.start_epoch:
                 logger.info("")  # epoch 间空行分隔（bar 不落日志，节奏靠它划分）
             # 指标表头（每轮重复；列统一 11 宽右对齐，与数据行同 6 格缩进）
-            logger.info("      " + "%11s" * 10 % ("Epoch", "GPU_mem", "box_loss", "cls_loss", "dfl_loss",
+            logger.info("      " + "%11s" * 10 % ("Epoch", "GPU_peak", "box_loss", "cls_loss", "dfl_loss",
                                                 "o2m_loss", "o2o_loss", "Instances", "Size", "lr"))
             if epoch >= self.cfg.epochs - self.close_mosaic and self.cfg.mosaic > 0:
                 self.dataset.close_mosaic()
@@ -230,9 +229,7 @@ class Trainer:
                 raise RuntimeError("训练集为空（检查 data_dir 与 --limit）")
             bar = ProgressBar(n_batch, desc="")
             t0 = time.monotonic()
-            t_window, n_window = t0, 0
-            speed = None  # 10 batch 窗口速度（首个 batch 时立即计算）
-            window = {k: deque(maxlen=10) for k in ("box", "cls", "dfl", "o2m", "o2o")}  # 近 10 batch 滑动均值
+            speed = None  # 累计平均速度（tqdm 口径：n / 已耗时）
             sums = {"box": 0.0, "cls": 0.0, "dfl": 0.0, "o2m": 0.0, "o2o": 0.0, "total": 0.0}
             lr_last = 0.0
 
@@ -288,17 +285,16 @@ class Trainer:
                         sums[k] += loss.detach().item() / self.cfg.batch
                     else:
                         sums[k] += items.get(k, 0.0)
-                        window[k].append(items.get(k, 0.0))
 
-                # 每 batch 刷新行内指标（近 10 batch 滑动均值 + lr + 显存）；
-                # 速度按 10 batch 窗口计（相邻 batch 瞬时值噪声大）
+                # 每 10 batch 刷新行内指标（ultralytics tloss 口径）：
+                #   损失 = epoch 内累计运行均值（行内值在 epoch 末尾自然收敛到定格值，无断层）
+                #   速度 = 累计平均（tqdm 口径，不再 10 batch 窗口跳动）
+                #   显存 = 进程峰值（max_memory_reserved 单调、不跳动，判 OOM 风险才有意义）
                 if (bi + 1) % 10 == 0 or bi == n_batch - 1 or speed is None:
-                    now = time.monotonic()
-                    speed = (bi + 1 - n_window) / max(now - t_window, 1e-6)
-                    t_window, n_window = now, bi + 1
-                mem = torch.cuda.memory_reserved() / 1e9 if self.device.type == "cuda" else 0.0
+                    speed = (bi + 1) / max(time.monotonic() - t0, 1e-6)
+                mem = torch.cuda.max_memory_reserved() / 1e9 if self.device.type == "cuda" else 0.0
                 mem_last = mem  # epoch 汇总行复用
-                mean_w = {k: (sum(v) / len(v)) for k, v in window.items()}
+                mean_w = {k: v / (bi + 1) for k, v in sums.items()}
                 desc = "      " + self._epoch_row(epoch, mem, mean_w, len(dl.dataset), lr_last)
                 bar.update(bi + 1, speed, desc=desc)
             # ---- epoch 定格（ultralytics 机制）：进度条行即记录，结束后保留 ----

@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (published YOLO26 recipe per scale — 245/70/80/60/40 epochs for n/s/m/l/x, lr0 0.0054/0.00038,
   selectable via `--recipe official`). Previously the file only contained the official yolo26n
   COCO-stage values (245 epochs) as the defaults.
+- **Training display aligned with ultralytics semantics**: the epoch progress row now shows
+  losses as the running mean within the epoch (ultralytics `tloss`; the live value converges to
+  the frozen epoch mean at epoch end) and speed as the cumulative average (`n/elapsed`, tqdm
+  semantics) instead of 10-batch sliding windows; the memory column now reports the process peak
+  (`max_memory_reserved`, header renamed `GPU_peak`) instead of the jumpy current reserved value.
 
 ## [0.1.0] - 2026-10-05
 
