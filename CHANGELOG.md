@@ -64,6 +64,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Run logs now live in the run directory**: `train` / `eval` / `infer` write
+  `runs/<kind>/<name>/run.log` instead of a timestamped file under `logs/`, so a run directory is
+  self-contained — copy, archive, compare or delete it as one unit — and its log can be found
+  without guessing from a timestamp (which never carried the run name). A resumed run appends to
+  the same `run.log` instead of starting a second file, and `--resume <dir>` now reuses that
+  directory rather than creating a stray empty `runs/train/trainN/` on the way in. The file format
+  (timestamped plain text, 10 MB x 5 rotation) and the console output are unchanged, and `logs/`
+  stays as the fallback for scripts without a run directory (`bench_io`, `convert_weights`, ...).
+  `attach_file_log()` is idempotent, replaces any previous file handler and removes the fallback
+  file when it is still empty; it also writes a two-line header (run dir + argv) so the log is
+  self-describing.
+
 - **The eval console table now matches the training-side layout, and finally shows P/R and the size
   buckets**: `scripts/eval.py` prints 11-wide right-aligned columns (the same shape as the
   in-training val row) and adds two columns the evaluator computed but never displayed —

@@ -20,10 +20,11 @@ import torch
 from config.defaults import TRAIN_CONFIG_PATH
 from config.train import apply_cli, load_train_config
 from train.trainer import Trainer
-from utils.logger import get_logger, setup_logging
+from utils.logger import attach_file_log, get_logger, setup_logging
 from utils.paths import increment_path
 
-setup_logging()
+# 控制台立刻可用；文件日志等 run 目录确定后挂（见 attach_file_log）
+setup_logging(to_file=False)
 logger = get_logger(__name__)
 
 # TrainConfig 可调字段按类型分组（argparse 默认 None -> 不覆盖 yaml）
@@ -78,7 +79,14 @@ def main():
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-    run_dir = increment_path(ROOT / "runs" / "train" / ("train" + (f"-{args.name}" if args.name else "")))
+    if args.resume:
+        # resume 复用 checkpoint 所在目录（Runner 也会按 ckpt["run_dir"] 覆盖）：不新建目录，
+        # 日志也追加到同一个 run.log —— 一次训练只有一份完整日志
+        resume_path = Path(args.resume)
+        run_dir = resume_path if resume_path.is_dir() else resume_path.parent
+    else:
+        run_dir = increment_path(ROOT / "runs" / "train" / ("train" + (f"-{args.name}" if args.name else "")))
+    attach_file_log(run_dir / "run.log")
     # 头部信息由 Trainer._print_startup 统一打印（避免重复）
 
     trainer = Trainer(cfg, device=device, run_dir=run_dir, resume=args.resume, weights=args.weights)

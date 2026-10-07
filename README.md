@@ -98,7 +98,7 @@ slower (same-augment screen at epoch 7: 0.215 vs 0.236 mAP@[.5:.95]). Use the ba
 `best_raw` · `epochNNN.safetensors` every 20 epochs (fork mid-run) · `results.csv` (per-epoch
 metrics + val losses) · `diag/train_diag.csv` (pre-clip gradient norm, per-group lr, loss
 breakdown) · `samples/*.png` (augmented-sample grids with GT boxes) · `meta.json` (git/env/config
-snapshot) · `resume.pt`.
+snapshot) · `run.log` (that run's console/file log) · `resume.pt`.
 
 **Not like for like.** The published 40.1 is Objects365 pretrain (150 epochs) + COCO finetune
 (245 epochs) — no official checkpoint was trained on COCO from random weights, so a from-scratch
@@ -112,7 +112,7 @@ config/    model config (yolo26.yaml, n/s/m/l/x scales) + train config (train.ya
            + recipes/ (named training recipes: yolo26-coco-ft, yolo26-o365-pt)
 data/      COCO readers + training dataset & augmentation pipeline (official-parity augment)
 eval/      COCO evaluation (pycocotools wrapper)
-logs/      runtime logs (gitignored)
+logs/      logs of scripts without a run dir (gitignored; run-dir scripts write <run>/run.log)
 model/     model implementation (assembler / dual Detect head / basic operator layer / weight loading)
 runs/      runtime results (gitignored)
 scripts/   download_weights / convert_weights / infer / export / eval / train / bench_io /

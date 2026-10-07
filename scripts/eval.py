@@ -32,11 +32,12 @@ from config.defaults import CONF_THRES, IMGSZ, IOU_THRES, MAX_DET
 from data.coco import CocoDataset
 from eval.coco_evaluator import CocoEvaluator
 from utils.engine import OnnxEngine, PtEngine
-from utils.logger import bold, get_logger, log_file_only, redirect_prints, setup_logging
+from utils.logger import attach_file_log, bold, get_logger, log_file_only, redirect_prints, setup_logging
 from utils.paths import increment_path
 from utils.progress import ProgressBar
 
-setup_logging()
+# 控制台立刻可用；文件日志等 run 目录确定后挂（见 attach_file_log）
+setup_logging(to_file=False)
 logger = get_logger(__name__)
 
 # 表格渲染：6 空格缩进 + 类名左对齐（最长 COCO 类名 "baseball glove" 14 字符，留 1 位余量）
@@ -82,6 +83,9 @@ def main():
 
     if args.verbose:
         logging.getLogger().setLevel("DEBUG")
+
+    run_dir = increment_path(ROOT / "runs" / "val" / "val")  # 提前建：日志/结果同目录，评测中即可跟踪
+    attach_file_log(run_dir / "run.log")
 
     with redirect_prints(logger):  # pycocotools 的裸 print -> DEBUG
         dataset = CocoDataset(args.data, args.split)
@@ -170,7 +174,6 @@ def main():
 
     # ---- 保存到 runs/val/valN（递增目录：完整指标表 + COCO 结果 json）----
     # metrics.txt 始终写全表（含 per-class），与 --summary-only 的终端裁剪无关：文件是记录载体
-    run_dir = increment_path(ROOT / "runs" / "val" / "val")
     lines = [f"val: {args.split} {n_total} images · conf={args.conf} · iou={args.iou} · max_det={args.max_det}",
              TABLE_HEADER, *full_table, "", size_line, thr_line, speed_line, model_line, done_line, *ref_lines]
     (run_dir / "metrics.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")

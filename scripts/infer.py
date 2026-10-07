@@ -20,11 +20,12 @@ import cv2
 from config import __version__
 from config.defaults import COCO_NAMES, IMGSZ
 from utils.engine import OnnxEngine, PtEngine
-from utils.logger import bold, get_logger, setup_logging
+from utils.logger import attach_file_log, bold, get_logger, setup_logging
 from utils.paths import increment_path
 from utils.visualize import draw_detections
 
-setup_logging()
+# 控制台立刻可用；文件日志等 run 目录确定后挂（见 attach_file_log）
+setup_logging(to_file=False)
 logger = get_logger(__name__)
 
 _IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -79,6 +80,7 @@ def main():
     else:
         run_dir = increment_path(ROOT / "runs" / "predict" / "predict")
     run_dir.mkdir(parents=True, exist_ok=True)
+    attach_file_log(run_dir / "run.log")
 
     logger.info(bold(f"Flash-YOLO {__version__} · YOLO26n · {'E2E (NMS-free)' if end2end else 'o2m+NMS'} · engine {args.engine}"))
 
