@@ -21,14 +21,16 @@ from data.dataset import CocoTrainDataset, collate_fn, worker_init_fn
 from model.summary import summary_lines
 from model.weights import load_weights
 from model.yolo26 import CONFIG_PATH, YOLO26
-from train.checkpoint import load_resume, save_best_last, save_resume
+from train.checkpoint import load_resume, save_best_last, save_periodic, save_resume
 from train.ema import ModelEMA
 from train.loss import ComputeLoss
-from train.lr import cosine_lr, linear_lr, set_epoch_lr, warmup_lr
+from train.lr import cosine_lr, linear_lr, set_epoch_lr, warmup_lr, warmup_momentum
 from train.optimizer import MuSGD, build_param_groups
 from train.validator import VAL_HEADER, format_val_row, validate
 from utils.logger import bold, log_file_only
+from utils.paths import write_run_meta
 from utils.progress import ProgressBar, fmt_elapsed, fmt_num
+from utils.visualize import draw_target_grid
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,15 @@ class Trainer:
         # close_mosaic 自动适配短跑：官方语义 = 最后 N 个 epoch 关 mosaic，但不超过总轮数的 1/5
         # （缩放结果在 _print_startup 的 mosaic 行体现）
         self.close_mosaic = min(cfg.close_mosaic, cfg.epochs // 5)
+        self.stop_after = cfg.stop_after if cfg.stop_after > 0 else cfg.epochs  # 筛选实验：跑到第 N 轮停
+        self.diag_path = self.run_dir / "diag" / "train_diag.csv"
+        self.samples_dir = self.run_dir / "samples"
+        self.diag_fields = ["epoch", "batch", "lr", "lr_x3", "gnorm", "box", "cls", "l1", "o2m", "o2o", "loss"]
+
+    def _sample_epochs(self):
+        """增强抽样可视化的轮次：首轮 / close_mosaic 生效首轮 / 末轮（去重）"""
+        last = self.stop_after - 1
+        return {self.start_epoch, self.cfg.epochs - self.close_mosaic, last} & set(range(self.start_epoch, self.stop_after))
 
     # ---- 数据 ----
     def _dataloader(self, epoch):
@@ -119,9 +130,43 @@ class Trainer:
         return validate(ema_model, self.val_dataset, self.device, limit=self.cfg.val_limit,
                         loss_fn=self.loss_fn, imgsz=self.cfg.imgsz)
 
-    # ---- 保存 ----
+    # ---- 产物 ----
+    def _write_diag(self, epoch, bi, gnorm, items, loss):
+        """每 diag_interval 个优化步一行：梯度整体范数（clip 前）+ 分组 lr + 损失分解
+
+        gnorm 是 clip_grad_norm_ 的返回值（裁剪前范数），唯一一次 device->host 同步；
+        饱和度 = 10/gnorm，长期 <1 说明实际步长 ∝ lr（见 CLAUDE.md 训练诊断一节）。
+        """
+        import csv as _csv
+
+        base = [g["lr"] for g in self.optimizer.param_groups if g.get("lr_mult", 1.0) == 1.0]
+        row = {"epoch": epoch + 1, "batch": bi, "lr": min(base) if base else 0.0,
+               "lr_x3": max((g["lr"] for g in self.optimizer.param_groups), default=0.0),
+               "gnorm": round(gnorm, 3), "loss": round(loss, 5)}
+        row.update({k: round(items.get(k, 0.0), 5) for k in ("box", "cls", "l1", "o2m", "o2o")})
+        new_file = not self.diag_path.exists()
+        self.diag_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.diag_path, "a", newline="", encoding="utf-8") as f:
+            w = _csv.DictWriter(f, fieldnames=self.diag_fields)
+            if new_file:
+                w.writeheader()
+            w.writerow(row)
+
+    def _write_meta(self):
+        write_run_meta(self.run_dir, {
+            "config": asdict(self.cfg),
+            "data": {"dir": self.cfg.data_dir, "train_split": self.cfg.train_split,
+                     "images": len(self.dataset), "instances": self.dataset.n_instances,
+                     "categories": self.dataset.n_categories},
+            "model": {"scale": self.cfg.scale, "params": sum(p.numel() for p in self.model.parameters())},
+            "train": {"accumulate": self.accumulate, "close_mosaic_from": max(self.cfg.epochs - self.close_mosaic, 0),
+                      "stop_after": self.stop_after, "device": str(self.device)},
+        })
+
     def _save(self, epoch, is_best):
-        save_best_last(self.run_dir, self.ema.ema, is_best)
+        save_best_last(self.run_dir, self.ema.ema, is_best, raw_model=self.model)
+        if self.cfg.save_period and (epoch + 1) % self.cfg.save_period == 0:
+            save_periodic(self.run_dir, self.ema.ema, epoch, keep=self.cfg.keep_periodic)
         save_resume(
             self.run_dir / "resume.pt", self.model, self.ema, self.optimizer, self.scaler,
             epoch, self.best_fitness, self.cfg, self.run_dir,
@@ -199,15 +244,22 @@ class Trainer:
         logger.info(f"TAL: topk o2m {self.cfg.topk} · o2o {self.cfg.topk_o2o}->{self.cfg.topk2} · "
                     f"STAL {self.cfg.stal_s_min}->{self.cfg.stal_s_ref}px · "
                     f"ProgLoss alpha {self.cfg.prog_alpha_init}->{self.cfg.prog_alpha_final}")
-        logger.info(f"aug: mosaic {self.cfg.mosaic} · copy_paste {self.cfg.copy_paste} · mixup {self.cfg.mixup} · "
-                    f"fliplr {self.cfg.fliplr} · flipud {self.cfg.flipud} · "
+        logger.info(f"aug: mosaic {self.cfg.mosaic} · copy_paste {self.cfg.copy_paste}({self.cfg.copy_paste_mode}) · "
+                    f"mixup {self.cfg.mixup} · fliplr {self.cfg.fliplr} · flipud {self.cfg.flipud} · "
                     f"hsv h/s/v {self.cfg.hsv_h}/{self.cfg.hsv_s}/{self.cfg.hsv_v} · bgr {self.cfg.bgr}")
+        if self.cfg.copy_paste > 0 and self.cfg.copy_paste_mode != "box":
+            logger.info("      copy_paste ignored: 官方 CopyPaste 需要 instance segments，检测标签下恒为 no-op "
+                        "（copy_paste_mode=box 可开启矩形贴块近似）")
+        if self.cfg.save_period or self.cfg.diag_interval or self.cfg.aug_samples:
+            logger.info(f"products: save_period {self.cfg.save_period or '-'} · "
+                        f"diag_interval {self.cfg.diag_interval or '-'} · aug_samples {self.cfg.aug_samples or '-'}")
         logger.info(f"     affine (every sample): degrees +/-{self.cfg.degrees} · shear +/-{self.cfg.shear} · "
                     f"translate +/-{self.cfg.translate} · scale {1 - self.cfg.aug_scale:.3f}-"
                     f"{1 + self.cfg.aug_scale:.3f}")
 
         # 开始
         logger.info("")
+        self._write_meta()  # run 元数据（环境/配置/数据规模/命令行）
         logger.info(f"results: {self.run_dir}")
         logger.info(bold(f"Starting training for {self.cfg.epochs} epochs..."))
 
@@ -227,6 +279,7 @@ class Trainer:
                 logger.info(f"close_mosaic: mosaic/mixup/copy_paste off from epoch {epoch + 1}")
             self.loss_fn.set_alpha(epoch, self.cfg.epochs)
             self.model.train()
+            self._opt_step = 0  # 诊断行按优化步计数（accum 边界对齐）
 
             dl = self._dataloader(epoch)
             n_batch = len(dl)
@@ -245,8 +298,15 @@ class Trainer:
                     if self.cfg.cos_lr
                     else linear_lr(t, self.cfg.epochs, self.cfg.lr0, self.cfg.lrf)
                 )
-                set_epoch_lr(self.optimizer, lr_base)
+                # warmup 期间动量线性爬升（官方训练循环同口径；之后恒为 cfg.momentum）
+                mom = warmup_momentum(t, self.cfg.warmup_epochs, self.cfg.momentum, self.cfg.warmup_momentum)
+                set_epoch_lr(self.optimizer, lr_base, momentum=mom)
                 lr_last = self.optimizer.param_groups[0]["lr"]
+
+                # 增强抽样可视化：首个 / close_mosaic 后首个 / 末轮各存一张网格图
+                if bi == 0 and self.cfg.aug_samples and epoch in self._sample_epochs():
+                    draw_target_grid(imgs, targets, self.samples_dir / f"epoch{epoch + 1:03d}.png",
+                                     n=self.cfg.aug_samples)
 
                 imgs = imgs.to(self.device, non_blocking=True,
                                memory_format=torch.channels_last if self.cfg.channels_last else torch.preserve_format)
@@ -283,14 +343,18 @@ class Trainer:
                     # 方同数据 12 轮稳定）。AMP 路径须先 unscale 再裁剪（官方同顺序）。
                     if self.scaler is not None:
                         self.scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
+                        gnorm_t = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
                         self.scaler.step(self.optimizer)
                         self.scaler.update()
                     else:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
+                        gnorm_t = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
                         self.optimizer.step()
                     self.optimizer.zero_grad(set_to_none=True)
                     self.ema.update(self.model)
+                    # 诊断行：裁剪前梯度范数（clip_grad_norm_ 返回值，免额外反向/同步）
+                    self._opt_step += 1
+                    if self.cfg.diag_interval and self._opt_step % self.cfg.diag_interval == 0:
+                        self._write_diag(epoch, bi, float(gnorm_t), items, loss.detach().item())
 
                 for k in sums:
                     if k == "total":
@@ -337,9 +401,13 @@ class Trainer:
 
             self._save(epoch, is_best)
             self._append_results(epoch, elapsed, mean, lr_last, metrics)
+            if self.cfg.stop_after and epoch + 1 >= self.stop_after:  # 筛选实验：调度按 epochs 走
+                logger.info(f"stop_after={self.stop_after} reached — 提前结束（lr/close_mosaic 仍按 "
+                            f"{self.cfg.epochs} 轮调度，便于与全长 run 同轮次对比）")
+                break
 
         elapsed_total = time.monotonic() - t_start
-        n_epochs = self.cfg.epochs - self.start_epoch
+        n_epochs = min(self.stop_after, self.cfg.epochs) - self.start_epoch
         logger.info(f"training done -> {self.run_dir} · {n_epochs} epoch{'s' if n_epochs != 1 else ''} "
                     f"completed in {fmt_elapsed(elapsed_total)}")
         if self.val_enabled:  # 正式口径评估提示（best.safetensors 仅在有验证时落盘）

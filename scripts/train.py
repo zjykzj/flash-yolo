@@ -28,24 +28,26 @@ logger = get_logger(__name__)
 
 # TrainConfig 可调字段按类型分组（argparse 默认 None -> 不覆盖 yaml）
 _INT_FIELDS = ["epochs", "batch", "nbs", "imgsz", "workers", "seed", "close_mosaic", "val_epochs", "val_limit",
-               "limit", "ns_iters", "ema_tau", "topk", "topk_o2o", "topk2"]
-_FLOAT_FIELDS = ["lr0", "lrf", "momentum", "weight_decay", "muon_w", "sgd_w", "warmup_epochs",
+               "limit", "ns_iters", "ema_tau", "topk", "topk_o2o", "topk2",
+               "stop_after", "save_period", "keep_periodic", "diag_interval", "aug_samples"]
+_FLOAT_FIELDS = ["lr0", "lrf", "momentum", "weight_decay", "muon_w", "sgd_w", "warmup_epochs", "warmup_momentum",
                  "box_gain", "cls_gain", "dfl_gain", "tal_alpha", "tal_beta",
                  "prog_alpha_init", "prog_alpha_final", "stal_s_min", "stal_s_ref", "ema_decay",
                  "mosaic", "mixup", "copy_paste", "aug_scale", "degrees", "shear", "translate",
                  "fliplr", "flipud", "hsv_h", "hsv_s", "hsv_v", "bgr"]
+_STR_FIELDS = ["copy_paste_mode"]
 
 
 def main():
     parser = argparse.ArgumentParser(description="YOLO26 COCO training")
-    parser.add_argument("--data", default=None, help="COCO data root (default: config/train.yaml data_dir)")
+    parser.add_argument("--data", default=None, help="COCO data root (required unless set in config/train.yaml)")
     parser.add_argument("--weights", default=None, help="init from .safetensors (finetune; default: from scratch)")
     parser.add_argument("--resume", default=None, help="resume.pt path or run dir (restores full training state)")
     parser.add_argument("--device", default=None, help="torch device (default: auto)")
     parser.add_argument("--name", default=None, help="run dir suffix (runs/train/train-<name>)")
     parser.add_argument("--scale", dest="scale", default=None, help="model scale (n/s/m/l/x)")
-    parser.add_argument("--recipe", default=None, help="training recipe preset (default: yaml `recipe`; "
-                                                       "e.g. official = published YOLO26 recipe, per scale)")
+    parser.add_argument("--recipe", default=None, help="recipe name (config/recipes/<name>.yaml) or a .yaml path; "
+                                                       "default = the built-in baseline (config/train.yaml values)")
     parser.add_argument("--train-split", dest="train_split", default=None, help="training split (default train2017)")
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=None,
                         help="mixed precision fp16+GradScaler (default: yaml `amp`, false; from-scratch "
@@ -59,6 +61,9 @@ def main():
         parser.add_argument(f"--{f.replace('_', '-')}", dest=f, type=int, default=None, help=f"override train.yaml {f}")
     for f in _FLOAT_FIELDS:
         parser.add_argument(f"--{f.replace('_', '-')}", dest=f, type=float, default=None, help=f"override train.yaml {f}")
+    for f in _STR_FIELDS:
+        parser.add_argument(f"--{f.replace('_', '-')}", dest=f, choices=["off", "box"], default=None,
+                            help=f"override train.yaml {f} (off = 官方检测口径 no-op | box = 矩形贴块近似)")
     args = parser.parse_args()
 
     if args.verbose:
@@ -67,6 +72,8 @@ def main():
     cfg = load_train_config(TRAIN_CONFIG_PATH, recipe=args.recipe, scale=args.scale)
     if args.data:
         cfg.data_dir = args.data
+    if not cfg.data_dir:  # 配置里不写死机器路径，数据根目录走命令行
+        parser.error("--data is required (config/train.yaml leaves data_dir empty by design)")
     apply_cli(cfg, args)
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")

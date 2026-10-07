@@ -1,0 +1,62 @@
+# 官方 YOLO26 Stage-1 Objects365v1 预训练配方（发布 checkpoint 的第一阶段，150 轮）
+#
+# 来源：Ultralytics《YOLO26 Training Recipe》→ "Stage 1: Objects365 Pretraining"
+#       https://docs.ultralytics.com/guides/yolo26-training-recipe
+#
+# ⚠️ 未在本仓库验证：需要 Objects365v1 数据集（~1.7M 图，官方用 batch 128 × 150 轮）。
+#    此文件的价值是把"官方 COCO 权重从哪来"这条链路补全 —— Stage-2（yolo26-coco-ft）
+#    的起点就是这个阶段产出的 yolo26*-objv1-150.pt。
+#
+# 官方原文：预训练"mostly default settings rather than searched values"——
+#    lr0 / lrf / momentum / weight_decay / box / cls 沿用 default.yaml，
+#    warmup_epochs / close_mosaic / dfl 被覆写；各档只差 warmup(X)、增强强度与
+#    MuSGD 混合系数。因此未列出的字段（translate/fliplr/hsv_*/degrees/shear/bgr…）
+#    全部沿用本仓库基础值（= ultralytics default.yaml）。
+#
+# 官方记录但本仓库未实现的项（实验分支参数，仅供留档）：
+#   o2m:   n/s/m 0.1，l/x 1.0   —— ProgLoss o2m 初值
+#   cls_w: 全档 1.0             —— o2o 分类损失额外权重
+#
+# 用法：python scripts/train.py --recipe yolo26-o365-pt --data /path/to/objects365
+
+base:
+  epochs: 150
+  nbs: 128
+  lr0: 0.01
+  lrf: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 1.0
+  close_mosaic: 8
+  muon_w: 0.45
+  sgd_w: 0.55
+  box_gain: 7.5
+  cls_gain: 0.5
+  dfl_gain: 6.0
+  mosaic: 1.0
+  mixup: 0.0
+  copy_paste: 0.1
+  aug_scale: 0.5
+
+scale_overrides:
+  s:
+    muon_w: 0.5
+    sgd_w: 0.5
+    mixup: 0.05
+    copy_paste: 0.15
+    aug_scale: 0.9
+  m:
+    mixup: 0.15
+    copy_paste: 0.4
+    aug_scale: 0.9
+  l:
+    mixup: 0.15
+    copy_paste: 0.5
+    aug_scale: 0.9
+  x:
+    warmup_epochs: 2.0
+    muon_w: 0.5
+    sgd_w: 0.6
+    mixup: 0.2
+    copy_paste: 0.6
+    aug_scale: 0.9

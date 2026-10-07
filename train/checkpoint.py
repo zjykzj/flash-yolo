@@ -10,7 +10,7 @@ import torch
 
 from model.weights import save_weights
 
-__all__ = ["save_resume", "load_resume", "save_best_last", "capture_rng"]
+__all__ = ["save_resume", "load_resume", "save_best_last", "save_periodic", "capture_rng"]
 
 
 def capture_rng():
@@ -58,10 +58,28 @@ def load_resume(path, model, ema, optimizer, scaler=None):
     return ckpt["epoch"], ckpt["best_fitness"], ckpt["cfg"], ckpt.get("run_dir")
 
 
-def save_best_last(run_dir, model, is_best):
-    """EMA 权重 -> weights/last.safetensors（每 epoch）+ weights/best.safetensors（新高时）"""
+def save_best_last(run_dir, model, is_best, raw_model=None):
+    """EMA 权重 -> weights/last.safetensors（每 epoch）+ weights/best.safetensors（新高时）
+
+    raw_model 非 None 时同步存 best_raw.safetensors（同一 epoch 的原始权重，
+    用于复盘 EMA 与 raw 的差距；其 fitness 未单独评估）。
+    """
     wdir = run_dir / "weights"
     wdir.mkdir(parents=True, exist_ok=True)
     save_weights(model, wdir / "last.safetensors")
     if is_best:
         save_weights(model, wdir / "best.safetensors")
+        if raw_model is not None:
+            save_weights(raw_model, wdir / "best_raw.safetensors")
+
+
+def save_periodic(run_dir, model, epoch, keep=3):
+    """周期 checkpoint：weights/epoch{N:03d}.safetensors（1-based），仅保留最近 keep 个
+
+    用途：训练中途分叉实验（换配方/换增强/微调），不必从头重跑。
+    """
+    wdir = run_dir / "weights"
+    wdir.mkdir(parents=True, exist_ok=True)
+    save_weights(model, wdir / f"epoch{epoch + 1:03d}.safetensors")
+    for old in sorted(wdir.glob("epoch*.safetensors"))[:-max(keep, 1)]:
+        old.unlink()

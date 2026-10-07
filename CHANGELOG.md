@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`scripts/bench_io.py` — training I/O throughput benchmark (workers / threads / batch picker)**:
+  two-stage auto-narrowing — (1) a loader-only sweep (workers × threads, CPU-only, no GPU) keeps
+  the top-K configs, (2) end-to-end runs (batch × top K) time the full training step (fwd + loss
+  + assign + bwd + clip + opt + EMA) and rank them. Both stages are needed: **a faster loader does
+  not mean faster training** — measured here (RTX 5090 / 25 cores / batch 64) loader-only reaches
+  496 img/s while end-to-end only ~230 img/s, and raising workers 16 -> 20 made end-to-end *slower*
+  (20 single-threaded workers saturate the 25 cores and starve the main process's collate / H2D
+  copy / kernel launches). Candidates step by 8 up to the CPU budget, read from the cgroup quota
+  (the affinity mask claims 208 cores, the real quota is 25); a batch that does not divide `nbs`
+  is flagged (the accumulated wd factor would not be 1.0). **The tool only advises — it never
+  edits the defaults**: `config/train.yaml` keeps the minimal portable values (batch 16 /
+  workers 8).
+- **Worker thread capping (`data/dataset.py::worker_init_fn`)**: DataLoader spawns processes, and
+  each worker defaults to a full OpenCV/torch thread pool (= core count), so N workers × cores
+  threads oversubscribe the machine. Measured at batch 64: 16 workers with library-default threads
+  302 img/s -> 403 img/s with 1 thread (+34%); 20 workers × 1 thread reaches 496 img/s (+64%).
+- **Training artifacts (default-on; `config/train.yaml` fields + CLI)**: a run no longer keeps
+  only best/last/resume — (a) `save_period` + `keep_periodic`: `weights/epochNNN.safetensors`
+  every N epochs (last K kept), so any mid-run point can be forked for a new experiment;
+  (b) `diag_interval`: one `diag/train_diag.csv` row per N optimizer steps carrying the **pre-clip
+  gradient norm** (taken from `clip_grad_norm_`'s return value — zero extra cost), per-group lr
+  and the loss breakdown; this is what exposed that the clip is permanently saturated
+  (||g|| ~ 2000-6000 at init against a threshold of 10, so the effective step is proportional to
+  lr); (c) `aug_samples`: an augmented-sample grid (`samples/epochNNN.png`, GT boxes drawn) saved
+  for the first epoch / the first epoch after close_mosaic / the last epoch, for eyeballing the
+  augmentation; (d) `meta.json`: git commit/dirty flag, torch/cuda/GPU, full config snapshot, data
+  statistics and argv; (e) `best_raw.safetensors` next to every new best (an EMA/raw pair for
+  later analysis); (f) `stop_after`: run only the first N epochs while lr/close_mosaic still
+  follow the full `epochs` schedule, so A/B screens stay epoch-aligned with a full run (shrinking
+  `epochs` would change the schedule and break comparability); (g) linear warmup momentum ramp
+  (`warmup_momentum` 0.8 -> `momentum`), matching the official training loop.
 - **Validation losses (results.csv only)**: every validation round also computes the val loss
   with the same `ComputeLoss` on the same EMA model, from the *same* backbone/neck forward
   (`YOLO26.forward_feats`; eval-mode BN, no running-stat pollution — metrics stay bit-identical
@@ -33,6 +64,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **No machine-specific paths in the config**: `config/train.yaml` leaves `data_dir` empty — the
+  dataset root must be given with `--data` (omitting it is a hard error instead of a guessed
+  path), and `scripts/bench_io.py` makes `--data` required. The shipped config keeps only what
+  works in any environment (batch 16 / workers 8, matching ultralytics `default.yaml`);
+  environment-specific values go on the command line.
+- **Training artifacts are on by default**: `save_period` 0 -> 20 and `aug_samples` 0 -> 8
+  (`keep_periodic` 3 and `diag_interval` 50 unchanged). These artifacts exist for post-hoc
+  analysis and tuning, so defaulting them off defeated their purpose; a 100-epoch run now ships
+  with periodic checkpoints, gradient diagnostics, augment samples and `meta.json` for ~45 MB.
+  Opt out with `--save-period 0 --aug-samples 0`.
+- **Five augment geometry/colour mismatches aligned with the official pipeline (100% of samples)** —
+  cross-checked against `ultralytics/data/augment.py` + `data/base.py` (8.4.173) and verified
+  pixel-identical against the official `Mosaic`/`RandomPerspective` given the same images and
+  mosaic centre: mosaic canvas 1,638,400 px with 0 differing pixels, affine output 409,600 px with
+  0, labels 0 difference, identical box count after filtering.
+  - **Mosaic tiles**: each tile is resized preserving its aspect ratio to long side = imgsz
+    (official `load_image` rect_mode) and pasted at its natural size anchored at the random centre
+    (xc, yc) (`Mosaic._mosaic4`). Ours stretched tiles to S×S, applied an extra per-tile
+    r~U(0.5,1.5) scale and pasted them into quadrants — which broke the aspect ratio (4:3 images
+    stretched ×1.33 vertically while val/inference letterbox preserves it, so the train and test
+    shape distributions disagreed) and piled on extra scale jitter (effective scale std 0.325 ->
+    0.44). The mixup partner image goes through the same path.
+  - **RandomHSV back in HSV space**: the official applies an **additive** hue shift
+    `(x + r*180) % 180`, multiplicative sat/val LUTs and `lut_sat[0] = 0` (pure white keeps its
+    colour). Ours ran in HLS space and multiplied `s_gain` into **L** and `v_gain` into **S**.
+  - **`bgr` semantics**: the official flag is the *probability of returning BGR* (source images
+    are BGR; with the default 0, `random.uniform(0,1) > 0` is always true -> always RGB), i.e. a
+    probability-p RGB/BGR channel swap. Ours was a per-channel gain/bias colour jitter (a near
+    no-op).
+  - **Box filtering**: after the affine, boxes are filtered exactly like the official
+    `box_candidates` (`w>2`, `h>2`, area retention > 0.10, aspect < 100; detection `area_thr=0.10`);
+    after the mosaic paste, `_cat_labels` (clip to 2S, drop zero-area boxes). We used to drop only
+    sub-1px boxes, feeding heavily-clipped slivers in as positives.
+  - **Affine translation** is now in output-size units, `(0.5 ± translate) * S`; it used the canvas
+    width (2S on the mosaic path), doubling the shift. Shear is the official `S` matrix (x and y,
+    applied after the rotation) and the matrix is composed as `M = T @ S @ R @ C`.
+  - **`copy_paste` is a no-op by default** (`copy_paste_mode: "off"`): the official
+    `CopyPaste.__call__` starts with `if len(labels["instances"].segments) == 0: return`, so it
+    never runs on detection-only labels. Our box-level paste covered backgrounds and kept the
+    labels of the objects it overwrote (a label-noise source); it survives behind
+    `copy_paste_mode: "box"`. The recipe's `copy_paste: 0.075` is therefore inert (the startup
+    block says so).
+  Measured effect: boxes kept per image 9.5 -> 15.4 (the old path discarded ~40% of the
+  annotations), box aspect ratio p95 8.9 -> 5.0 with max 223 -> 27.8, box area p90 0.094 -> 0.073.
+  A 20-epoch screen under the same recipe and schedule reaches ep20 0.2896 (official pycocotools)
+  against 0.2435 for the baseline, +43% relative at epoch 7.
 - **Three training-loop parity fixes vs the official implementation (EMA / BN momentum / scale
   aug)** — (a) **EMA decay**: now the official `decay * (1 - exp(-steps/tau))` ramp; the previous
   `min(decay, (1+s)/(tau+s))` formula never reaches `decay` (at 100 epochs the weight was 0.989,
@@ -65,11 +142,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   image at a time — steady 89.5→146 img/s (~56→~34 s per val2017 epoch); assigner chunk trimming
   now needs a single host transfer (≤8 device syncs/step → 1) and preds NaN diagnostics are
   sampled every 10 steps (loss finiteness still checked every step).
-- **Training recipes — default is now the general 100-epoch recipe**: `config/train.yaml` ships
-  two recipes: `default` (100 epochs, ultralytics-aligned lr/loss/aug defaults) and `official`
-  (published YOLO26 recipe per scale — 245/70/80/60/40 epochs for n/s/m/l/x, lr0 0.0054/0.00038,
-  selectable via `--recipe official`). Previously the file only contained the official yolo26n
-  COCO-stage values (245 epochs) as the defaults.
+- **Training recipes split into files — the base config is now the general 100-epoch recipe**:
+  `config/train.yaml` holds the ultralytics-aligned defaults (100 epochs) and doubles as the
+  built-in `default` recipe; named recipes live in `config/recipes/<name>.yaml`
+  (`--recipe <name>`, or a direct `.yaml` path), each with a provenance header stating the
+  source, the required initialization, and which published values are not implemented. Shipped:
+  `yolo26-coco-ft.yaml` (published COCO stage per scale — 245/70/80/60/40 epochs for n/s/m/l/x,
+  lr0 0.0054/0.00038, **requires Objects365-pretrained init**) and `yolo26-o365-pt.yaml`
+  (published Objects365 stage, 150 epochs, unverified here — needs the O365 dataset).
 - **Training display aligned with ultralytics semantics**: the epoch progress row now shows
   losses as the running mean within the epoch (ultralytics `tloss`; the live value converges to
   the frozen epoch mean at epoch end) and speed as the cumulative average (`n/elapsed`, tqdm

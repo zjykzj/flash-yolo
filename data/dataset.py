@@ -80,10 +80,18 @@ class CocoTrainDataset:
 
 
 def worker_init_fn(worker_id):
-    """每 worker 独立播种 RNG（抽样流由 DataLoader 的 seed+epoch generator 保证可复现）"""
+    """每 worker 独立播种 RNG（抽样流由 DataLoader 的 seed+epoch generator 保证可复现）
+
+    并收紧 worker 内线程数：DataLoader 是多进程，若每个 worker 都用 OpenCV/torch 的默认
+    线程池（= 核数），N 个 worker 会开出 N×核数 条线程互相抢占。实测（25 核，batch 64）：
+    16 workers × 默认 25 线程 = 302 img/s；置 1 后 403 img/s（+34%）；20 workers × 1 = 496 img/s
+    （+64%）。加载器是训练吞吐的瓶颈（GPU 利用率仅 ~14%），这条直接换来 epoch 提速。
+    """
     global _worker_rng
     seed = int(torch.initial_seed() % (2**32))
     _worker_rng = np.random.default_rng(seed + worker_id)
+    cv2.setNumThreads(1)
+    torch.set_num_threads(1)
 
 
 def _rng():
