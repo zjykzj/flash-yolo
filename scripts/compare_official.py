@@ -6,8 +6,8 @@
 依赖：ultralytics（仅 dev-time，requirements-dev.txt）+ COCO val2017 + 官方 .pt。
 
 用法:
-    python scripts/compare_official.py --data /home/zjykzj/datasets/coco              # E2E 路径
-    python scripts/compare_official.py --data /home/zjykzj/datasets/coco --nms        # NMS 路径
+    python scripts/compare_official.py --data /path/to/coco              # E2E 路径
+    python scripts/compare_official.py --data /path/to/coco --nms        # NMS 路径
 """
 
 import argparse
