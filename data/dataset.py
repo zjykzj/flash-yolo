@@ -20,6 +20,14 @@ __all__ = ["CocoTrainDataset", "collate_fn", "worker_init_fn"]
 
 _worker_rng = None  # worker 进程内全局 RNG（worker_init_fn 播种，多进程下各 worker 独立）
 
+# OpenCV 线程数必须在**导入时**（= 任何 cv2 并行运算与第一次 fork 之前）由父进程设定，子进程只继承：
+# OpenCV 的 pthreads 线程池非 fork 安全 —— 父进程只要跑过一次 cv2 运算（本地 = 验证集 imread +
+# 增强抽样网格 imwrite），线程池就按默认核数（25）初始化；此后再 fork 的 worker 若调用
+# cv2.setNumThreads()，会去 join 一批子进程里并不存在的线程，永久阻塞在 futex（实测 16/16 worker
+# 死锁、训练卡在 epoch 2 第一个 batch 前；epoch 1 的 fork 早于父进程碰 cv2，因此毫发无损 —— 时序竞态）。
+# 父进程侧设 1 的代价为零：imread+letterbox 407(1 线程) vs 396(25 线程) img/s，JPEG 解码本就单线程。
+cv2.setNumThreads(1)
+
 
 class CocoTrainDataset:
     """COCO split 训练集（默认 train2017）"""
@@ -86,11 +94,13 @@ def worker_init_fn(worker_id):
     线程池（= 核数），N 个 worker 会开出 N×核数 条线程互相抢占。实测（25 核，batch 64）：
     16 workers × 默认 25 线程 = 302 img/s；置 1 后 403 img/s（+34%）；20 workers × 1 = 496 img/s
     （+64%）。加载器是训练吞吐的瓶颈（GPU 利用率仅 ~14%），这条直接换来 epoch 提速。
+
+    注意 cv2 的线程数**不在这里设**：它是 fork 不安全的（见文件顶部注释），改由父进程在
+    导入时设定、子进程继承；若要核对，用 cv2.getNumThreads() 而不是加一行 setNumThreads。
     """
     global _worker_rng
     seed = int(torch.initial_seed() % (2**32))
     _worker_rng = np.random.default_rng(seed + worker_id)
-    cv2.setNumThreads(1)
     torch.set_num_threads(1)
 
 

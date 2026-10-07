@@ -199,6 +199,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Training deadlocked at the first epoch boundary — `cv2.setNumThreads(1)` was being called
+  inside forked DataLoader workers** — OpenCV's pthreads thread pool is not fork-safe: once the
+  parent process has executed any parallel cv2 op the pool exists, and a forked child calling
+  `setNumThreads` waits on worker threads that do not exist in the child, blocking forever in
+  `futex`. Training touches cv2 in the parent twice per epoch (validation's `cv2.imread`, the
+  augmentation sample grid's `imwrite`), so the *first* fork (epoch 1, before any cv2 use) was
+  clean while every later fork deadlocked: a COCO run (batch 64 / 16 workers) finished epoch 1 in
+  9m44s, validated normally and saved its checkpoints, then never produced the first batch of
+  epoch 2 — 16/16 workers parked in `futex_wait_queue_me`, GPU 0%, no output, no traceback; only
+  Ctrl-C ended it. Whether a run survived was a race on whether the parent happened to touch cv2
+  before forking. The cap now happens at import time in `data/dataset.py` (parent side, before any
+  cv2 op and any fork), so workers inherit a 1-thread pool instead of reconfiguring one; the
+  parent loses nothing (imread + letterbox: 407 img/s at 1 thread vs 396 at 25 — JPEG decode is
+  single-threaded anyway). Measured trigger matrix: parent pool > 1 thread **and** child calling
+  `setNumThreads` is the only deadlocking combination; a child that does not call it is safe
+  regardless of the parent's pool. Regression gates:
+  `tests/test_dataset.py::test_worker_thread_contract` and
+  `::test_worker_init_survives_fork_after_parent_cv2_use` (forks a child once the parent has a
+  4-thread pool — both fail in ~20s against the old code). `scripts/bench_io.py` now reads the
+  library default via `cv2.getNumberOfCPUs()`: the import-time cap made `getNumThreads()` return
+  1, which would have silently collapsed its `--threads 0` sweep into `--threads 1`.
 - **Training-time mAP was under-reported ~10x (FastMetrics accumulated the PR curve in
   per-image order instead of global score order)** — AP was accumulated over detections
   concatenated image-by-image; COCOeval semantics require all detections of a class sorted

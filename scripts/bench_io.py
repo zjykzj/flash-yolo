@@ -67,7 +67,9 @@ def default_workers(step=8):
     return list(range(step, cpu_budget() + 1, step))
 
 
-_CV_DEFAULT, _TORCH_DEFAULT = cv2.getNumThreads(), torch.get_num_threads()  # 库默认（= 核数）
+# cv2.getNumberOfCPUs() 而不是 cv2.getNumThreads()：data/dataset.py 导入时会把 cv2 线程数压到 1，
+# 用 getNumThreads() 会读到 1，threads=0（还原库默认）就退化成 threads=1
+_CV_DEFAULT, _TORCH_DEFAULT = cv2.getNumberOfCPUs(), torch.get_num_threads()  # 库默认（= 核数）
 
 
 def make_worker_init(threads):
@@ -75,6 +77,10 @@ def make_worker_init(threads):
 
     threads=0 = 还原**库默认**（= 核数）。注意 worker_init_fn 内部会置 1，所以必须显式
     还原，否则 threads=0 与 threads=1 会退化成同一个配置（实测踩过）。
+
+    ⚠ 子进程里调 cv2.setNumThreads 只在"父进程碰 cv2 之前 fork"时安全（OpenCV pthreads 池
+    非 fork 安全，见 data/dataset.py 顶部注释）：本脚本的父进程只做 collate/搬运，不跑 cv2
+    运算，因此这里的调用成立；若将来在父进程里加了 cv2 代码（可视化/存图），改为在父进程设定。
     """
 
     def _init(worker_id):
