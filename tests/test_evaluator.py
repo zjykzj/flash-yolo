@@ -44,6 +44,10 @@ def test_perfect_match(tmp_path):
         assert m[k] == 1.0, f"{k} 应为 1.0，实际 {m[k]}"
     assert m["mAP_small"] == 1.0
     assert m["mAP_large"] == 1.0
+    # P/R 取 101 点召回网格上 F1 最大点：完美重合 -> 每类 1.0，all = 各类均值
+    # （per-class 为原始浮点，插值数组带 1e-16 级噪声，故用容差）
+    assert m["P"] == 1.0 and m["R"] == 1.0
+    assert all(abs(row[3] - 1.0) < 1e-6 and abs(row[4] - 1.0) < 1e-6 for row in m["per_class"])
 
 
 def test_no_prediction(tmp_path):
@@ -64,6 +68,7 @@ def test_no_prediction(tmp_path):
     )
     m = ev.compute()
     assert m["mAP@[.5:.95]"] == 0.0
+    assert m["P"] == 0.0 and m["R"] == 0.0
 
 
 def test_wrong_class(tmp_path):

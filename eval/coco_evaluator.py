@@ -6,6 +6,12 @@
 
 口径说明：官方 ultralytics 指标为自研实现（crowd 处理等细节略有差异），
 本工程用 pycocotools 的结果与官方数字存在 ~0.1 量级的实现差异，属正常。
+
+输出（compute() 返回 dict）：
+    mAP@[.5:.95] / mAP@50 / mAP@75 / mAP_small / mAP_medium / mAP_large / AR@100
+    P / R —— pycocotools 不直接给 P/R，这里取 **101 点召回网格上 F1 最大点**（= ultralytics
+    "best-F1 置信度处取 P/R" 的插值近似，与训练侧 FastMetrics 同口径），"all" 行 = 各类均值
+    per_class —— [(类别名, 图片数, 实例数, P, R, AP50, AP@[.5:.95], AR@100), ...]
 """
 
 import numpy as np
@@ -25,9 +31,29 @@ _EMPTY_METRICS = {
     "mAP_medium": 0.0,
     "mAP_large": 0.0,
     "AR@100": 0.0,
+    "P": 0.0,
+    "R": 0.0,
     "images": 0,
     "per_class": [],
 }
+
+
+def pr_at_max_f1(prec, rec_thrs, k, iou=0, area=_AREA_ALL, maxdet=_MAXDET_100):
+    """per-class P/R：101 点召回网格上 F1 最大点的 (P, R)
+
+    Args:
+        prec: COCOeval `eval["precision"]`，(T, 101, K, A, M)，插值后的查准率
+        rec_thrs: 召回网格（`params.recThrs`，0..1 共 101 点）
+        k: 类别下标
+    """
+    p = prec[iou, :, k, area, maxdet]
+    keep = p > -1  # -1 = 该组合无有效评估（无 GT / IoU 过严）
+    p, r = p[keep], rec_thrs[keep]
+    if not len(p):
+        return 0.0, 0.0
+    f1 = np.where(p + r > 0, 2.0 * p * r / np.maximum(p + r, 1e-12), 0.0)
+    i = int(np.argmax(f1))
+    return float(p[i]), float(r[i])
 
 
 class CocoEvaluator:
@@ -68,6 +94,7 @@ class CocoEvaluator:
         coco_eval.accumulate()
         coco_eval.summarize()
         s = np.nan_to_num(coco_eval.stats, nan=-1.0).clip(min=0.0)
+        per_class = self._per_class(coco_eval)
         return {
             "mAP@[.5:.95]": round(float(s[0]), 4),
             "mAP@50": round(float(s[1]), 4),
@@ -76,14 +103,21 @@ class CocoEvaluator:
             "mAP_medium": round(float(s[4]), 4),
             "mAP_large": round(float(s[5]), 4),
             "AR@100": round(float(s[8]), 4),  # stats[8] = AR @ maxDets=100
+            # P/R 无官方 stats 槽位：取各类 best-F1 点的均值（ultralytics "all" 行同口径）
+            "P": round(float(np.mean([r[3] for r in per_class])) if per_class else 0.0, 4),
+            "R": round(float(np.mean([r[4] for r in per_class])) if per_class else 0.0, 4),
             "images": len(coco_eval.params.imgIds),
-            "per_class": self._per_class(coco_eval),
+            "per_class": per_class,
         }
 
     def _per_class(self, coco_eval):
-        """per-class 明细：[(类别名, 图片数, 实例数, AP50, AP@[.5:.95], AR@100), ...]（仅含评估范围内有 GT 的类别）"""
+        """per-class 明细（仅含评估范围内有 GT 的类别）
+
+        row = (类别名, 图片数, 实例数, P, R, AP50, AP@[.5:.95], AR@100)
+        """
         eval_img_ids = set(coco_eval.params.imgIds)
         prec = coco_eval.eval["precision"]  # (T, R, K, A, M)
+        rec_thrs = coco_eval.params.recThrs  # 101 点召回网格
         recall = coco_eval.eval["recall"]  # (T, K, A, M)
         rows = []
         for k, cat_id in self.idx_to_cat_id.items():
@@ -99,7 +133,8 @@ class CocoEvaluator:
             r = recall[:, k, _AREA_ALL, _MAXDET_100]
             r = r[r > -1]
             ar = float(np.mean(r)) if len(r) else 0.0
+            pr, rr = pr_at_max_f1(prec, rec_thrs, k)
             name = self.coco_gt.cats[cat_id]["name"]
             n_inst = len(self.coco_gt.getAnnIds(imgIds=img_ids, catIds=cat_id))
-            rows.append((name, len(img_ids), n_inst, ap50, ap, ar))
+            rows.append((name, len(img_ids), n_inst, pr, rr, ap50, ap, ar))
         return rows

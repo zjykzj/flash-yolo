@@ -64,6 +64,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The eval console table now matches the training-side layout, and finally shows P/R and the size
+  buckets**: `scripts/eval.py` prints 11-wide right-aligned columns (the same shape as the
+  in-training val row) and adds two columns the evaluator computed but never displayed —
+  `P` / `R` (pycocotools exposes no such stats slot, so they are read off the max-F1 point of the
+  101-point recall grid, the same convention the training-side FastMetrics uses; the two pipelines
+  now have comparable P/R — at 100 epochs FastMetrics 0.5997/0.4473 vs pycocotools 0.6009/0.4519)
+  — plus `AR@100`. Per-class rows are printed by default (80 rows, as ultralytics does for
+  standalone validation) with `--summary-only` to collapse them to the all row; the table is
+  followed by the `mAP_small/medium/large` and `mAP50/75` lines that were previously computed and
+  thrown away. `runs/val/valN/metrics.txt` now stores the full table instead of just the all row.
+  Two reporting bugs went with it: the per-500-image `[N/total] elapsed` line was printed through
+  `logger.info` while the progress bar owned the terminal line, so it collided with the bar's `\r`
+  row (it now goes to the log file only, the same `log_file_only` path the trainer uses); and the
+  speed line listed pre/in/post-processing without the image load or the end-to-end total, so its
+  numbers could not be reconciled with the reported throughput — it now reads
+  `12.5 ms/image = load 2.5 + preprocess 1.5 + inference 7.9 + postprocess 0.1 + other 0.6 -> 79.9 img/s`
+  (the residual is computed so the sum is exact) plus a `model-only inference` line. The per-class
+  table also stopped shifting: class names were right-aligned in an 11-wide field, so the 10 COCO
+  names longer than that ("baseball glove" 14, "traffic light" 13, ...) pushed their whole row's
+  numbers to the right — the name column is now left-aligned and 15 wide, with the numeric columns
+  sized to their headers (total table width 88 columns, was 94).
+
 - **No machine-specific paths in the config**: `config/train.yaml` leaves `data_dir` empty — the
   dataset root must be given with `--data` (omitting it is a hard error instead of a guessed
   path), and `scripts/bench_io.py` makes `--data` required. The shipped config keeps only what
@@ -108,8 +130,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     block says so).
   Measured effect: boxes kept per image 9.5 -> 15.4 (the old path discarded ~40% of the
   annotations), box aspect ratio p95 8.9 -> 5.0 with max 223 -> 27.8, box area p90 0.094 -> 0.073.
-  A 20-epoch screen under the same recipe and schedule reaches ep20 0.2896 (official pycocotools)
-  against 0.2435 for the baseline, +43% relative at epoch 7.
+  A 20-epoch screen under the same recipe and schedule reaches mAP@[.5:.95] 0.2865 at epoch 20
+  against 0.2435 for the baseline (+17.7%; both the in-training metric, 0.2896 under pycocotools),
+  and +44% relative at epoch 7.
 - **Three training-loop parity fixes vs the official implementation (EMA / BN momentum / scale
   aug)** — (a) **EMA decay**: now the official `decay * (1 - exp(-steps/tau))` ramp; the previous
   `min(decay, (1+s)/(tau+s))` formula never reaches `decay` (at 100 epochs the weight was 0.989,
