@@ -29,9 +29,9 @@ import torch
 
 from config import __version__
 from config.defaults import CONF_THRES, IMGSZ, IOU_THRES, MAX_DET
-from data.coco import CocoDataset
+from data.coco import CocoDataset, scan_summary
 from eval.coco_evaluator import CocoEvaluator
-from utils.engine import OnnxEngine, PtEngine
+from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_file_only, redirect_prints, setup_logging
 from utils.paths import increment_path
 from utils.progress import ProgressBar
@@ -54,13 +54,6 @@ def _fmt_table_row(name, n_img, n_inst, p, r, ap50, ap, ar):
     return ("      " + f"{str(name)[:_NAME_W]:<{_NAME_W}}"
             + "".join(f"{v:>{w}}" for v, w in zip((f"{n_img:d}", f"{n_inst:d}"), _COL_W[:2]))
             + "".join(f"{v:>{w}.4f}" for v, w in zip((p, r, ap50, ap, ar), _COL_W[2:])))
-
-
-def _device_name(engine):
-    device = getattr(engine, "device", None)
-    if device is not None and device.type == "cuda":
-        return f"CUDA {torch.cuda.get_device_name(device)}"
-    return "CPU"
 
 
 def main():
@@ -87,9 +80,12 @@ def main():
     run_dir = increment_path(ROOT / "runs" / "val" / "val")  # 提前建：日志/结果同目录，评测中即可跟踪
     attach_file_log(run_dir / "run.log")
 
-    with redirect_prints(logger):  # pycocotools 的裸 print -> DEBUG
-        dataset = CocoDataset(args.data, args.split)
+    # ---- 头部（与训练日志同一套五段排版：环境 -> 模型 -> 数据集 -> 评估参数 -> 细节）----
+    # ① 环境：设备名不依赖 engine（engine 构建 + 3 次 warmup 约 1s，这行要先落地；onnx 固定 CPU）
+    device = resolve_device(args.device) if args.engine == "pt" else torch.device("cpu")
+    logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device_label(device)}"))
 
+    # ② 模型：pt = 模块树口径 / onnx = 部署口径（两者的"参数量"不是同一个量，见 engine.summary_line）
     end2end = not args.nms
     engine_cls = OnnxEngine if args.engine == "onnx" else PtEngine
     kwargs = {"end2end": end2end, "scale": args.scale}
@@ -97,20 +93,22 @@ def main():
         kwargs["device"] = args.device
     with redirect_prints(logger):
         engine = engine_cls(args.weights, **kwargs)
+    logger.info(bold(f"YOLO26{args.scale} · {engine.summary_line} · "
+                     f"{'E2E (NMS-free)' if end2end else 'o2m+NMS'} · engine {args.engine}"))
 
+    # ③ 数据集：扫描行与训练日志同语法（静态提示 + 进度条 + `└` 汇总）
+    # 注意不包 redirect_prints：提示行是裸 print、进度条写的是构造时捕获的 sys.stdout，
+    # 包进去会一起被抓成 DEBUG 日志（INFO 级别下凭空消失）
+    dataset = CocoDataset(args.data, args.split, progress=True)
+    logger.info(scan_summary(dataset))
+    # 进度条只走控制台（UI 元素不进 logger），文件日志里另落一行同等信息
+    log_file_only(f"{args.split}: {len(dataset)} images · {dataset.n_backgrounds} backgrounds · "
+                  f"{dataset.n_missing} missing", name=logger.name)
     n_total = len(dataset) if not args.limit else min(args.limit, len(dataset))
 
-    # ---- 头部 ----
-    layers, n_params = engine.summary
-    model_line = f"YOLO26{args.scale}"
-    if layers:
-        model_line += f" · {layers} layers · {n_params:,} params"
-    else:
-        model_line += f" · {n_params:,} params"
-    model_line += f" · {('E2E (NMS-free)' if end2end else 'o2m+NMS')} · engine {args.engine}"
-    logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {_device_name(engine)}"))
-    logger.info(bold(model_line))
-    logger.info(f"val: {args.split} {n_total} images · conf={args.conf} · iou={args.iou} · max_det={args.max_det}")
+    # ④ 评估参数
+    logger.info(f"eval:  split {args.split} · images {n_total}/{len(dataset)} · "
+                f"conf {args.conf} · iou {args.iou} · max_det {args.max_det}")
 
     # ---- 评估循环 ----
     with redirect_prints(logger):

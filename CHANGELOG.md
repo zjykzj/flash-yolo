@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`scripts/eval.py` reports the validation split the way training does**: the standalone
+  evaluator runs the same dataset scan — a static `val:   Scanning ... (19 MB) ...` line, a
+  throttled progress bar carrying `5000 images, 48 backgrounds, 0 missing`, and the shared
+  `└ ... instances · categories · parse + scan` continuation now rendered by
+  `data/coco.py::scan_summary` — so training and evaluation logs read the same way. Engine
+  summaries are rendered per backend: `PtEngine` keeps the module-tree wording
+  (`260 layers · 2,572,280 params`, same source as the training log) while `OnnxEngine` reports
+  deployment facts (`ONNX 9.3 MiB · in (1, 3, 640, 640) · out (1, 300, 6)`) — the two parameter
+  counts are not the same quantity (the exported graph has Conv+BN folded: 2,408,932
+  initializers), and an ONNX graph has no module hierarchy to print.
+  `utils.engine.device_label` / `resolve_device` are shared by the scripts so the environment
+  line no longer needs a built engine (`_device_name(engine)` is gone).
+
 - **Dataset scan statistics + progress bar (`data/coco.py::scan_split`)**: the three separate
   passes over the training split (file-existence check, `iscrowd` filtering, per-image label
   construction) are now one loop that also reports progress and counts. The console shows
@@ -28,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`scripts/eval.py` header follows the training layout**: it used to print only after the
+  dataset *and* the engine had been built silently (~1.5 s of blank terminal), with a print order
+  that did not match the build order, and its single `val:` line mixed dataset facts with
+  evaluation parameters. It is now env -> model -> dataset -> eval parameters -> details, with the
+  parameters on their own line (`eval:  split val2017 · images 8/5000 · conf 0.001 · iou 0.7 ·
+  max_det 300`). The dataset construction is deliberately no longer wrapped in
+  `redirect_prints`: that wrapper would have swallowed the new status line and progress bar,
+  which write straight to stdout by design.
 - **Training startup block now prints in build order**: environment + hyperparameters (immediately,
   before the model is built) -> model table -> dataset scan -> training components ->
   `Starting training`. Previously every line was deferred to `Trainer._print_startup()`, which ran

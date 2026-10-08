@@ -17,7 +17,17 @@ import numpy as np
 
 from utils.progress import ProgressBar
 
-__all__ = ["CocoDataset", "parse_coco", "scan_split", "ScanResult", "ScanStats"]
+__all__ = ["CocoDataset", "parse_coco", "scan_split", "scan_summary", "ScanResult", "ScanStats"]
+
+
+def scan_summary(ds, extra=""):
+    """扫描行下的 `└` 续行（训练与评估共用同一排版，避免两处漂移）
+
+    形如 `       └ 849949 instances · 80 categories · crowd 10052 excluded · parse 12.6s + scan 6.6s`
+    """
+    crowd = f"crowd {ds.n_crowd_excluded} excluded · " if ds.n_crowd_excluded else ""
+    return (f"       └ {ds.n_instances} instances · {ds.n_categories} categories · {crowd}"
+            f"parse {ds.parse_time:.1f}s + scan {ds.scan_time:.1f}s{extra}")
 
 
 def parse_coco(ann_file, status_line=None):

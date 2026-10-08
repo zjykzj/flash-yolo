@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 
 from config import __version__
 from config.train import TrainConfig
-from data.coco import CocoDataset
+from data.coco import CocoDataset, scan_summary
 from data.dataset import CocoTrainDataset, collate_fn, worker_init_fn
 from model.summary import summary_lines
 from model.weights import load_weights
@@ -252,9 +252,7 @@ class Trainer:
 
         进度条只走控制台（UI 元素不进 logger），所以文件日志里另落一行同等信息。
         """
-        crowd = f"crowd {ds.n_crowd_excluded} excluded · " if ds.n_crowd_excluded else ""
-        logger.info(f"       └ {ds.n_instances} instances · {ds.n_categories} categories · {crowd}"
-                    f"parse {ds.parse_time:.1f}s + scan {ds.scan_time:.1f}s{extra}")
+        logger.info(scan_summary(ds, extra))
         log_file_only(f"{label}: {len(ds.images)} images · {ds.n_backgrounds} backgrounds · {ds.n_missing} missing",
                       name=logger.name)
         if ds.n_missing:

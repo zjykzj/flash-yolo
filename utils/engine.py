@@ -6,6 +6,7 @@ NMS 路径：模型输出原始 (4+nc, 8400)，此处做 numpy 解码 + 按类 N
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
@@ -17,7 +18,22 @@ from model.weights import load_weights
 from model.yolo26 import build_yolo26
 from utils.postprocess import decode_raw, non_max_suppression, scale_boxes
 
-__all__ = ["Detections", "PtEngine", "OnnxEngine"]
+__all__ = ["Detections", "PtEngine", "OnnxEngine", "resolve_device", "device_label"]
+
+
+def resolve_device(device=None):
+    """pt 口径的设备解析：显式给则用，否则 cuda 可用就 cuda（PtEngine 与脚本的环境行共用）"""
+    return torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+
+
+def device_label(device):
+    """环境行的人类可读设备名：CUDA <型号> / CPU
+
+    onnx 后端固定 CPUExecutionProvider（见 OnnxEngine），脚本对 onnx 传 torch.device("cpu")。
+    推理脚本要在 engine 构建之前打印环境行，所以这里只吃 device 对象、不依赖 engine。
+    """
+    device = torch.device(device)
+    return f"CUDA {torch.cuda.get_device_name(device)}" if device.type == "cuda" else "CPU"
 
 
 @dataclass
@@ -48,8 +64,7 @@ class PtEngine:
     """PyTorch 权重推理"""
 
     def __init__(self, weights, scale="n", end2end=True, device=None):
-        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.device = torch.device(device)
+        self.device = resolve_device(device)
         self.scale = scale
         self.end2end = end2end
         self.model = build_yolo26(scale)
@@ -70,6 +85,12 @@ class PtEngine:
         """(层数, 参数量)，供输出头部摘要；层数 = 叶子模块数（官方 260 层口径）"""
         n_layers = sum(1 for m in self.model.modules() if not list(m.children()))
         return n_layers, sum(p.numel() for p in self.model.parameters())
+
+    @property
+    def summary_line(self):
+        """模型行的一段：模块树口径（与训练日志同源，可与 yaml 逐层表逐项对照）"""
+        n_layers, n_params = self.summary
+        return f"{n_layers} layers · {n_params:,} params" if n_layers else f"{n_params:,} params"
 
     def predict(self, image_bgr, conf_thres=None, iou_thres=IOU_THRES):
         dets, _ = self.predict_timed(image_bgr, conf_thres, iou_thres)
@@ -112,6 +133,19 @@ class OnnxEngine:
 
         graph = onnx.load(self.onnx_path, load_external_data=False).graph
         return None, sum(int(np.prod(t.dims)) for t in graph.initializer)
+
+    @property
+    def summary_line(self):
+        """模型行的一段：部署口径
+
+        ONNX 图没有模块层级——导出时 Conv+BN 已折叠、SiLU 保持 Sigmoid+Mul，`initializer`
+        求和得到的"参数量"与 pt 侧 `parameters()` 不是同一个量（本机 yolo26n: 2,408,932 vs
+        2,572,280，差的就是被折叠的 BN），故此处只报文件大小与 I/O 形状；要看逐层结构用 netron。
+        """
+        mib = Path(self.onnx_path).stat().st_size / 2**20
+        in_shape = tuple(self.sess.get_inputs()[0].shape)
+        out_shape = tuple(self.sess.get_outputs()[0].shape)
+        return f"ONNX {mib:.1f} MiB · in {in_shape} · out {out_shape}"
 
     def predict(self, image_bgr, conf_thres=None, iou_thres=IOU_THRES):
         dets, _ = self.predict_timed(image_bgr, conf_thres, iou_thres)

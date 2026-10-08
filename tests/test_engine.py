@@ -1,0 +1,45 @@
+"""引擎摘要行与档位推导：pt = 模块树口径、onnx = 部署口径（两者的"参数量"不可混用）"""
+
+from pathlib import Path
+
+import pytest
+import torch
+
+from utils.engine import device_label, resolve_device
+
+ROOT = Path(__file__).resolve().parent.parent
+SAFE_PATH = ROOT / "weights" / "yolo26n.safetensors"
+ONNX_PATH = ROOT / "weights" / "yolo26n.onnx"
+
+
+def test_device_label():
+    """环境行设备名（engine 构建之前就要打印，故只吃 device 对象/字符串）"""
+    assert device_label("cpu") == "CPU"
+    assert device_label(resolve_device("cpu")) == "CPU"
+    if torch.cuda.is_available():
+        assert device_label(resolve_device()).startswith("CUDA "), "未显式指定时应解析到 cuda"
+    print("  设备名：CPU / CUDA <型号>")
+
+
+def test_pt_engine_summary_line():
+    """pt 摘要行 = 模块树口径（与训练日志同源，可直接对照 yaml 逐层表）"""
+    if not SAFE_PATH.exists():
+        pytest.skip("需要 weights/yolo26n.safetensors（先跑 download_weights + convert_weights）")
+    from utils.engine import PtEngine
+
+    line = PtEngine(str(SAFE_PATH), device="cpu").summary_line
+    assert line == "260 layers · 2,572,280 params", line
+    print(f"  pt 摘要行：{line}")
+
+
+def test_onnx_engine_summary_line():
+    """onnx 摘要行 = 部署口径：不打参数量（initializer 含被折叠的 BN，与 pt 不可比）"""
+    if not ONNX_PATH.exists():
+        pytest.skip("需要 weights/yolo26n.onnx（先跑 scripts/export.py）")
+    from utils.engine import OnnxEngine
+
+    line = OnnxEngine(str(ONNX_PATH)).summary_line
+    assert line.startswith("ONNX ") and "MiB" in line, line
+    assert "in (1, 3, 640, 640)" in line and "out (1, 300, 6)" in line
+    assert "params" not in line, "onnx 不得打参数量（2,408,932 initializer ≠ pt 的 2,572,280 parameters）"
+    print(f"  onnx 摘要行：{line}")

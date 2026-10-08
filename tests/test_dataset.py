@@ -6,6 +6,7 @@ import json
 import os
 import time
 import warnings
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -13,7 +14,7 @@ import pytest
 import torch
 
 import data.dataset
-from data.coco import CocoDataset
+from data.coco import CocoDataset, scan_summary
 from data.dataset import CocoTrainDataset, collate_fn, worker_init_fn
 from config.train import TrainConfig
 
@@ -113,6 +114,18 @@ def test_collate(tmp_path):
     assert targets.shape == (2, 6), f"targets: {targets.shape}"
     assert (targets[:, 0].numpy() == [0, 1]).all(), "batch_idx 错误"
     print("  collate 形状与 batch_idx 正确")
+
+
+def test_scan_summary_line():
+    """`└` 续行排版：训练与评估共用同一函数（两处漂移会让两套日志对不上）"""
+    ds = SimpleNamespace(n_instances=849949, n_categories=80, n_crowd_excluded=10052,
+                         parse_time=12.55, scan_time=6.62)
+    assert scan_summary(ds) == ("       └ 849949 instances · 80 categories · crowd 10052 excluded · "
+                                "parse 12.6s + scan 6.6s")
+    assert "crowd" not in scan_summary(SimpleNamespace(n_instances=36781, n_categories=80, n_crowd_excluded=0,
+                                                       parse_time=0.31, scan_time=0.05))
+    assert scan_summary(ds, " · limit 8").endswith("· limit 8"), "val 侧的 --limit 注记应接在尾"
+    print("  `└` 续行排版正确")
 
 
 def test_scan_stats(tmp_path):
