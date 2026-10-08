@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Inference and export for models with a non-COCO class count**: `scripts/infer.py --data
+  <descriptor>` builds the head with the descriptor's `nc` and renders its label names (without it,
+  the default is COCO/80), and `scripts/export.py --nc N` exports a graph with the right class count
+  (`PtEngine` gained an `nc` parameter). A checkpoint trained on a custom dataset previously failed
+  the strict weight load with a size mismatch and no way out; that mismatch is still the explicit
+  error, now with a way to proceed.
 - **`scripts/make_coco_subset.py`**: extracts a small COCO subset (seeded sampling of N train/val
   images, hard-linked by default) and emits ready-to-use coco/yolo descriptors — the coco one is
   copied into `config/datasets/local/` so `--data coco-tiny` works out of the box. It prints the

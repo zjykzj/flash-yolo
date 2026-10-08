@@ -19,7 +19,7 @@ import cv2
 import torch
 
 from config import __version__
-from config.datasets import load_names
+from config.datasets import load_dataset, load_names
 from config.inference import IMGSZ
 from model.weights import scale_from_weights
 from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
@@ -30,8 +30,6 @@ from utils.visualize import draw_detections
 # 控制台立刻可用；文件日志等 run 目录确定后挂（见 attach_file_log）
 setup_logging(to_file=False)
 logger = get_logger(__name__)
-
-COCO_NAMES = load_names()  # 推理无数据集上下文，默认按 COCO 类名渲染
 
 _IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -44,12 +42,12 @@ def _collect_images(source):
     return [p]
 
 
-def _summary(image_path, image, dets, pipeline_ms, idx, total):
+def _summary(image_path, image, dets, pipeline_ms, idx, total, names):
     """ultralytics predict 风格摘要：image i/n <path>: WxH <类别统计>, <管线耗时>ms"""
     s = f"image {idx}/{total} {image_path}: {image.shape[1]}x{image.shape[0]} "
     counts = Counter(int(c) for c in dets.class_ids)
     if counts:
-        s += ", ".join(f"{n} {COCO_NAMES.get(cid, cid)}{'s' * (n > 1)}" for cid, n in sorted(counts.items())) + ", "
+        s += ", ".join(f"{n} {names.get(cid, cid)}{'s' * (n > 1)}" for cid, n in sorted(counts.items())) + ", "
     return s + f"{pipeline_ms:.1f}ms"
 
 
@@ -67,7 +65,18 @@ def main():
     parser.add_argument("--device", default=None, help="pt engine device (default auto)")
     parser.add_argument("--scale", default=None,
                         help="model scale (n/s/m/l/x; default: inferred from the weights filename)")
+    parser.add_argument("--data", default=None,
+                        help="dataset descriptor (name or .yaml): sets nc and label names for models "
+                             "trained on a non-COCO dataset (default: COCO, nc from the model yaml)")
     args = parser.parse_args()
+
+    names, nc = load_names(), None  # 推理无数据集上下文：默认按 COCO 类名/80 类构建
+    if args.data:
+        try:
+            spec = load_dataset(args.data)
+        except (ValueError, FileNotFoundError) as e:
+            parser.error(str(e))
+        names, nc = spec.names, spec.nc
 
     # 输入清单与 run 目录先确定：日志挂到 run 目录上（engine 构建失败的报错也才进得了 run.log）
     images = _collect_images(args.image)
@@ -98,6 +107,7 @@ def main():
     kwargs = {"end2end": end2end, "scale": scale}
     if args.engine == "pt":
         kwargs["device"] = args.device
+        kwargs["nc"] = nc  # onnx 图内置类别数，只有 pt 引擎需要重建头
     engine = engine_cls(args.weights, **kwargs)
     logger.info(bold(f"YOLO26{scale} · {engine.summary_line} · "
                      f"{'E2E (NMS-free)' if end2end else 'o2m+NMS'} · engine {args.engine}"))
@@ -122,7 +132,7 @@ def main():
             stage_sums[k] += tseg[k]
 
         out_path = run_dir / path.name
-        draw_detections(image, dets, COCO_NAMES, save_path=str(out_path))
+        draw_detections(image, dets, names, save_path=str(out_path))
 
         # YOLO 格式标签：labels/<同名>.txt，每行 cls xc yc w h（归一化 0-1）
         h_img, w_img = image.shape[:2]
@@ -134,7 +144,7 @@ def main():
                 f.write(f"{int(cid)} {xc:.6f} {yc:.6f} {w:.6f} {h:.6f}\n")
 
         pipeline_ms = sum(tseg.values())
-        logger.info(_summary(path, image, dets, pipeline_ms, idx, len(images)))
+        logger.info(_summary(path, image, dets, pipeline_ms, idx, len(images), names))
 
     if n_done == 0:
         logger.warning("no valid images processed")

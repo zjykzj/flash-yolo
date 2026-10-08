@@ -33,11 +33,14 @@ def main():
     parser.add_argument("--raw", action="store_true", help="export raw head output (for NMS path)")
     parser.add_argument("--dynamic", action="store_true", help="dynamic batch axis (default: fixed batch=1)")
     parser.add_argument("--scale", default="n", help="model scale (n/s/m/l/x)")
+    parser.add_argument("--nc", type=int, default=None,
+                        help="class count for models trained on a non-COCO dataset "
+                             "(default: the model yaml's nc)")
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--opset", type=int, default=18)
     args = parser.parse_args()
 
-    model = build_yolo26(args.scale)
+    model = build_yolo26(args.scale, nc=args.nc)
     load_weights(model, args.weights, strict=True)
     model.model[-1].end2end = not args.raw
     model.eval()

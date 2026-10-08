@@ -63,11 +63,11 @@ def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres):
 class PtEngine:
     """PyTorch 权重推理"""
 
-    def __init__(self, weights, scale="n", end2end=True, device=None):
+    def __init__(self, weights, scale="n", end2end=True, device=None, nc=None):
         self.device = resolve_device(device)
         self.scale = scale
         self.end2end = end2end
-        self.model = build_yolo26(scale)
+        self.model = build_yolo26(scale, nc=nc)
         self.model.model[-1].end2end = end2end
         load_weights(self.model, weights, strict=True)
         self.model.to(self.device).eval()
