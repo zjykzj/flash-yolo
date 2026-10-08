@@ -11,10 +11,12 @@ import torch
 import torch.nn as nn
 import yaml
 
-from model.basic import Conv, C3k2, SPPF, C2PSA
+from model.basic import C2PSA, C3k2, Conv, LeakyConv, SPPF
 from model.head import Detect
+from model.head_v3 import V3Detect
 
-__all__ = ["DetectionModel", "build_yolo26", "YOLO26_CONFIG_PATH"]
+__all__ = ["DetectionModel", "build_model", "build_yolo26", "build_yolov3_tiny",
+           "arch_display_name", "ARCHS", "YOLO26_CONFIG_PATH", "V3_CONFIG_PATH"]
 
 
 class Concat(nn.Module):
@@ -36,13 +38,29 @@ MODULES = {
     "SPPF": SPPF,
     "C2PSA": C2PSA,
     "Upsample": nn.Upsample,
+    "MaxPool2d": nn.MaxPool2d,
+    "ZeroPad2d": nn.ZeroPad2d,
+    "LeakyConv": LeakyConv,
     "Detect": Detect,
+    "V3Detect": V3Detect,
 }
 
 # 通道保持型算子（args[0] 不是输出通道）：上采样 / 下采样池化 / padding 胶水层
 CHANNEL_PRESERVING = {"Upsample", "MaxPool2d", "ZeroPad2d"}
 
 YOLO26_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolo26.yaml"
+V3_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolov3-tiny.yaml"
+
+# 架构注册表：name -> yaml 路径 + 默认档位 + 展示名模板（新增架构在此登记）
+ARCHS = {
+    "yolo26": {"cfg": YOLO26_CONFIG_PATH, "default_scale": "n", "display": "YOLO26{scale}"},
+    "yolov3-tiny": {"cfg": V3_CONFIG_PATH, "default_scale": "tiny", "display": "YOLOv3-tiny"},
+}
+
+
+def arch_display_name(arch, scale):
+    """汇总行展示名（trainer 启动块与 model/summary 共用）"""
+    return ARCHS[arch]["display"].format(scale=scale)
 
 
 def make_divisible(x, divisor=8):
@@ -113,6 +131,16 @@ class DetectionModel(nn.Module):
                 m_.bias_init(imgsz)
                 c2 = None
                 args = [nc_, d["reg_max"], d["end2end"], det_ch]
+            elif name == "V3Detect":
+                det_ch = [ch[x] for x in f]
+                nc_ = d["nc"] if nc is None else nc
+                anchors, strides = d["anchors"], d["strides"]
+                if not len(anchors) == len(strides) == len(det_ch):
+                    raise ValueError(f"anchors/strides/from length mismatch: "
+                                     f"{len(anchors)}/{len(strides)}/{len(det_ch)}")
+                m_ = m(nc_, det_ch, anchors, strides, d.get("ref_imgsz", 416), imgsz)
+                c2 = None
+                args = [nc_, det_ch]
             else:
                 c1, c2 = ch[f], args[0]
                 c2 = make_divisible(min(c2, max_ch) * width)
@@ -165,11 +193,29 @@ class DetectionModel(nn.Module):
         return [x if j == -1 else y[j] for j in f]
 
 
+def build_model(arch="yolo26", scale=None, imgsz=640, nc=None, cfg_path=None):
+    """按架构注册表构建模型（原始构造：不 eval、不改 end2end 状态）
+
+    scale=None 用架构默认档位（yolo26: n / yolov3-tiny: tiny）；cfg_path 显式覆盖 yaml。
+    """
+    spec = ARCHS.get(arch)
+    if spec is None:
+        raise ValueError(f"unknown arch {arch!r}; available: {sorted(ARCHS)}")
+    return DetectionModel(cfg_path or spec["cfg"], scale or spec["default_scale"], imgsz, nc)
+
+
 def build_yolo26(scale="n", cfg_path=None, imgsz=640, nc=None):
     """构建指定档位模型，默认 eval 且走 E2E 路径（imgsz/nc 只影响从零训练与自定义类别数）"""
-    model = DetectionModel(cfg_path, scale, imgsz, nc)
+    model = build_model("yolo26", scale, imgsz, nc, cfg_path)
     model.eval()
     head = model.model[-1]
     if isinstance(head, Detect) and getattr(head, "one2one_cv2", None) is not None:
         head.end2end = True
+    return model
+
+
+def build_yolov3_tiny(nc=None, imgsz=640, cfg_path=None):
+    """构建 YOLOv3-tiny（eval 模式；前向即完成解码，无 end2end 开关）"""
+    model = build_model("yolov3-tiny", imgsz=imgsz, nc=nc, cfg_path=cfg_path)
+    model.eval()
     return model

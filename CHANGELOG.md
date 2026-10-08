@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **YOLOv3-tiny model support**: a darknet-faithful architecture (LeakyReLU convolution blocks,
+  max-pool downsampling, route/upsample neck, anchor-based two-scale head with the official COCO
+  anchors kept as-is, including the original mask quirk) defined in `config/models/yolov3-tiny.yaml`
+  and assembled by the generalized `model/build.py` factory (`build_model("yolov3-tiny")` /
+  `build_yolov3_tiny()`; `python model/summary.py --model yolov3-tiny`). Anchors follow
+  `imgsz / ref_imgsz` scaling and live as non-persistent buffers, so checkpoints keep a
+  converter-friendly key set.
+
 ## [0.3.0] - 2026-10-08
 
 ### Added

@@ -2,14 +2,15 @@
 
 - Conv: Conv2d(bias=False) + BN + SiLU，YOLO26 几乎所有特征变换的基础算子
 - DWConv: 深度可分离卷积（groups=gcd(c1,c2)），仅用于 Detect 的 cls 分支
-- 激活说明: YOLO26 无自定义激活算子，SiLU 直接用 nn.SiLU（见 Conv.act），不单设 act 模块
+- LeakyConv: Conv2d(bias=False) + BN + LeakyReLU(0.1)，darknet/YOLOv3 系（YOLOv3-tiny 使用）
+- 激活说明: 激活用 nn 原生模块（Conv.act），不单设 act 算子
 """
 
 import math
 
 import torch.nn as nn
 
-__all__ = ["autopad", "Conv", "DWConv"]
+__all__ = ["autopad", "Conv", "DWConv", "LeakyConv"]
 
 
 def autopad(k, p=None):
@@ -46,3 +47,14 @@ class DWConv(Conv):
 
     def __init__(self, c1, c2, k=1, s=1, act=True):
         super().__init__(c1, c2, k, s, g=math.gcd(c1, c2), act=act)
+
+
+class LeakyConv(Conv):
+    """Conv2d(bias=False) + BN + LeakyReLU(0.1)——darknet/YOLOv3 系卷积
+
+    注意：act 必须传模块实例——Conv.act 对字符串会静默降级为 Identity。
+    属性树与 Conv 相同（conv/bn/act），权重转换按此映射。
+    """
+
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1):
+        super().__init__(c1, c2, k, s, p, g, act=nn.LeakyReLU(0.1, inplace=True))

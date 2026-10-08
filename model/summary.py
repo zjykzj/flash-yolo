@@ -1,8 +1,9 @@
 """模型结构打印：逐层参数表 + 整体 summary（参考 yolov5 models/yolo.py 的打印格式）
 
 用法:
-    python model/summary.py             # 打印 yolo26n
-    python model/summary.py --scale s   # 其他档位
+    python model/summary.py                     # 打印 yolo26n
+    python model/summary.py --scale s           # yolo26 其他档位
+    python model/summary.py --model yolov3-tiny # 其他架构
 
 FLOPs 用 torch 内置 FlopCounterMode 统计（纯网络，不含 E2E 图内 top-k），零额外依赖。
 """
@@ -17,7 +18,7 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path（直接 python mod
 import torch
 
 from config import __version__
-from model.build import DetectionModel, YOLO26_CONFIG_PATH
+from model.build import ARCHS, arch_display_name, build_model
 
 __all__ = ["model_summary", "profile_flops"]
 
@@ -70,26 +71,29 @@ def summary_lines(model, imgsz=640, batch=1, device=None, name="YOLO26"):
     return lines, n_layers, n_params, gflops
 
 
-def model_summary(model, imgsz=640, batch=1):
+def model_summary(model, imgsz=640, batch=1, name="YOLO26"):
     """打印逐层表与整体 summary，返回 (层数, 参数量, FLOPs)"""
-    lines, n_layers, n_params, gflops = summary_lines(model, imgsz, batch)
+    lines, n_layers, n_params, gflops = summary_lines(model, imgsz, batch, name=name)
     for line in lines:
         print(line)
     return n_layers, n_params, gflops
 
 
 def main():
-    parser = argparse.ArgumentParser(description="print YOLO26 model architecture")
-    parser.add_argument("--scale", default="n", help="model scale (n/s/m/l/x)")
+    parser = argparse.ArgumentParser(description="print model architecture")
+    parser.add_argument("--model", default="yolo26", choices=sorted(ARCHS), help="architecture name")
+    parser.add_argument("--scale", default=None, help="model scale (yolo26: n/s/m/l/x；缺省用架构默认档)")
     parser.add_argument("--imgsz", type=int, default=640)
     args = parser.parse_args()
 
     device = f"CUDA {torch.cuda.get_device_name(0)}" if torch.cuda.is_available() else "CPU"
-    print(f"model/summary: cfg={YOLO26_CONFIG_PATH}, scale={args.scale}, imgsz={args.imgsz}")
+    spec = ARCHS[args.model]
+    scale = args.scale or spec["default_scale"]
+    print(f"model/summary: cfg={spec['cfg']}, scale={scale}, imgsz={args.imgsz}")
     print(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device}\n")
 
-    model = DetectionModel(scale=args.scale)
-    model_summary(model, imgsz=args.imgsz)
+    model = build_model(args.model, args.scale, args.imgsz)
+    model_summary(model, imgsz=args.imgsz, name=arch_display_name(args.model, scale))
 
 
 if __name__ == "__main__":
