@@ -19,10 +19,13 @@ Detection performance — YOLO26n on COCO val2017:
 | Official · E2E² | 40.27 | 55.80 | 2.57M | 18.6ms GPU |
 | This repo · NMS (o2m) | **40.89** | 56.88 | 2.57M | 16.5ms GPU |
 | Official · NMS² | 40.89 | 56.88 | 2.57M | 14.6ms GPU |
+| This repo · from scratch, 100 ep · E2E (NMS-free)³ | **36.22** | 51.32 | 2.57M | — |
+| This repo · from scratch, 100 ep · NMS (o2m)³ | **37.15** | 52.67 | 2.57M | — |
 
 - 260 layers · 2,572,280 params — identical to the official summary; weights load with `strict=True` zero-key-mapping, and the inference output is **bit-identical** to the official model
 - ¹ Latency = inference stage only, averaged over 20 runs on this machine: RTX 4060 Laptop GPU / WSL2 CPU (onnxruntime)
 - ² The official weights re-run through this repo's pipeline (same preprocessing, postprocessing, and pycocotools metrics, same hardware) — the numbers match this repo's exactly, which is the expected consequence of bit-identical reproduction
+- ³ From scratch: trained on COCO train2017 from random weights with the built-in baseline recipe (100 epochs, fp32, one RTX 5090, ~14 h) — official pycocotools numbers. Architecture is identical to the rows above, so latency is unchanged. Not like for like with them: every official number starts from Objects365 pretraining (see Training)
 - The official published 40.1 / 40.9 come from the official metric implementation; the ~0.1 delta to this table is metric-implementation noise, not a model difference
 
 ## Quick Start
@@ -102,7 +105,15 @@ snapshot) · `run.log` (that run's console/file log) · `resume.pt`.
 
 **Not like for like.** The published 40.1 is Objects365 pretrain (150 epochs) + COCO finetune
 (245 epochs) — no official checkpoint was trained on COCO from random weights, so a from-scratch
-COCO number is not comparable to it.
+COCO number is not comparable to it. For reference, this repo's own baseline run (100 epochs from
+random init on COCO train2017, built-in recipe) reaches **36.22** mAP@[.5:.95] / 51.32 mAP@50 on the
+E2E path (**37.15** / 52.67 with NMS) — the gap to the official numbers is the Objects365
+pretraining plus the longer finetune schedule:
+
+```bash
+python scripts/train.py --data /path/to/coco --name yolo26n-from-scratch --batch 64 --workers 16
+# -> runs/train/train-yolo26n-from-scratch/weights/best.safetensors (evaluate with scripts/eval.py)
+```
 
 ## Project Structure
 
@@ -132,9 +143,14 @@ pytest tests/    # 67 tests: weight alignment / export parity / metric correctne
 
 `tests/test_weight_alignment.py` compares against the official .pt as a dev-time reference — install requirements-dev.txt to run it.
 
-## 🚀 Changelog
+## 🔥 Updates
 
-- **Unreleased**: M3 training pipeline — from-scratch YOLO26 dual-head training (ProgLoss · STAL · MuSGD), FastMetrics validation; **augment pipeline aligned with the official implementation** (mosaic tile geometry, HSV space, `bgr` semantics, copy_paste, box filtering — verified pixel-identical; boxes kept per image 9.5 -> 15.4, a 20-epoch screen +17.7% mAP50-95 at epoch 20 over the old path); training artifacts (periodic checkpoints, gradient diagnostics, augment samples, `meta.json`, `best_raw`); recipes as files — built-in `default` plus `config/recipes/yolo26-coco-ft.yaml` / `yolo26-o365-pt.yaml`; `scripts/bench_io.py` throughput benchmark; val losses in results.csv; EMA decay / BN momentum parity fixes
+- **Unreleased** — M3 training pipeline:
+  - from-scratch YOLO26 dual-head training (ProgLoss · STAL · MuSGD) with FastMetrics validation
+  - **augment pipeline aligned with the official implementation** — mosaic tile geometry, HSV space, `bgr` semantics, copy_paste, box filtering (verified pixel-identical; boxes kept per image 9.5 -> 15.4, +17.7% mAP50-95 at epoch 20 over the old path)
+  - training artifacts — periodic checkpoints, gradient diagnostics, augment samples, `meta.json`, `best_raw`
+  - recipes as files — built-in `default` plus `config/recipes/yolo26-coco-ft.yaml` / `yolo26-o365-pt.yaml`
+  - `scripts/bench_io.py` throughput benchmark · val losses in `results.csv` · EMA decay / BN momentum parity fixes
 - **v0.1.0** (2026-10-04): Initial release — a faithful YOLO26 reproduction, verified against the official model on COCO val2017 (inference · export · evaluation), bit-identical to the official model.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
