@@ -145,15 +145,11 @@ pytest tests/    # 67 tests: weight alignment / export parity / metric correctne
 
 ## 🔥 Updates
 
-- **v0.2.0** (2026-10-08) — M3 training pipeline:
-  - from-scratch YOLO26 dual-head training (ProgLoss · STAL · MuSGD) with FastMetrics validation
-  - **augment pipeline aligned with the official implementation** — mosaic tile geometry, HSV space, `bgr` semantics, copy_paste, box filtering (verified pixel-identical; boxes kept per image 9.5 -> 15.4, +17.7% mAP50-95 at epoch 20 over the old path)
-  - training artifacts — periodic checkpoints, gradient diagnostics, augment samples, `meta.json`, `best_raw`
-  - recipes as files — built-in `default` plus `config/recipes/yolo26-coco-ft.yaml` / `yolo26-o365-pt.yaml`
-  - `scripts/bench_io.py` throughput benchmark · val losses in `results.csv` · EMA decay / BN momentum parity fixes
-- **v0.1.0** (2026-10-04): Initial release — a faithful YOLO26 reproduction, verified against the official model on COCO val2017 (inference · export · evaluation), bit-identical to the official model.
+- **[2026-10-08]** Training pipeline complete — YOLO26 trains from scratch end to end (ProgLoss · STAL · MuSGD). A 100-epoch COCO run reaches **36.22 E2E / 37.15 NMS**, and the published COCO-finetune / Objects365 stages ship as ready recipes. → [Training](#training)
+- **[2026-10-08]** Augmentation is now verified pixel-identical to the official pipeline (mosaic geometry, HSV space, `bgr` semantics, box filtering) — the fix behind **+17.7% mAP50-95** at epoch 20 over the old path.
+- **[2026-10-04]** YOLO26 reproduction lands — COCO val2017 **40.27 E2E / 40.89 NMS**, bit-identical to the official model, with inference · ONNX export · evaluation.
 
-See [CHANGELOG.md](CHANGELOG.md) for the full history.
+Full engineering history: [CHANGELOG.md](CHANGELOG.md).
 
 ## 📄 License
 
