@@ -1,6 +1,19 @@
-# COCO 80 类：index 即检测类别 id（0..79，COCO 原始 category_id 的映射见 data/coco.py）
-# 用法：config.datasets.load_names("coco") -> {0: 'person', 1: 'bicycle', ...}
+# COCO 数据集描述符（模板）：format 决定标注读取方式，path 指向数据集根目录。
+# 本文件刻意保持 path 为空（仓库不存机器路径）：
+#   本机使用 -> 复制到 config/datasets/local/coco.yaml（gitignored）并把 path 填成实际根目录，
+#               之后 `--data coco` 即可（local/ 优先于本模板）
+#   直接指定 -> python scripts/train.py --data /path/to/coco.yaml
+# schema：format / path / names / train·val·test{images, ann(coco), labels(yolo)}
+format: coco
+path: ""
+train:
+  images: images/train2017
+  ann: annotations/instances_train2017.json
+val:
+  images: images/val2017
+  ann: annotations/instances_val2017.json
 
+# COCO 80 类：index 即检测类别 id（0..79，COCO 原始 category_id 的映射见 data/coco.py）
 names:
   - person
   - bicycle

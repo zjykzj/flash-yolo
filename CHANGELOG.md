@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dataset descriptors (`config/datasets/spec.py`)**: datasets are described by an
+  ultralytics-style yaml — `format` (`coco` | `yolo`), `path` (dataset root, resolved against the
+  yaml's own directory), `names` (list or `{index: name}` mapping; index = class id, length = nc)
+  and per-role blocks (`train:` / `val:` / `test:` with `images`, plus `ann` for coco or optional
+  `labels` for yolo, mirrored from the `images` segment when omitted). `config.datasets.load_dataset`
+  resolves a name or a `.yaml` path into a validated `DatasetSpec` with absolute role paths and
+  actionable errors (empty `path:` with relative role paths, unknown roles/format, a directory
+  passed instead of a descriptor, ...). Name lookup prefers `config/datasets/local/<name>.yaml`
+  (gitignored — the place where machine paths live) over the shipped template;
+  `config/datasets/coco.yaml` becomes that template and keeps `path: ""`, and `load_names` keeps
+  working off the same files.
 - **`scripts/eval.py` reports the validation split the way training does**: the standalone
   evaluator runs the same dataset scan — a static `val:   Scanning ... (19 MB) ...` line, a
   throttled progress bar carrying `5000 images, 48 backgrounds, 0 missing`, and the shared
