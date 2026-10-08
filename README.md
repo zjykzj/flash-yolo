@@ -178,14 +178,6 @@ pytest tests/    # 122 tests: weight alignment / export parity / metric correctn
 
 `tests/test_weight_alignment.py` compares against the official .pt as a dev-time reference — install requirements-dev.txt to run it.
 
-## 🔥 Updates
-
-- **[2026-10-08]** Training pipeline complete — YOLO26 trains from scratch end to end (ProgLoss · STAL · MuSGD). A 100-epoch COCO run reaches **36.22 E2E / 37.15 NMS**, and the published COCO-finetune / Objects365 stages ship as ready recipes. → [Training](#training)
-- **[2026-10-08]** Augmentation is now verified pixel-identical to the official pipeline (mosaic geometry, HSV space, `bgr` semantics, box filtering) — the fix behind **+17.7% mAP50-95** at epoch 20 over the old path.
-- **[2026-10-04]** YOLO26 reproduction lands — COCO val2017 **40.27 E2E / 40.89 NMS**, bit-identical to the official model, with inference · ONNX export · evaluation.
-
-Full engineering history: [CHANGELOG.md](CHANGELOG.md).
-
 ## 📄 License
 
 The code is licensed under **Apache-2.0** — see [LICENSE](LICENSE) for details.
