@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`scripts/make_coco_subset.py`**: extracts a small COCO subset (seeded sampling of N train/val
+  images, hard-linked by default) and emits ready-to-use coco/yolo descriptors — the coco one is
+  copied into `config/datasets/local/` so `--data coco-tiny` works out of the box. It prints the
+  `dataflow-cv convert coco2yolo` commands (the CLI converts annotations only; its empty `images/`
+  is replaced by symlinks to the subset) and a 2,000/1,000-image subset turns a full startup +
+  train + eval cycle into minutes instead of hours.
 - **YOLO txt datasets (`data/yolo.py`) and the descriptor-driven factory (`data/build.py`)**: images
   come from a directory or a `.txt` image list; labels are sibling `<stem>.txt` files
   (`cls xc yc w h`, normalized) with a numeric-stem fallback (`1.txt` ↔ `000001.jpg`, and
