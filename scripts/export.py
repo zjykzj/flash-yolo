@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
 import torch
 
-from model.weights import load_weights, resolve_arch_scale
+from model.weights import load_weights, resolve_arch_scale, resolve_imgsz
 from model.build import ARCHS, build_model
 from utils.logger import get_logger, log_params, setup_logging
 
@@ -41,7 +41,8 @@ def main():
     parser.add_argument("--nc", type=int, default=None,
                         help="class count for models trained on a non-COCO dataset "
                              "(default: the model yaml's nc)")
-    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--imgsz", type=int, default=None,
+                        help="export input size (default: weights metadata, else 640)")
     parser.add_argument("--opset", type=int, default=18)
     args = parser.parse_args()
 
@@ -52,9 +53,10 @@ def main():
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
     if arch != "yolo26" and args.raw:
         parser.error(f"--raw is only supported for yolo26 (got model={arch!r})")
+    imgsz = resolve_imgsz(args.weights, args.imgsz)  # CLI > 权重 metadata > 640
 
     out_path = args.out or str(ROOT / "runs" / "export" / (Path(args.weights).stem + ".onnx"))
-    log_params(logger, __file__, weights=args.weights, out=out_path, model=arch, imgsz=args.imgsz,
+    log_params(logger, __file__, weights=args.weights, out=out_path, model=arch, imgsz=imgsz,
                nc=args.nc if args.nc is not None else 80, opset=args.opset,
                dynamic=args.dynamic, raw=args.raw)
 
@@ -67,7 +69,7 @@ def main():
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
-    dummy = torch.randn(1, 3, args.imgsz, args.imgsz)
+    dummy = torch.randn(1, 3, imgsz, imgsz)
     # 默认固定 batch=1（边缘工具链偏好固定 shape）；--dynamic 打开动态 batch
     dynamic_axes = {"images": {0: "batch"}, "output0": {0: "batch"}} if args.dynamic else None
     with torch.no_grad():

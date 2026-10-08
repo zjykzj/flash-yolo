@@ -39,7 +39,9 @@ through this repo's pipeline (COCO val2017, pycocotools, 640 input) measure **35
 input size plus split. For custom datasets trained from scratch, re-cluster the anchor priors first
 with `scripts/compute_anchors.py --data <descriptor>` — a model-agnostic tool (darknet-style k-means
 + YOLOv5-style coverage check; `--model/--levels/--n` target any model yaml with an `anchors:`
-section) that prints a paste-ready fragment. The official weights must keep the official anchor set.
+section) that prints a paste-ready fragment. The official weights must keep the official anchor set;
+a re-clustered set used for training travels with the saved checkpoints (weights metadata), so
+evaluation restores it automatically.
 
 ## Quick Start
 
@@ -66,6 +68,7 @@ python scripts/export.py --weights weights/yolo26n.safetensors --out weights/yol
 python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/coco.yaml          # E2E -> 40.1
 python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/coco.yaml --nms    # NMS -> 40.9
 python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data /path/to/coco.yaml   # onnx engine
+python scripts/eval.py --weights w.safetensors --data /path/to/coco.yaml --imgsz 416            # input size: metadata > 640, --imgsz overrides
 
 # 6. Train YOLO26 — from scratch, any model size, finetune or resume (see "Datasets" and "Training"
 #    below for descriptors, recipes, artifacts and the from-scratch vs finetuned distinction)
@@ -150,7 +153,11 @@ the data pipeline are fully shared.
 `best_raw` · `epochNNN.safetensors` every 20 epochs (fork mid-run) · `results.csv` (per-epoch
 metrics + val losses) · `diag/train_diag.csv` (pre-clip gradient norm, per-group lr, loss
 breakdown) · `samples/*.png` (augmented-sample grids with GT boxes) · `meta.json` (git/env/config
-snapshot) · `run.log` (that run's console/file log) · `resume.pt`.
+snapshot) · `run.log` (that run's console/file log) · `resume.pt`. Every saved checkpoint also
+embeds an optional metadata block in its safetensors header (`arch`, `scale`, `nc`, `imgsz`, class
+names, and the yolov3-tiny anchors), so `eval` / `infer` / `export` can read a run's model
+configuration straight from the file — CLI flags still override, and weights without metadata
+behave exactly as before.
 
 **Not like for like.** The published 40.1 is Objects365 pretrain (150 epochs) + COCO finetune
 (245 epochs) — no official checkpoint was trained on COCO from random weights, so a from-scratch
@@ -193,7 +200,7 @@ utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualiz
 ## Tests
 
 ```bash
-pytest tests/    # 147 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + yolov3-tiny (model, loss, darknet converter, anchors, engines, export)
+pytest tests/    # 152 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + yolov3-tiny (model, loss, darknet converter, anchors, engines, export) + weights metadata
 ```
 
 `tests/test_weight_alignment.py` compares against the official .pt as a dev-time reference — install requirements-dev.txt to run it.

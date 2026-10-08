@@ -98,6 +98,10 @@ def test_train_smoke(tmp_path, fmt):
     assert (run_dir / "weights" / "best.safetensors").exists()
     assert (run_dir / "resume.pt").exists()
     assert (run_dir / "results.csv").exists()
+    # 权重 metadata 随盘：训练配置（imgsz/nc/names）在交付物里可被读取侧还原
+    from model.weights import load_meta
+    wm = load_meta(run_dir / "weights" / "best.safetensors")
+    assert wm["imgsz"] == 320 and wm["nc"] == 2 and wm["names"] == ["cls0", "cls1"], wm
     rows = list(csv_reader(run_dir / "results.csv"))
     assert len(rows) >= 3, f"results.csv 行数不足: {len(rows)}"
     losses = [float(r["loss"]) for r in rows]
@@ -147,6 +151,11 @@ def test_train_smoke_v3(tmp_path):
     val_obj = [float(r["val_obj"]) for r in rows]
     assert all(np.isfinite(v) and v > 0 for v in val_obj), f"val obj 损失异常: {val_obj}"
     assert trainer.head.nc == 2, f"模型 nc 应跟随描述符: {trainer.head.nc}"
+    # 权重 metadata 随盘：v3 的 anchors（yaml 官方值）也写进 header，评估/推理侧可还原
+    from model.weights import load_meta
+    wm = load_meta(run_dir / "weights" / "best.safetensors")
+    assert wm["arch"] == "yolov3-tiny" and wm["nc"] == 2 and wm["imgsz"] == 320, wm
+    assert wm["anchors"] == [[[23, 27], [37, 58], [81, 82]], [[81, 82], [135, 169], [344, 319]]], wm["anchors"]
     print(f"  [v3] 冒烟通过: obj {objs[0]:.3f} -> {objs[-1]:.3f} · val_obj {val_obj[0]:.3f} -> {val_obj[-1]:.3f}")
 
 

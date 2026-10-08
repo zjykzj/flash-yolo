@@ -21,9 +21,8 @@ import torch
 
 from config import __version__
 from config.datasets import load_dataset, load_names
-from config.inference import IMGSZ
 from model.build import ARCHS, arch_display_name
-from model.weights import resolve_arch_scale
+from model.weights import load_meta, resolve_arch_scale, resolve_imgsz
 from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_params, setup_logging
 from utils.paths import increment_path
@@ -72,8 +71,11 @@ def main():
     parser.add_argument("--data", default=None,
                         help="dataset descriptor (name or .yaml): sets nc and label names for models "
                              "trained on a non-COCO dataset (default: COCO, nc from the model yaml)")
+    parser.add_argument("--imgsz", type=int, default=None,
+                        help="model input size (default: weights metadata, else 640)")
     args = parser.parse_args()
 
+    meta = load_meta(args.weights)  # 可选：训练保存的权重自带 {arch, scale, nc, imgsz, names, anchors}
     names, nc = load_names(), None  # 推理无数据集上下文：默认按 COCO 类名/80 类构建
     if args.data:
         try:
@@ -81,6 +83,11 @@ def main():
         except (ValueError, FileNotFoundError) as e:
             parser.error(str(e))
         names, nc = spec.names, spec.nc
+    elif meta.get("names"):  # 权重 metadata 兜底：自定义数据集训练产物免 --data
+        names = {i: n for i, n in enumerate(meta["names"])}
+        nc = meta.get("nc", len(names))
+    elif meta.get("nc"):
+        nc = meta["nc"]
 
     # 输入清单与 run 目录先确定：日志挂到 run 目录上（engine 构建失败的报错也才进得了 run.log）
     images = _collect_images(args.image)
@@ -97,6 +104,9 @@ def main():
     if arch != "yolo26" and args.nms:
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
 
+    # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 内部同一规则，构建后以 engine.imgsz 为准）
+    imgsz = resolve_imgsz(args.weights, args.imgsz)
+
     # 结果保存：默认 runs/predict/predictN/（递增）；--output 可显式指定文件（单图）或目录（多图）
     if args.output:
         run_dir = Path(args.output).resolve() if multi else Path(args.output).resolve().parent
@@ -105,7 +115,7 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
     attach_file_log(run_dir / "run.log")
     log_params(logger, __file__, weights=args.weights, image=args.image, model=arch,
-               engine=args.engine, conf=args.conf, imgsz=IMGSZ)
+               engine=args.engine, conf=args.conf, imgsz=imgsz)
 
     # ---- 头部（与训练/评估同一套五段排版：环境 -> 模型 -> 输入/参数 -> 细节）----
     # ① 环境：engine 构建之前（onnx 后端固定 CPU，见 OnnxEngine）
@@ -115,18 +125,19 @@ def main():
     # ② 模型（arch/scale 已在前段解析）
     end2end = not args.nms
     engine_cls = OnnxEngine if args.engine == "onnx" else PtEngine
-    kwargs = {"end2end": end2end, "scale": scale, "model": arch}
+    kwargs = {"end2end": end2end, "scale": scale, "model": arch, "imgsz": args.imgsz}
     if args.engine == "pt":
         kwargs["device"] = args.device
         kwargs["nc"] = nc  # onnx 图内置类别数，只有 pt 引擎需要重建头
     engine = engine_cls(args.weights, **kwargs)
+    imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
     mode = ("E2E (NMS-free)" if end2end else "o2m+NMS") if arch == "yolo26" else "decode+NMS"
     logger.info(bold(f"{arch_display_name(arch, scale)} · {engine.summary_line} · "
                      f"{mode} · engine {args.engine}"))
 
     # ③ 输入清单 + 本次任务参数
     logger.info(f"infer: {args.image} · {len(images)} image{'s' if len(images) > 1 else ''} · "
-                f"conf {args.conf} · imgsz {IMGSZ}")
+                f"conf {args.conf} · imgsz {imgsz}")
 
     t_start = time.perf_counter()  # 端到端计时（含图像读/写 I/O）
     stage_sums = {"preprocess": 0.0, "inference": 0.0, "postprocess": 0.0}
@@ -167,7 +178,7 @@ def main():
     avg = {k: v / n_done for k, v in stage_sums.items()}
     logger.info(
         f"Speed: {avg['preprocess']:.1f}ms preprocess, {avg['inference']:.1f}ms inference, "
-        f"{avg['postprocess']:.1f}ms postprocess per image at shape (1, 3, {IMGSZ}, {IMGSZ})"
+        f"{avg['postprocess']:.1f}ms postprocess per image at shape (1, 3, {imgsz}, {imgsz})"
     )
     logger.info(f"Total: {elapsed_ms:.1f}ms end-to-end for {n_done} image(s) (incl. image read + save)")
     logger.info(f"Visualization -> {run_dir}")

@@ -8,7 +8,8 @@
   无需转置；float32 小端。头部为 4 或 5 个 int32（版本 + seen），按文件长度自动判别，
   要求文件恰好用尽（多/少字节都报错）。
 
-转换产物为纯权重字典，运行时（engine/tests）零 ultralytics/darknet 依赖。
+转换产物为纯权重字典 + 可选 metadata（safetensors header：arch/scale/nc[, names, anchors]——
+随权重走的模型参数，只加 JSON 头不碰张量），运行时（engine/tests）零 ultralytics/darknet 依赖。
 
 用法:
     python scripts/convert_weights.py --src yolo26n.pt --dst weights/yolo26n.safetensors
@@ -26,6 +27,7 @@ import torch
 from safetensors.torch import save_file
 
 from model.build import build_model
+from model.weights import encode_anchors, encode_meta, scale_from_weights
 from utils.logger import get_logger, log_params, setup_logging
 
 setup_logging()
@@ -33,7 +35,11 @@ logger = get_logger(__name__)
 
 
 def _convert_pt(src, dst):
-    """ultralytics .pt -> safetensors（ema/model 解包，全键原样落盘）"""
+    """ultralytics .pt -> safetensors（ema/model 解包，全键原样落盘 + metadata）
+
+    metadata 取自官方对象的自带信息：档位从文件名推、类别名读 model.names（官方权重内置）；
+    读不到就不写对应键（metadata 永远可选）。
+    """
     ckpt = torch.load(src, map_location="cpu", weights_only=False)
     ema = ckpt.get("ema")
     if ema is not None:
@@ -41,7 +47,15 @@ def _convert_pt(src, dst):
     else:
         model = ckpt["model"]  # 当前格式：ckpt["model"] 直接是完整模型对象
     sd = model.float().state_dict()
-    save_file(sd, dst)
+
+    meta = {"arch": "yolo26"}
+    if scale_from_weights(src):
+        meta["scale"] = scale_from_weights(src)
+    names = getattr(model, "names", None)
+    if names:
+        names = list(names.values()) if isinstance(names, dict) else list(names)
+        meta["names"], meta["nc"] = names, len(names)
+    save_file(sd, dst, metadata=encode_meta(meta))
     return sd
 
 
@@ -110,7 +124,12 @@ def _convert_darknet(src, dst, nc=80):
             sd[f"{prefix}.bias"] = take(n_out)
             sd[f"{prefix}.weight"] = take(nw).reshape(w_shape)
     assert ptr == buf.size  # 头部判别 + n_floats 精确时必然成立（防御性）
-    save_file(sd, dst)
+    # metadata：锚点取自已构建模型（= config/models/yolov3-tiny.yaml 的官方原值，随权重走）；
+    # 类别名不进 metadata——.weights 文件里没有名字信息（不如实写"未知"）
+    save_file(sd, dst, metadata=encode_meta({
+        "arch": "yolov3-tiny", "scale": "tiny", "nc": nc,
+        "anchors": encode_anchors(model.model[-1].anchors),
+    }))
     return sd
 
 

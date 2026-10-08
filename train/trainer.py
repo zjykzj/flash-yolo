@@ -21,7 +21,7 @@ from data.build import build_eval_dataset, build_train_dataset
 from data.loader import collate_fn, worker_init_fn
 from data.scan import scan_summary
 from model.summary import summary_lines
-from model.weights import load_weights
+from model.weights import encode_anchors, load_weights
 from model.build import ARCHS, arch_display_name, build_model
 from train.checkpoint import load_resume, save_best_last, save_periodic, save_resume
 from train.ema import ModelEMA
@@ -84,6 +84,15 @@ class Trainer:
             model.to(memory_format=torch.channels_last)
         self.model = model
         self.head = model.model[-1]
+
+        # 随权重走的模型参数（写入 best/last/epochN 的 safetensors header；读取侧可选消费，
+        # 缺失不影响加载——见 model/weights.py::load_meta）
+        self.weights_meta = {
+            "arch": cfg.model, "scale": cfg.scale, "nc": self.spec.nc, "imgsz": cfg.imgsz,
+            "names": [self.spec.names[i] for i in range(self.spec.nc)],
+        }
+        if hasattr(self.head, "anchors"):  # v3：固化模型实际使用的锚点（自定义重聚类后换 yaml 也能复现）
+            self.weights_meta["anchors"] = encode_anchors(self.head.anchors)
 
         # ② 模型信息（逐层表 + 汇总；--weights 提示跟在模型段里）
         self._print_model_info(weights)
@@ -212,9 +221,10 @@ class Trainer:
         })
 
     def _save(self, epoch, is_best):
-        save_best_last(self.run_dir, self.ema.ema, is_best, raw_model=self.model)
+        save_best_last(self.run_dir, self.ema.ema, is_best, raw_model=self.model, meta=self.weights_meta)
         if self.cfg.save_period and (epoch + 1) % self.cfg.save_period == 0:
-            save_periodic(self.run_dir, self.ema.ema, epoch, keep=self.cfg.keep_periodic)
+            save_periodic(self.run_dir, self.ema.ema, epoch, keep=self.cfg.keep_periodic,
+                          meta=self.weights_meta)
         save_resume(
             self.run_dir / "resume.pt", self.model, self.ema, self.optimizer, self.scaler,
             epoch, self.best_fitness, self.cfg, self.run_dir,

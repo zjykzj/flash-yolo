@@ -1,10 +1,13 @@
 """推理引擎：PtEngine / OnnxEngine，统一 predict(image_bgr) -> Detections
 
 E2E 路径：模型图内完成 top-k（输出 (300,6)），此处仅过滤置信度与还原坐标。
-NMS 路径：模型输出原始 (4+nc, 8400)，此处做 numpy 解码 + 按类 NMS。
+NMS 路径：模型输出原始 (4+nc, N)，此处做 numpy 解码 + 按类 NMS。
 v3 路径：模型（V3Detect eval）输出解码 (NA, 5+nc)，此处按 obj×cls + 按类 NMS。
+输入尺寸：显式参数 > 权重 metadata（safetensors header，可选）> 640（config.inference.IMGSZ）；
+onnx 以图内固定 shape 为准（显式冲突报错）——以上均为可选，旧权重行为不变。
 """
 
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,13 +16,15 @@ import numpy as np
 import onnxruntime as ort
 import torch
 
-from config.inference import CONF_THRES, IOU_THRES, MAX_DET
+from config.inference import CONF_THRES, IMGSZ, IOU_THRES, MAX_DET
 from data.preprocess import preprocess
-from model.weights import load_weights
+from model.weights import apply_meta, load_meta, load_weights
 from model.build import build_model
 from utils.postprocess import decode_raw, non_max_suppression, scale_boxes, v3_detections
 
 __all__ = ["Detections", "PtEngine", "OnnxEngine", "resolve_device", "device_label"]
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_device(device=None):
@@ -46,8 +51,12 @@ class Detections:
     class_ids: np.ndarray  # (N,) int
 
 
-def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres, arch="yolo26"):
-    """引擎输出 -> Detections（原图坐标）"""
+def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres, arch="yolo26", imgsz=None):
+    """引擎输出 -> Detections（原图坐标）
+
+    imgsz：o2m 原始输出的网格形状按它推（[(S//8)², (S//16)², (S//32)²]；640 -> 80/40/20，
+    与 utils.postprocess._LEVEL_SHAPES 同口径）；None 时用模块默认（640 形状）。
+    """
     h, w = ori_shape
     if arch != "yolo26":
         # out: (NA, 5+nc) [x1,y1,x2,y2, obj, cls...]；最终分 = obj×cls，按类 NMS
@@ -58,22 +67,32 @@ def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres, a
         mask = out[:, 4] > (conf_thres if conf_thres is not None else 0.25)
         boxes, scores, cls = out[mask][:, :4], out[mask][:, 4], out[mask][:, 5].astype(np.int64)
     else:
-        # out: (4+nc, 8400) 原始输出
-        boxes, score_map = decode_raw(out)
+        # out: (4+nc, N) 原始输出（N = Σ(S//stride)²，随输入尺寸变）
+        shapes = [(imgsz // s, imgsz // s) for s in (8, 16, 32)] if imgsz else None
+        boxes, score_map = decode_raw(out, shapes=shapes)
         boxes, scores, cls = non_max_suppression(boxes, score_map, conf_thres or CONF_THRES, iou_thres, MAX_DET)
     boxes = scale_boxes(boxes, ratio, pad, h, w)
     return Detections(boxes, scores, cls)
 
 
 class PtEngine:
-    """PyTorch 权重推理"""
+    """PyTorch 权重推理
 
-    def __init__(self, weights, scale="n", end2end=True, device=None, nc=None, model="yolo26"):
+    imgsz / nc 缺省（None）时从权重 metadata 兜底——训练保存的 best/last 自带
+    {nc, imgsz, anchors...}；旧权重没有 metadata 则完全按历史行为（imgsz 640 / 模型 yaml 的 nc）。
+    """
+
+    def __init__(self, weights, scale="n", end2end=True, device=None, nc=None, model="yolo26", imgsz=None):
         self.device = resolve_device(device)
         self.scale = scale
         self.arch = model
         self.end2end = end2end
-        self.model = build_model(model, scale, nc=nc)
+        meta = load_meta(weights)  # 可选 metadata：缺失 = 空 dict
+        self.imgsz = int(imgsz) if imgsz is not None else int(meta.get("imgsz") or IMGSZ)
+        self.model = build_model(model, scale, imgsz=self.imgsz,
+                                 nc=nc if nc is not None else meta.get("nc"))
+        for key in apply_meta(self.model, meta):  # v3 anchors 随权重（yaml 为原版也能还原训练值）
+            logger.info(f"weights metadata applied: {key}")
         head = self.model.model[-1]
         if hasattr(head, "end2end"):  # V3Detect 无此开关（前向即解码）
             head.end2end = end2end
@@ -82,8 +101,8 @@ class PtEngine:
         self._warmup()
 
     def _warmup(self):
-        """预热：首次前向触发 CUDA kernel 编译，跑 3 次后计时才反映稳态性能"""
-        dummy = torch.zeros(1, 3, 640, 640, device=self.device)
+        """预热：首次前向触发 CUDA kernel 编译，跑 3 次后计时才反映稳态性能（dummy 用实际输入尺寸）"""
+        dummy = torch.zeros(1, 3, self.imgsz, self.imgsz, device=self.device)
         with torch.no_grad():
             for _ in range(3):
                 self.model(dummy)
@@ -107,32 +126,42 @@ class PtEngine:
     def predict_timed(self, image_bgr, conf_thres=None, iou_thres=IOU_THRES):
         """带三段计时的预测（eval 用）：返回 (Detections, {"preprocess"/"inference"/"postprocess": ms})"""
         t0 = time.perf_counter()
-        img, ratio, pad = preprocess(image_bgr)
+        img, ratio, pad = preprocess(image_bgr, self.imgsz)
         t1 = time.perf_counter()
         with torch.no_grad():
             out = self.model(img.to(self.device))[0].cpu().numpy()
         t2 = time.perf_counter()
         dets = _to_detections(out, self.end2end, ratio, pad, image_bgr.shape[:2], conf_thres, iou_thres,
-                              arch=self.arch)
+                              arch=self.arch, imgsz=self.imgsz)
         t3 = time.perf_counter()
         return dets, {"preprocess": (t1 - t0) * 1e3, "inference": (t2 - t1) * 1e3, "postprocess": (t3 - t2) * 1e3}
 
 
 class OnnxEngine:
-    """onnxruntime 推理（配合 scripts/export.py 导出的 onnx）"""
+    """onnxruntime 推理（配合 scripts/export.py 导出的 onnx）
 
-    def __init__(self, onnx_path, scale="n", end2end=True, model="yolo26"):
+    输入尺寸以图内固定 shape 为准（`--dynamic` 只放开 batch 轴）；显式 imgsz 与图冲突时报错
+    （改尺寸要重新导出），图内 shape 不可知（全动态导出）时用显式值或 640。
+    """
+
+    def __init__(self, onnx_path, scale="n", end2end=True, model="yolo26", imgsz=None):
         self.scale = scale
         self.arch = model
         self.end2end = end2end
         self.onnx_path = onnx_path
         self.sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
         self.input_name = self.sess.get_inputs()[0].name
+        shape = self.sess.get_inputs()[0].shape  # (1, 3, H, W)
+        graph_imgsz = shape[2] if len(shape) == 4 and isinstance(shape[2], int) else None
+        if imgsz is not None and graph_imgsz is not None and int(imgsz) != graph_imgsz:
+            raise ValueError(f"onnx graph is fixed at {graph_imgsz}px — --imgsz {imgsz} conflicts "
+                             f"(re-export with --imgsz {imgsz} to use that size)")
+        self.imgsz = graph_imgsz or (int(imgsz) if imgsz is not None else IMGSZ)
         self._warmup()
 
     def _warmup(self):
-        """预热：跑 3 次后计时才反映稳态性能"""
-        dummy = np.zeros((1, 3, 640, 640), dtype=np.float32)
+        """预热：跑 3 次后计时才反映稳态性能（dummy 用实际输入尺寸）"""
+        dummy = np.zeros((1, 3, self.imgsz, self.imgsz), dtype=np.float32)
         for _ in range(3):
             self.sess.run(None, {self.input_name: dummy})
 
@@ -164,11 +193,11 @@ class OnnxEngine:
     def predict_timed(self, image_bgr, conf_thres=None, iou_thres=IOU_THRES):
         """带三段计时的预测（eval 用）：返回 (Detections, {"preprocess"/"inference"/"postprocess": ms})"""
         t0 = time.perf_counter()
-        img, ratio, pad = preprocess(image_bgr)
+        img, ratio, pad = preprocess(image_bgr, self.imgsz)
         t1 = time.perf_counter()
         out = self.sess.run(None, {self.input_name: img.numpy()})[0][0]
         t2 = time.perf_counter()
         dets = _to_detections(out, self.end2end, ratio, pad, image_bgr.shape[:2], conf_thres, iou_thres,
-                              arch=self.arch)
+                              arch=self.arch, imgsz=self.imgsz)
         t3 = time.perf_counter()
         return dets, {"preprocess": (t1 - t0) * 1e3, "inference": (t2 - t1) * 1e3, "postprocess": (t3 - t2) * 1e3}

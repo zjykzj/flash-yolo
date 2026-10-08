@@ -36,12 +36,12 @@ import torch
 
 from config import __version__
 from config.datasets import load_dataset
-from config.inference import CONF_THRES, IMGSZ, IOU_THRES, MAX_DET
+from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from data.build import build_eval_dataset
 from data.scan import scan_summary
 from eval.coco_evaluator import CocoEvaluator
 from model.build import ARCHS, arch_display_name
-from model.weights import resolve_arch_scale
+from model.weights import resolve_arch_scale, resolve_imgsz
 from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_file_only, log_params, redirect_prints, setup_logging
 from utils.paths import increment_path
@@ -82,6 +82,8 @@ def main():
     parser.add_argument("--iou", type=float, default=IOU_THRES, help=f"NMS IoU threshold (default {IOU_THRES})")
     parser.add_argument("--max-det", type=int, default=MAX_DET)
     parser.add_argument("--device", default=None, help="pt engine device (default auto)")
+    parser.add_argument("--imgsz", type=int, default=None,
+                        help="model input size (default: weights metadata, else 640)")
     parser.add_argument("--limit", type=int, default=0, help="evaluate first N images only (0=all)")
     parser.add_argument("--summary-only", action="store_true",
                         help="print the all-classes row only (per-class rows are shown by default)")
@@ -105,10 +107,14 @@ def main():
     if arch != "yolo26" and args.nms:
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
 
+    # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 构建后以 engine.imgsz 为准，onnx 取图内 shape）
+    imgsz = resolve_imgsz(args.weights, args.imgsz)
+
     run_dir = increment_path(ROOT / "runs" / "val" / "val")  # 提前建：日志/结果同目录，评测中即可跟踪
     attach_file_log(run_dir / "run.log")
     log_params(logger, __file__, weights=args.weights, data=args.data, split=args.split,
-               model=arch, engine=args.engine, conf=args.conf, iou=args.iou, max_det=args.max_det)
+               model=arch, engine=args.engine, conf=args.conf, iou=args.iou, max_det=args.max_det,
+               imgsz=imgsz)
 
     # ---- 头部（与训练日志同一套五段排版：环境 -> 模型 -> 数据集 -> 评估参数 -> 细节）----
     # ① 环境：设备名不依赖 engine（engine 构建 + 3 次 warmup 约 1s，这行要先落地；onnx 固定 CPU）
@@ -119,11 +125,12 @@ def main():
     #    （两者的"参数量"不是同一个量，见 engine.summary_line）
     end2end = not args.nms
     engine_cls = OnnxEngine if args.engine == "onnx" else PtEngine
-    kwargs = {"end2end": end2end, "scale": scale, "model": arch}
+    kwargs = {"end2end": end2end, "scale": scale, "model": arch, "imgsz": args.imgsz}
     if args.engine == "pt":
         kwargs["device"] = args.device
     with redirect_prints(logger):
         engine = engine_cls(args.weights, **kwargs)
+    imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
     mode = ("E2E (NMS-free)" if end2end else "o2m+NMS") if arch == "yolo26" else "decode+NMS"
     logger.info(bold(f"{arch_display_name(arch, scale)} · {engine.summary_line} · "
                      f"{mode} · engine {args.engine}"))
@@ -193,7 +200,7 @@ def main():
                   f"+ inference {avg['inference']:.1f} + postprocess {avg['postprocess']:.1f} "
                   f"+ other {other_ms:.1f} → {n_total / elapsed:.1f} img/s")
     model_line = (f"       model-only inference {avg['inference']:.1f} ms/image "
-                  f"({1e3 / max(avg['inference'], 1e-9):.0f} img/s) at shape (1, 3, {IMGSZ}, {IMGSZ})")
+                  f"({1e3 / max(avg['inference'], 1e-9):.0f} img/s) at shape (1, 3, {imgsz}, {imgsz})")
     done_line = f"Done: {n_total} images · {elapsed:.1f}s"
     if arch == "yolo26":
         ref_lines = [

@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Weights metadata — model parameters that travel with the checkpoint**: every training save
+  (`best` / `last` / `best_raw` / `epochNNN.safetensors`) and both official-weight converters now
+  write an optional JSON metadata block into the safetensors header (`arch`, `scale`, `nc`, `imgsz`,
+  class `names`, plus the yolov3-tiny `anchors`) — header only, not a single tensor is touched, so
+  weight alignment and converter byte checks are unaffected. Loading resolves through
+  **CLI > metadata > filename/default**: `best.safetensors` from a custom run now evaluates or
+  infers without hand-passing `--model/--scale/--nc`, and re-clustered yolov3-tiny anchors are
+  restored from the file even against a stock model yaml. Metadata is strictly optional — weights
+  without it (older conversions, any `.onnx`/`.pt`) behave exactly as before, and unknown keys are
+  ignored.
+- **`--imgsz` for eval / inference / export**: the input size is resolved end to end
+  (CLI > weights metadata > 640) instead of being pinned to 640; the ONNX engine reads the fixed
+  input size from the graph itself and rejects a conflicting `--imgsz` (re-export instead of
+  silently mis-sizing), and the o2m NMS decode derives its grid shapes from the input size.
 - **YOLOv3-tiny model support**: a darknet-faithful architecture (LeakyReLU convolution blocks,
   max-pool downsampling, route/upsample neck, anchor-based two-scale head with the official COCO
   anchors kept as-is, including the original mask quirk) defined in `config/models/yolov3-tiny.yaml`

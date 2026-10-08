@@ -9,7 +9,7 @@ import pytest
 import torch
 
 from model.build import build_model, build_yolov3_tiny
-from model.weights import load_weights, resolve_arch_scale, save_weights
+from model.weights import load_meta, load_weights, resolve_arch_scale, save_weights
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -80,7 +80,10 @@ def test_darknet_converter_roundtrip(tmp_path, header_ints):
             _, b, w = ref[id(module)]
             assert torch.equal(sd[f"{prefix}.weight"], w)
             assert torch.equal(sd[f"{prefix}.bias"], b)
-    print(f"  darknet 转换往返一致（{header_ints} int 头，{len(specs)} 个块）")
+    meta = load_meta(dst)  # 转换产物自带 metadata：架构/档位/类别数 + 官方锚点
+    assert meta["arch"] == "yolov3-tiny" and meta["scale"] == "tiny" and meta["nc"] == 80
+    assert meta["anchors"] == [[[23, 27], [37, 58], [81, 82]], [[81, 82], [135, 169], [344, 319]]]
+    print(f"  darknet 转换往返一致（{header_ints} int 头，{len(specs)} 个块；metadata 含锚点）")
 
 
 def test_darknet_converter_size_guard(tmp_path):
@@ -136,3 +139,24 @@ def test_v3_export_parity(tmp_path):
     diff = float(np.abs(ref - out).max())
     assert diff / 640 < 5e-4, f"v3 onnx vs pt 误差 {diff:.2e}（归一 {diff / 640:.2e}）"
     print(f"  v3 导出/数值一致（误差 {diff:.2e}，归一 {diff / 640:.2e}，输出 {out.shape}）")
+
+
+def test_onnx_engine_imgsz_from_graph(tmp_path):
+    """onnx 输入尺寸以图内 shape 为准（非 640 导出可直接消费）；显式 --imgsz 冲突报错"""
+    pytest.importorskip("onnxruntime")
+
+    path = tmp_path / "yolov3-tiny.safetensors"
+    save_weights(build_yolov3_tiny(nc=2), path)
+    onnx_path = tmp_path / "v3_416.onnx"
+    subprocess.run(["python", "scripts/export.py", "--weights", str(path), "--out", str(onnx_path),
+                    "--model", "yolov3-tiny", "--nc", "2", "--imgsz", "416"], cwd=ROOT, check=True)
+
+    from utils.engine import OnnxEngine
+
+    engine = OnnxEngine(str(onnx_path), model="yolov3-tiny")
+    assert engine.imgsz == 416 and "in (1, 3, 416, 416)" in engine.summary_line, engine.summary_line
+    dets = engine.predict(np.zeros((480, 640, 3), np.uint8), conf_thres=0.9)
+    assert dets.boxes.shape[1] == 4
+    with pytest.raises(ValueError, match="fixed at 416"):
+        OnnxEngine(str(onnx_path), model="yolov3-tiny", imgsz=640)
+    print("  onnx 图内尺寸读取/冲突守卫正确（416 导出免参数消费）")

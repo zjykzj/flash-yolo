@@ -5,7 +5,7 @@ import copy
 import torch
 import torch.nn as nn
 
-from model.weights import load_weights
+from model.weights import load_meta, load_weights
 from model.build import DetectionModel
 from train.checkpoint import load_resume, save_best_last, save_resume
 from config.train_config import TrainConfig
@@ -66,15 +66,16 @@ def test_resume_roundtrip_identical(tmp_path):
 
 
 def test_best_last_weights(tmp_path):
-    """best 仅在 is_best 时落盘；safetensors 可 strict 回载到 DetectionModel"""
+    """best 仅在 is_best 时落盘；safetensors 可 strict 回载到 DetectionModel；meta 随盘写入"""
     model = DetectionModel(scale="n")
     save_best_last(tmp_path, model, is_best=False)
     assert (tmp_path / "weights" / "last.safetensors").exists()
     assert not (tmp_path / "weights" / "best.safetensors").exists(), "非新高不应写 best"
-    save_best_last(tmp_path, model, is_best=True)
+    save_best_last(tmp_path, model, is_best=True, meta={"arch": "yolo26", "scale": "n", "imgsz": 512})
     assert (tmp_path / "weights" / "best.safetensors").exists()
+    assert load_meta(tmp_path / "weights" / "best.safetensors")["imgsz"] == 512, "meta 应写入 header"
 
     fresh = DetectionModel(scale="n")
     missing, unexpected = load_weights(fresh, tmp_path / "weights" / "best.safetensors", strict=True)
     assert not missing and not unexpected
-    print("  best/last 落盘与 strict 回载正确")
+    print("  best/last 落盘与 strict 回载正确（metadata 随盘）")
