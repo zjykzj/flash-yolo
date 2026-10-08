@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
-from utils.logger import get_logger, setup_logging
+from utils.logger import get_logger, log_params, setup_logging
 
 setup_logging(to_file=False)
 logger = get_logger(__name__)
@@ -77,6 +77,8 @@ def main():
                         help="write coco/yolo descriptors + copy the coco one into config/datasets/local/")
     parser.add_argument("--yolo-dst", default=None, help="target root for the YOLO conversion (default <dst>-yolo)")
     args = parser.parse_args()
+    log_params(logger, __file__, src=args.src, dst=args.dst, seed=args.seed,
+               **{"n-train": args.n_train, "n-val": args.n_val, "link-images": args.link_images})
 
     src, dst = Path(args.src).resolve(), Path(args.dst).resolve()
     yolo_dst = Path(args.yolo_dst).resolve() if args.yolo_dst else Path(str(dst) + "-yolo")

@@ -25,7 +25,7 @@ from config.inference import IMGSZ
 from model.build import ARCHS, arch_display_name
 from model.weights import resolve_arch_scale
 from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
-from utils.logger import attach_file_log, bold, get_logger, setup_logging
+from utils.logger import attach_file_log, bold, get_logger, log_params, setup_logging
 from utils.paths import increment_path
 from utils.visualize import draw_detections
 
@@ -88,20 +88,7 @@ def main():
         raise FileNotFoundError(f"no images found: {args.image}")
     multi = len(images) > 1 or Path(args.image).is_dir()
 
-    # 结果保存：默认 runs/predict/predictN/（递增）；--output 可显式指定文件（单图）或目录（多图）
-    if args.output:
-        run_dir = Path(args.output).resolve() if multi else Path(args.output).resolve().parent
-    else:
-        run_dir = increment_path(ROOT / "runs" / "predict" / "predict")
-    run_dir.mkdir(parents=True, exist_ok=True)
-    attach_file_log(run_dir / "run.log")
-
-    # ---- 头部（与训练/评估同一套五段排版：环境 -> 模型 -> 输入/参数 -> 细节）----
-    # ① 环境：engine 构建之前（onnx 后端固定 CPU，见 OnnxEngine）
-    device = resolve_device(args.device) if args.engine == "pt" else "cpu"
-    logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device_label(device)}"))
-
-    # ② 模型：架构/档位从权重文件名推（yolo26s -> yolo26/s；yolov3-tiny -> v3），认不出才要求显式指定
+    # 架构/档位从权重文件名推（yolo26s -> yolo26/s；yolov3-tiny -> v3）——提前解析，参数预览要用
     arch, scale = resolve_arch_scale(args.weights, args.model, args.scale)
     if arch is None:
         parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
@@ -109,6 +96,23 @@ def main():
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
     if arch != "yolo26" and args.nms:
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
+
+    # 结果保存：默认 runs/predict/predictN/（递增）；--output 可显式指定文件（单图）或目录（多图）
+    if args.output:
+        run_dir = Path(args.output).resolve() if multi else Path(args.output).resolve().parent
+    else:
+        run_dir = increment_path(ROOT / "runs" / "predict" / "predict")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    attach_file_log(run_dir / "run.log")
+    log_params(logger, __file__, weights=args.weights, image=args.image, model=arch,
+               engine=args.engine, conf=args.conf, imgsz=IMGSZ)
+
+    # ---- 头部（与训练/评估同一套五段排版：环境 -> 模型 -> 输入/参数 -> 细节）----
+    # ① 环境：engine 构建之前（onnx 后端固定 CPU，见 OnnxEngine）
+    device = resolve_device(args.device) if args.engine == "pt" else "cpu"
+    logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device_label(device)}"))
+
+    # ② 模型（arch/scale 已在前段解析）
     end2end = not args.nms
     engine_cls = OnnxEngine if args.engine == "onnx" else PtEngine
     kwargs = {"end2end": end2end, "scale": scale, "model": arch}

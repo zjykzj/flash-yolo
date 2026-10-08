@@ -29,9 +29,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-__all__ = ["setup_logging", "attach_file_log", "get_logger", "bold", "redirect_prints", "log_file_only"]
+__all__ = ["setup_logging", "attach_file_log", "get_logger", "bold", "redirect_prints", "log_file_only",
+           "log_params"]
 
-_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+_ROOT = Path(__file__).resolve().parent.parent
+_LOG_DIR = _ROOT / "logs"
 
 # 控制台级别颜色（仅控制台 handler 使用）
 _LEVEL_COLORS = {
@@ -110,13 +112,29 @@ def _find_file_handler():
     return None
 
 
+def log_params(logger, script_file, **kv):
+    """参数预览行（各脚本的启动第一行；控制台 + 文件双落）
+
+    格式与 `model/summary.py:` 的头部行一致：`scripts/<name>.py: key=value, key=value`；
+    值为**解析后的生效值**（推断出的架构、填好的默认值等）。script_file 传 `__file__`，
+    前缀由仓库根相对路径推导（脚本被拷到仓库外时退回文件名），无需硬编码。
+    """
+    p = Path(script_file).resolve()
+    try:
+        label = p.relative_to(_ROOT).as_posix()
+    except ValueError:  # 仓库外运行（脚本被拷出去）：退回文件名
+        label = p.name
+    logger.info(f"{label}: " + ", ".join(f"{k}={v}" for k, v in kv.items()))
+
+
 def attach_file_log(path):
     """把文件日志切到 path（有 run 目录的脚本在 run 目录确定后调用）
 
     - 幂等：同一路径重复调用直接返回；换路径则先摘掉旧 handler 再挂新的
     - 若旧的是 setup_logging 建的兜底文件且内容为空，顺手删掉（不留空壳）
     - 未 setup_logging 的进程（如测试）会自动补一个控制台 handler
-    - 落两行头部（run 目录 + 命令行）：挂载前只进了控制台的那几行由此补齐
+    - 落两行头部（**仅文件**）：run 目录 + argv——控制台的第一行交给各脚本的参数预览
+      （log_params，在 attach 之后、横幅之前打印）
     """
     path = Path(path).resolve()  # 头部/日志里统一显示绝对路径
     root = logging.getLogger()

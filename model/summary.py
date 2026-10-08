@@ -89,7 +89,7 @@ def main():
     device = f"CUDA {torch.cuda.get_device_name(0)}" if torch.cuda.is_available() else "CPU"
     spec = ARCHS[args.model]
     scale = args.scale or spec["default_scale"]
-    print(f"model/summary: cfg={spec['cfg']}, scale={scale}, imgsz={args.imgsz}")
+    print(f"model/summary.py: cfg={spec['cfg']}, scale={scale}, imgsz={args.imgsz}")
     print(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device}\n")
 
     model = build_model(args.model, args.scale, args.imgsz)

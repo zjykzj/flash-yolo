@@ -26,7 +26,7 @@ import torch
 from safetensors.torch import save_file
 
 from model.build import build_model
-from utils.logger import get_logger, setup_logging
+from utils.logger import get_logger, log_params, setup_logging
 
 setup_logging()
 logger = get_logger(__name__)
@@ -120,6 +120,7 @@ def main():
     parser.add_argument("--dst", required=True, help="output .safetensors path")
     parser.add_argument("--nc", type=int, default=80, help="class count (darknet .weights only)")
     args = parser.parse_args()
+    log_params(logger, __file__, src=args.src, dst=args.dst, nc=args.nc)
 
     if Path(args.src).suffix.lower() == ".weights":
         sd = _convert_darknet(args.src, args.dst, nc=args.nc)

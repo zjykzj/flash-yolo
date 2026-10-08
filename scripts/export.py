@@ -23,7 +23,7 @@ import torch
 
 from model.weights import load_weights, resolve_arch_scale
 from model.build import ARCHS, build_model
-from utils.logger import get_logger, setup_logging
+from utils.logger import get_logger, log_params, setup_logging
 
 setup_logging()
 logger = get_logger(__name__)
@@ -53,6 +53,11 @@ def main():
     if arch != "yolo26" and args.raw:
         parser.error(f"--raw is only supported for yolo26 (got model={arch!r})")
 
+    out_path = args.out or str(ROOT / "runs" / "export" / (Path(args.weights).stem + ".onnx"))
+    log_params(logger, __file__, weights=args.weights, out=out_path, model=arch, imgsz=args.imgsz,
+               nc=args.nc if args.nc is not None else 80, opset=args.opset,
+               dynamic=args.dynamic, raw=args.raw)
+
     model = build_model(arch, scale, nc=args.nc)
     load_weights(model, args.weights, strict=True)
     head = model.model[-1]
@@ -60,7 +65,6 @@ def main():
         head.end2end = not args.raw
     model.eval()
 
-    out_path = args.out or str(ROOT / "runs" / "export" / (Path(args.weights).stem + ".onnx"))
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
     dummy = torch.randn(1, 3, args.imgsz, args.imgsz)

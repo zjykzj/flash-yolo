@@ -40,6 +40,8 @@ def main():
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--limit", type=int, default=0, help="evaluate first N images only (0=all)")
     args = parser.parse_args()
+    print(f"scripts/compare_official.py: weights={args.weights}, data={args.data}, split={args.split}, "
+          f"nms={args.nms}, limit={args.limit}")
 
     ultralytics = __import__("ultralytics")
     model = ultralytics.YOLO(args.weights).model.eval().to(args.device)

@@ -22,7 +22,7 @@ from config.datasets import load_dataset
 from config.train_config import TRAIN_CONFIG_PATH, apply_cli, load_train_config
 from model.build import ARCHS
 from train.trainer import Trainer
-from utils.logger import attach_file_log, get_logger, setup_logging
+from utils.logger import attach_file_log, get_logger, log_params, setup_logging
 from utils.paths import increment_path
 
 # 控制台立刻可用；文件日志等 run 目录确定后挂（见 attach_file_log）
@@ -85,10 +85,11 @@ def main():
         parser.error(str(e))
     apply_cli(cfg, args)
 
-    # 架构相关收尾：v3 系档位由 yaml 固定（Trainer 里按 ARCHS 归一化为 tiny）
+    # 架构相关收尾：v3 系档位由 yaml 固定（此处归一化供参数预览显示；Trainer 内有同款守卫）
     if cfg.model != "yolo26":
         if args.scale:
             logger.warning(f"--scale {args.scale} ignored for model {cfg.model!r} (scale is fixed to 'tiny')")
+        cfg.scale = ARCHS[cfg.model]["default_scale"]
         if cfg.recipe != "default":
             logger.warning(f"recipe {cfg.recipe!r} is tuned for yolo26 — training {cfg.model} with it is not recommended")
 
@@ -102,6 +103,9 @@ def main():
     else:
         run_dir = increment_path(ROOT / "runs" / "train" / ("train" + (f"-{args.name}" if args.name else "")))
     attach_file_log(run_dir / "run.log")
+    log_params(logger, __file__, data=cfg.data, model=cfg.model, scale=cfg.scale, recipe=cfg.recipe,
+               epochs=cfg.epochs, batch=cfg.batch, nbs=cfg.nbs, imgsz=cfg.imgsz,
+               workers=cfg.workers, seed=cfg.seed)
     # 启动信息块由 Trainer 按构建时机分段打印（环境 -> 模型 -> 数据集 -> 组件 -> 起跑），见 train/trainer.py
 
     trainer = Trainer(cfg, device=device, run_dir=run_dir, resume=args.resume, weights=args.weights, spec=spec)

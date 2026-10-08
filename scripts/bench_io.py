@@ -46,7 +46,7 @@ from model.build import ARCHS, build_model
 from train.ema import ModelEMA
 from train.loss import build_loss
 from train.optimizer import MuSGD, build_param_groups
-from utils.logger import bold, get_logger, setup_logging
+from utils.logger import bold, get_logger, log_params, setup_logging
 
 setup_logging()
 logger = get_logger(__name__)
@@ -181,6 +181,9 @@ def main():
     if cfg.model != "yolo26":  # 档位由架构固定（与 Trainer 同口径）
         cfg.scale = ARCHS[cfg.model]["default_scale"]
     cfg.data = args.data
+    log_params(logger, __file__, data=args.data, model=cfg.model, batch=args.batch,
+               workers=args.workers or "auto", threads=args.threads, top=args.top,
+               batches=args.batches, warm=args.warm, limit=args.limit)
     try:
         spec = load_dataset(cfg.data)
     except (ValueError, FileNotFoundError) as e:

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Entry-point scripts now open with a resolved-parameter preview line**: every script logs
+  `scripts/<name>.py: key=value, …` (same style as `model/summary.py: cfg=…`) to console and file
+  as its first line, showing effective values (inferred architecture, filled-in defaults). The
+  run.log header keeps the file-only `run dir:` + `argv:` lines for provenance.
+
 ### Added
 
 - **YOLOv3-tiny model support**: a darknet-faithful architecture (LeakyReLU convolution blocks,

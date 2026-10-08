@@ -43,7 +43,7 @@ from eval.coco_evaluator import CocoEvaluator
 from model.build import ARCHS, arch_display_name
 from model.weights import resolve_arch_scale
 from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
-from utils.logger import attach_file_log, bold, get_logger, log_file_only, redirect_prints, setup_logging
+from utils.logger import attach_file_log, bold, get_logger, log_file_only, log_params, redirect_prints, setup_logging
 from utils.paths import increment_path
 from utils.progress import ProgressBar
 
@@ -96,16 +96,7 @@ def main():
     except (ValueError, FileNotFoundError) as e:
         parser.error(str(e))
 
-    run_dir = increment_path(ROOT / "runs" / "val" / "val")  # 提前建：日志/结果同目录，评测中即可跟踪
-    attach_file_log(run_dir / "run.log")
-
-    # ---- 头部（与训练日志同一套五段排版：环境 -> 模型 -> 数据集 -> 评估参数 -> 细节）----
-    # ① 环境：设备名不依赖 engine（engine 构建 + 3 次 warmup 约 1s，这行要先落地；onnx 固定 CPU）
-    device = resolve_device(args.device) if args.engine == "pt" else torch.device("cpu")
-    logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device_label(device)}"))
-
-    # ② 模型：架构/档位从权重文件名推（yolo26s -> yolo26/s；yolov3-tiny -> v3）；
-    #    pt = 模块树口径 / onnx = 部署口径（两者的"参数量"不是同一个量，见 engine.summary_line）
+    # 架构/档位从权重文件名推（yolo26s -> yolo26/s；yolov3-tiny -> v3）——提前解析，参数预览要用
     arch, scale = resolve_arch_scale(args.weights, args.model, args.scale)
     if arch is None:
         parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
@@ -113,6 +104,19 @@ def main():
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
     if arch != "yolo26" and args.nms:
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
+
+    run_dir = increment_path(ROOT / "runs" / "val" / "val")  # 提前建：日志/结果同目录，评测中即可跟踪
+    attach_file_log(run_dir / "run.log")
+    log_params(logger, __file__, weights=args.weights, data=args.data, split=args.split,
+               model=arch, engine=args.engine, conf=args.conf, iou=args.iou, max_det=args.max_det)
+
+    # ---- 头部（与训练日志同一套五段排版：环境 -> 模型 -> 数据集 -> 评估参数 -> 细节）----
+    # ① 环境：设备名不依赖 engine（engine 构建 + 3 次 warmup 约 1s，这行要先落地；onnx 固定 CPU）
+    device = resolve_device(args.device) if args.engine == "pt" else torch.device("cpu")
+    logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device_label(device)}"))
+
+    # ② 模型（arch/scale 已在参数校验段解析）：pt = 模块树口径 / onnx = 部署口径
+    #    （两者的"参数量"不是同一个量，见 engine.summary_line）
     end2end = not args.nms
     engine_cls = OnnxEngine if args.engine == "onnx" else PtEngine
     kwargs = {"end2end": end2end, "scale": scale, "model": arch}

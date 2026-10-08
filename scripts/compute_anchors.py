@@ -39,7 +39,7 @@ from config.datasets import load_dataset
 from config.train_config import TrainConfig
 from data.build import build_train_dataset
 from model.build import ARCHS
-from utils.logger import get_logger, setup_logging
+from utils.logger import get_logger, log_params, setup_logging
 
 # 控制台立刻可用；文件日志走 logs/ 兜底（本脚本无 run 目录，与 convert_weights 同约定）
 setup_logging()
@@ -178,6 +178,8 @@ def main():
     n = args.n or (len(cur) if cur is not None else 3 * levels)
     if n % levels or n < levels:
         parser.error(f"--n ({n}) must be divisible by --levels ({levels}) and >= levels")
+    log_params(logger, __file__, data=args.data, role=args.role, model=args.model, imgsz=args.imgsz,
+               n=n, levels=levels, **{"n-init": args.n_init}, seed=args.seed)
     try:
         spec = load_dataset(args.data)
     except (ValueError, FileNotFoundError) as e:

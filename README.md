@@ -182,7 +182,7 @@ model/     model implementation (yaml factory build.py + arch registry / dual De
 runs/      runtime results (gitignored)
 scripts/   download_weights / convert_weights / compute_anchors / make_coco_subset / infer /
            export / eval / train / bench_io / compare_official
-tests/     145 tests: weight alignment / export parity / metric correctness / training components
+tests/     147 tests: weight alignment / export parity / metric correctness / training components
            + yolov3-tiny model, loss and I/O (darknet converter, anchors, engine, export)
 train/     training: TAL+STAL assigner / dual-head ProgLoss / MuSGD / EMA / trainer / FastMetrics
            (+ per-run artifacts: periodic checkpoints, gradient diag CSV, augment samples, meta.json)
@@ -193,7 +193,7 @@ utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualiz
 ## Tests
 
 ```bash
-pytest tests/    # 145 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + yolov3-tiny (model, loss, darknet converter, anchors, engines, export)
+pytest tests/    # 147 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + yolov3-tiny (model, loss, darknet converter, anchors, engines, export)
 ```
 
 `tests/test_weight_alignment.py` compares against the official .pt as a dev-time reference — install requirements-dev.txt to run it.

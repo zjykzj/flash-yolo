@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # 仓库根目录入 sys.path
 
-from utils.logger import get_logger, setup_logging
+from utils.logger import get_logger, log_params, setup_logging
 
 BASE_URL = "https://github.com/ultralytics/assets/releases/download/{version}/{model}.pt"
 DARKNET_URL = "https://pjreddie.com/media/files/{model}.weights"
@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--version", default="v8.4.0", help="ultralytics release version tag (yolo26 .pt only)")
     parser.add_argument("--dir", default="weights", help="save directory")
     args = parser.parse_args()
+    log_params(logger, __file__, model=args.model, dir=args.dir, version=args.version)
 
     out_dir = Path(args.dir)
     out_dir.mkdir(parents=True, exist_ok=True)
