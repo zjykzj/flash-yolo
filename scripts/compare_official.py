@@ -20,8 +20,9 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 import numpy as np
 import torch
 
+from config.datasets import load_dataset
 from config.inference import CONF_THRES, IOU_THRES, MAX_DET
-from data.coco import CocoDataset
+from data.build import build_eval_dataset
 from data.preprocess import preprocess
 from eval.coco_evaluator import CocoEvaluator
 from utils.engine import Detections
@@ -32,8 +33,9 @@ from utils.progress import ProgressBar
 def main():
     parser = argparse.ArgumentParser(description="run the official model through Flash-YOLO's eval pipeline")
     parser.add_argument("--weights", default="weights/yolo26n.pt", help="official .pt path")
-    parser.add_argument("--data", required=True, help="COCO data root")
-    parser.add_argument("--split", default="val2017")
+    parser.add_argument("--data", required=True,
+                        help="dataset descriptor: a name in config/datasets/ (local/ wins) or a .yaml path")
+    parser.add_argument("--split", default="val", help="role to evaluate (a key in the descriptor)")
     parser.add_argument("--nms", action="store_true", help="o2m+NMS path (default E2E)")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--limit", type=int, default=0, help="evaluate first N images only (0=all)")
@@ -45,9 +47,13 @@ def main():
     end2end = not args.nms
     head.end2end = end2end
 
-    dataset = CocoDataset(args.data, args.split)
+    try:
+        spec = load_dataset(args.data)
+    except (ValueError, FileNotFoundError) as e:
+        parser.error(str(e))
+    dataset = build_eval_dataset(spec, args.split)
     n_total = len(dataset) if not args.limit else min(args.limit, len(dataset))
-    evaluator = CocoEvaluator(dataset.ann_file)
+    evaluator = CocoEvaluator(dataset.gt_source(), nc=len(dataset.names))
 
     bar = ProgressBar(n_total, desc="official")
     for i in range(n_total):

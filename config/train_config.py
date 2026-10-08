@@ -30,8 +30,8 @@ class TrainConfig:
     recipe: str = "default"  # default = 内置基线（train.yaml）| 其他名字查 config/recipes/<name>.yaml
 
     # data / io
-    data_dir: str = ""  # 空 = 未设置，必须由 CLI --data 提供（见 scripts/train.py）
-    train_split: str = "train2017"  # 冒烟/调试可指到 val2017 子集
+    data: str = ""  # 数据集描述符（config/datasets/[local/]<name>.yaml 或 .yaml 路径）；
+                    # 空 = 未设置，必须由 CLI --data 提供（见 scripts/train.py）
     scale: str = "n"
     epochs: int = 100
     batch: int = 16  # 物理 batch（开箱即用值；nbs 累积保证梯度语义不变）

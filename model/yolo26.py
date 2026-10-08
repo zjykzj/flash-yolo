@@ -50,17 +50,18 @@ class YOLO26(nn.Module):
     state_dict key = `model.{i}.{属性路径}`，与官方 checkpoint 零映射对齐。
     """
 
-    def __init__(self, cfg_path=None, scale="n", imgsz=640):
+    def __init__(self, cfg_path=None, scale="n", imgsz=640, nc=None):
         super().__init__()
         cfg_path = cfg_path or CONFIG_PATH
         with open(cfg_path) as f:
             cfg = yaml.safe_load(f)
-        self.model, self.save = self._parse(cfg, scale, imgsz)
+        self.model, self.save = self._parse(cfg, scale, imgsz, nc)
 
-    def _parse(self, d, scale, imgsz=640):
+    def _parse(self, d, scale, imgsz=640, nc=None):
         """解析 backbone+head 行列表，应用缩放规则（见 docs/yolo26-spec.md 第 2 节）
 
-        imgsz 只喂给 Detect.bias_init（从零训练的分类先验随输入尺寸走）；推理/导出无感。
+        imgsz、nc 是训练侧的数据事实（先验尺寸 / 数据集类别数），默认 None/640 保留
+        yaml 里的结构值（推理/导出与官方权重对齐走默认即可）。
         """
         depth, width, max_ch = d["scales"][scale]
         layers, ch, save = [], [3], set()
@@ -86,12 +87,13 @@ class YOLO26(nn.Module):
                 save.update(f)
             elif name == "Detect":
                 det_ch = [ch[x] for x in f]
-                m_ = m(d["nc"], d["reg_max"], d["end2end"], det_ch)
+                nc_ = d["nc"] if nc is None else nc  # 数据集类别数覆盖 yaml 结构值（训练侧）
+                m_ = m(nc_, d["reg_max"], d["end2end"], det_ch)
                 m_.stride = torch.tensor([8 * 2**i for i in range(len(det_ch))])
                 m_.bias_init(imgsz)
                 c2 = None
                 save.update(f)
-                args = [d["nc"], d["reg_max"], d["end2end"], det_ch]
+                args = [nc_, d["reg_max"], d["end2end"], det_ch]
             else:
                 c1, c2 = ch[f], args[0]
                 c2 = make_divisible(min(c2, max_ch) * width)
@@ -144,9 +146,9 @@ class YOLO26(nn.Module):
         return [x if j == -1 else y[j] for j in f]
 
 
-def build_yolo26(scale="n", cfg_path=None, imgsz=640):
-    """构建指定档位模型，默认 eval 且走 E2E 路径（imgsz 只影响从零训练先验，推理/导出无感）"""
-    model = YOLO26(cfg_path, scale, imgsz)
+def build_yolo26(scale="n", cfg_path=None, imgsz=640, nc=None):
+    """构建指定档位模型，默认 eval 且走 E2E 路径（imgsz/nc 只影响从零训练与自定义类别数）"""
+    model = YOLO26(cfg_path, scale, imgsz, nc)
     model.eval()
     head = model.model[-1]
     if isinstance(head, Detect) and getattr(head, "one2one_cv2", None) is not None:

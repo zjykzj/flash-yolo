@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
 import torch
 
+from config.datasets import load_dataset
 from config.train_config import TRAIN_CONFIG_PATH, apply_cli, load_train_config
 from train.trainer import Trainer
 from utils.logger import attach_file_log, get_logger, setup_logging
@@ -40,7 +41,8 @@ _STR_FIELDS = ["copy_paste_mode"]
 
 def main():
     parser = argparse.ArgumentParser(description="YOLO26 COCO training")
-    parser.add_argument("--data", default=None, help="COCO data root (required unless set in config/train.yaml)")
+    parser.add_argument("--data", default=None,
+                        help="dataset descriptor: a name in config/datasets/ (local/ wins) or a .yaml path")
     parser.add_argument("--weights", default=None, help="init from .safetensors (finetune; default: from scratch)")
     parser.add_argument("--resume", default=None, help="resume.pt path or run dir (restores full training state)")
     parser.add_argument("--device", default=None, help="torch device (default: auto)")
@@ -48,7 +50,6 @@ def main():
     parser.add_argument("--scale", dest="scale", default=None, help="model scale (n/s/m/l/x)")
     parser.add_argument("--recipe", default=None, help="recipe name (config/recipes/<name>.yaml) or a .yaml path; "
                                                        "default = the built-in baseline (config/train.yaml values)")
-    parser.add_argument("--train-split", dest="train_split", default=None, help="training split (default train2017)")
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=None,
                         help="mixed precision fp16+GradScaler (default: yaml `amp`, false; from-scratch "
                              "training NaNs — intended for --weights finetune)")
@@ -71,9 +72,13 @@ def main():
 
     cfg = load_train_config(TRAIN_CONFIG_PATH, recipe=args.recipe, scale=args.scale)
     if args.data:
-        cfg.data_dir = args.data
-    if not cfg.data_dir:  # 配置里不写死机器路径，数据根目录走命令行
-        parser.error("--data is required (config/train.yaml leaves data_dir empty by design)")
+        cfg.data = args.data
+    if not cfg.data:  # 数据集描述符必须显式提供（config/train.yaml 不写死任何数据集）
+        parser.error("--data is required (a dataset descriptor: a name in config/datasets/ or a .yaml path)")
+    try:
+        spec = load_dataset(cfg.data)  # 描述符错误在建 run 目录之前拦下（无 traceback）
+    except (ValueError, FileNotFoundError) as e:
+        parser.error(str(e))
     apply_cli(cfg, args)
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -88,7 +93,7 @@ def main():
     attach_file_log(run_dir / "run.log")
     # 启动信息块由 Trainer 按构建时机分段打印（环境 -> 模型 -> 数据集 -> 组件 -> 起跑），见 train/trainer.py
 
-    trainer = Trainer(cfg, device=device, run_dir=run_dir, resume=args.resume, weights=args.weights)
+    trainer = Trainer(cfg, device=device, run_dir=run_dir, resume=args.resume, weights=args.weights, spec=spec)
     trainer.train()
 
 

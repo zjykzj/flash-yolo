@@ -8,11 +8,16 @@
     AR@100；表尾另打 size buckets（mAP_s/m/l）与 IoU thresholds（mAP50/75）。
 
 用法:
-    python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/coco --split val2017
-    python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data /path/to/coco --nms
+    python scripts/eval.py --weights weights/yolo26n.safetensors --data coco --split val
+    python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/dataset.yaml
+    python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data coco --nms
     python scripts/eval.py ... --limit 100      # 只跑前 100 张（冒烟）
     python scripts/eval.py ... --summary-only   # 只打 all 行（默认打全部 80 类明细）
     python scripts/eval.py ... --verbose        # 显示第三方库（pycocotools）调试输出
+
+--data 是数据集描述符（名字或 .yaml 路径，见 config/datasets/coco.yaml 的 schema）；
+--split 选描述符里的角色键（train/val/test，默认 val）。YOLO txt 数据集同样支持：
+GT 由标签现搭 COCO dict，评估口径与 COCO json 完全一致。
 """
 
 import argparse
@@ -28,8 +33,10 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 import torch
 
 from config import __version__
+from config.datasets import load_dataset
 from config.inference import CONF_THRES, IMGSZ, IOU_THRES, MAX_DET
-from data.coco import CocoDataset, scan_summary
+from data.build import build_eval_dataset
+from data.scan import scan_summary
 from eval.coco_evaluator import CocoEvaluator
 from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_file_only, redirect_prints, setup_logging
@@ -59,8 +66,9 @@ def _fmt_table_row(name, n_img, n_inst, p, r, ap50, ap, ar):
 def main():
     parser = argparse.ArgumentParser(description="COCO evaluation")
     parser.add_argument("--weights", required=True, help=".safetensors or .onnx weights")
-    parser.add_argument("--data", required=True, help="COCO data root (containing annotations/ and val2017/)")
-    parser.add_argument("--split", default="val2017")
+    parser.add_argument("--data", required=True,
+                        help="dataset descriptor: a name in config/datasets/ (local/ wins) or a .yaml path")
+    parser.add_argument("--split", default="val", help="role to evaluate (a key in the descriptor: train/val/...)")
     parser.add_argument("--engine", choices=["pt", "onnx"], default="pt")
     parser.add_argument("--scale", default="n", help="model scale (n/s/m/l/x, used by pt engine)")
     parser.add_argument("--nms", action="store_true", help="use o2m+NMS path (default E2E NMS-free)")
@@ -76,6 +84,11 @@ def main():
 
     if args.verbose:
         logging.getLogger().setLevel("DEBUG")
+
+    try:  # 描述符错误在建 run 目录之前拦下（无 traceback）
+        spec = load_dataset(args.data)
+    except (ValueError, FileNotFoundError) as e:
+        parser.error(str(e))
 
     run_dir = increment_path(ROOT / "runs" / "val" / "val")  # 提前建：日志/结果同目录，评测中即可跟踪
     attach_file_log(run_dir / "run.log")
@@ -99,7 +112,7 @@ def main():
     # ③ 数据集：扫描行与训练日志同语法（静态提示 + 进度条 + `└` 汇总）
     # 注意不包 redirect_prints：提示行是裸 print、进度条写的是构造时捕获的 sys.stdout，
     # 包进去会一起被抓成 DEBUG 日志（INFO 级别下凭空消失）
-    dataset = CocoDataset(args.data, args.split, progress=True)
+    dataset = build_eval_dataset(spec, args.split, progress=True)
     logger.info(scan_summary(dataset))
     # 进度条只走控制台（UI 元素不进 logger），文件日志里另落一行同等信息
     log_file_only(f"{args.split}: {len(dataset)} images · {dataset.n_backgrounds} backgrounds · "
@@ -112,7 +125,7 @@ def main():
 
     # ---- 评估循环 ----
     with redirect_prints(logger):
-        evaluator = CocoEvaluator(dataset.ann_file)
+        evaluator = CocoEvaluator(dataset.gt_source(), nc=len(dataset.names))
     bar = ProgressBar(n_total, desc="val")
     t0 = time.monotonic()  # 单调时钟（WSL2 墙钟会跳变，见 utils/progress.py 注释）
     t_window, n_window = t0, 0

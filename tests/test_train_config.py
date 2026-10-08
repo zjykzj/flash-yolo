@@ -86,3 +86,14 @@ def test_cli_override_wins():
     assert cfg.epochs == 50, "CLI 应覆盖配方"
     assert cfg.lr0 == 0.0054, "未提供的字段不应被 CLI 触碰"
     print("  CLI 覆盖优先序正确")
+
+
+def test_data_field():
+    """数据集走描述符：train.yaml 不写死（空串），--data 经 apply_cli 写入 cfg.data"""
+    cfg = load_train_config(TRAIN_CONFIG_PATH)
+    assert cfg.data == "", "train.yaml 不应夹带任何数据集"
+    assert not hasattr(cfg, "train_split"), "冒烟/调试切 split 已由描述符角色取代（train_split 已删）"
+    apply_cli(cfg, SimpleNamespace(data="coco"))
+    assert cfg.data == "coco"
+    print("  数据集字段（data）接线正确")
+

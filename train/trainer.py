@@ -15,9 +15,11 @@ import torch
 from torch.utils.data import DataLoader
 
 from config import __version__
+from config.datasets import load_dataset
 from config.train_config import TrainConfig
-from data.coco import CocoDataset, scan_summary
-from data.dataset import CocoTrainDataset, collate_fn, worker_init_fn
+from data.build import build_eval_dataset, build_train_dataset
+from data.loader import collate_fn, worker_init_fn
+from data.scan import scan_summary
 from model.summary import summary_lines
 from model.weights import load_weights
 from model.yolo26 import CONFIG_PATH, YOLO26
@@ -38,8 +40,9 @@ logger = logging.getLogger(__name__)
 class Trainer:
     """YOLO26 训练器（--weights 初始化微调 / --resume 断点续训）"""
 
-    def __init__(self, cfg: TrainConfig, device=None, run_dir=None, resume=None, weights=None):
+    def __init__(self, cfg: TrainConfig, device=None, run_dir=None, resume=None, weights=None, spec=None):
         self.cfg = cfg
+        self.spec = spec or load_dataset(cfg.data)  # 描述符：nc 与角色路径的唯一来源
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
 
         torch.manual_seed(cfg.seed)
@@ -54,7 +57,7 @@ class Trainer:
         # ① 环境 + 超参快照：在建模型、解析数据集之前打印（启动白屏只剩 import 时间）
         self._print_env()
 
-        model = YOLO26(CONFIG_PATH, cfg.scale, cfg.imgsz)
+        model = YOLO26(CONFIG_PATH, cfg.scale, cfg.imgsz, nc=self.spec.nc)
         if weights:
             load_weights(model, weights, strict=True)
         model.to(self.device).train()
@@ -84,11 +87,15 @@ class Trainer:
             path = Path(resume)
             if path.is_dir():
                 path = path / "resume.pt"
-            epoch, best, _, ckpt_run = load_resume(path, model, self.ema, self.optimizer, self.scaler)
+            epoch, best, ckpt_cfg, ckpt_run = load_resume(path, model, self.ema, self.optimizer, self.scaler)
             self.start_epoch = epoch + 1
             self.best_fitness = best
             if ckpt_run:
                 self.run_dir = Path(ckpt_run)
+            if ckpt_cfg.get("data") and ckpt_cfg["data"] != self.cfg.data:
+                logger.warning(f"resume checkpoint was written with data={ckpt_cfg['data']!r}, now "
+                               f"data={self.cfg.data!r} — the model is rebuilt from the current descriptor "
+                               f"(class count may differ; strict weight load will catch a mismatch)")
             logger.info(f"resumed from {path} at epoch {self.start_epoch + 1} -> {self.run_dir}")
 
         self.accumulate = max(round(cfg.nbs / cfg.batch), 1)
@@ -133,7 +140,7 @@ class Trainer:
     def _validate(self):
         ema_model = self.ema.eval_model()
         if self.val_dataset is None:
-            self.val_dataset = CocoDataset(self.cfg.data_dir, "val2017")
+            self.val_dataset = build_eval_dataset(self.spec, "val")
         # loss_fn 同传：val 损失与训练损失同实现（复用同一次 backbone/neck 前向）
         return validate(ema_model, self.val_dataset, self.device, limit=self.cfg.val_limit,
                         loss_fn=self.loss_fn, imgsz=self.cfg.imgsz)
@@ -163,7 +170,8 @@ class Trainer:
     def _write_meta(self):
         write_run_meta(self.run_dir, {
             "config": asdict(self.cfg),
-            "data": {"dir": self.cfg.data_dir, "train_split": self.cfg.train_split,
+            "data": {"descriptor": str(self.spec.source), "name": self.spec.name, "format": self.spec.format,
+                     "path": str(self.spec.root) if self.spec.root is not None else None,
                      "images": len(self.dataset), "instances": self.dataset.n_instances,
                      "categories": self.dataset.n_categories,
                      "backgrounds": self.dataset.n_backgrounds, "missing": self.dataset.n_missing,
@@ -235,11 +243,11 @@ class Trainer:
         只打一行静态提示）+ 单趟扫描 ≈2.6s（进度条覆盖这一段）。
         """
         logger.info("")
-        self.dataset = CocoTrainDataset(self.cfg, split=self.cfg.train_split, augment=True,
-                                        limit=self.cfg.limit, progress=True)
+        self.dataset = build_train_dataset(self.cfg, self.spec, "train", augment=True,
+                                           limit=self.cfg.limit, progress=True)
         self._log_split("train", self.dataset)
         if self.val_enabled:
-            self.val_dataset = CocoDataset(self.cfg.data_dir, "val2017", progress=True)
+            self.val_dataset = build_eval_dataset(self.spec, "val", progress=True)
             self._log_split("val", self.val_dataset,
                             extra=f" · limit {self.cfg.val_limit}" if self.cfg.val_limit else "")
         else:
@@ -321,7 +329,7 @@ class Trainer:
             dl = self._dataloader(epoch)
             n_batch = len(dl)
             if n_batch == 0:
-                raise RuntimeError("训练集为空（检查 data_dir 与 --limit）")
+                raise RuntimeError("training set is empty — check the dataset descriptor and --limit")
             bar = ProgressBar(n_batch, desc="")
             t0 = time.monotonic()
             speed = None  # 累计平均速度（tqdm 口径：n / 已耗时）
@@ -343,7 +351,7 @@ class Trainer:
                 # 增强抽样可视化：首个 / close_mosaic 后首个 / 末轮各存一张网格图
                 if bi == 0 and self.cfg.aug_samples and epoch in self._sample_epochs():
                     draw_target_grid(imgs, targets, self.samples_dir / f"epoch{epoch + 1:03d}.png",
-                                     n=self.cfg.aug_samples)
+                                     n=self.cfg.aug_samples, names=self.dataset.names)
 
                 imgs = imgs.to(self.device, non_blocking=True,
                                memory_format=torch.channels_last if self.cfg.channels_last else torch.preserve_format)
@@ -459,7 +467,7 @@ class Trainer:
             self._write_meta()
         if self.val_enabled:  # 正式口径评估提示（best.safetensors 仅在有验证时落盘）
             logger.info(f"official eval: python scripts/eval.py --weights {self.run_dir / 'weights' / 'best.safetensors'} "
-                        f"--data {self.cfg.data_dir}")
+                        f"--data {self.spec.source}")
 
     def _append_results(self, epoch, elapsed, mean, lr, metrics):
         row = {

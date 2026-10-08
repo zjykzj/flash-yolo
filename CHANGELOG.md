@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **YOLO txt datasets (`data/yolo.py`) and the descriptor-driven factory (`data/build.py`)**: images
+  come from a directory or a `.txt` image list; labels are sibling `<stem>.txt` files
+  (`cls xc yc w h`, normalized) with a numeric-stem fallback (`1.txt` ↔ `000001.jpg`, and
+  dataflow-cv's COCO-image-id naming). Missing/empty label files count as backgrounds, a wrong labels
+  dir fails loudly instead of training on 100 % background, and standalone evaluation works too:
+  `YoloDataset.gt_source()` materializes a COCO GT dict from the image sizes recorded during the eval
+  loop and `CocoEvaluator` accepts a json path, a dict or a lazy callable. `data/scan.py` and
+  `data/loader.py` carry the shared scan types and training machinery (cv2 fork contract, shared
+  corrupt counter, augmentation entry) so the two formats cannot drift.
 - **Dataset descriptors (`config/datasets/spec.py`)**: datasets are described by an
   ultralytics-style yaml — `format` (`coco` | `yolo`), `path` (dataset root, resolved against the
   yaml's own directory), `names` (list or `{index: name}` mapping; index = class id, length = nc)
@@ -52,6 +61,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`--data` takes a dataset descriptor and the model's `nc` follows it** (breaking): `train.py`,
+  `eval.py`, `bench_io.py` and `compare_official.py` now take `--data <name|.yaml>` (name lookup:
+  `config/datasets/local/<name>.yaml` first, then the shipped templates); passing a directory is a
+  migration error. Descriptor roles (`train`/`val`/`test`) replace split names — `TrainConfig.data_dir`
+  and `train_split` (with the `--train-split` flag) are gone, and `eval --split` selects a role
+  (default `val`). The trainer builds the model with `nc = len(descriptor names)` — cross-checked
+  against the COCO json categories — so a non-COCO class count no longer requires editing the model
+  yaml; `meta.json` records the descriptor, format and root in place of `dir`/`train_split`. The COCO
+  loader no longer derives paths from `(data_dir, split)` itself: `data/build.py` resolves every path
+  from the descriptor, and `data/dataset.py` is deleted (its contents moved to `data/coco.py` and
+  `data/loader.py`).
 - **Config package reorganized: one home per kind of thing** (values in yaml, mechanisms in py).
   Model structures move to `config/models/` (`yolo26.yaml`), dataset label names to
   `config/datasets/<name>.yaml` read through the new `config.datasets.load_names()` (the COCO

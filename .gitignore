@@ -672,3 +672,6 @@ weights/
 ### Flash-YOLO: 内部中文文档不入库
 docs/
 CLAUDE.md
+
+# local dataset descriptors (machine paths; see config/datasets/spec.py)
+config/datasets/local/

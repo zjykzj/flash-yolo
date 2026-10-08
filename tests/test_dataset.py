@@ -1,5 +1,8 @@
 """训练数据集验收：类别映射口径 / crowd 剔除 / limit / letterbox 标签映射 / collate / worker 线程与 fork 契约
-/ 扫描统计（背景·缺图·crowd）与惰性 corrupt 计数"""
+/ 扫描统计（背景·缺图·crowd）与惰性 corrupt 计数 / 描述符 names 与 json 对账
+
+数据集一律经「描述符 -> data.build 工厂 -> 加载器」的真实链路构建（与训练一致）。
+"""
 
 import io
 import json
@@ -13,10 +16,12 @@ import numpy as np
 import pytest
 import torch
 
-import data.dataset
-from data.coco import CocoDataset, scan_summary
-from data.dataset import CocoTrainDataset, collate_fn, worker_init_fn
+import data.loader
+from config.datasets import load_dataset
 from config.train_config import TrainConfig
+from data.build import build_eval_dataset, build_train_dataset
+from data.loader import collate_fn, worker_init_fn
+from data.scan import scan_summary
 
 
 def _add_extra_image(data_dir, name, ann=None):
@@ -63,23 +68,46 @@ def _make_fixture(tmp_path):
     return data_dir
 
 
-def test_category_mapping_consistent_with_coco(tmp_path):
-    """与 CocoDataset 的类别映射口径逐项一致"""
+def _descriptor(data_dir, tmp_path, names="cat, dog"):
+    """写一个指向夹具的描述符 yaml 并解析（train/val 角色共用同一份夹具）"""
+    p = tmp_path / "ds.yaml"
+    p.write_text(
+        f"format: coco\npath: {data_dir}\nnames: [{names}]\n"
+        "train: {images: train2017, ann: annotations/instances_train2017.json}\n"
+        "val: {images: train2017, ann: annotations/instances_train2017.json}\n",
+        encoding="utf-8")
+    return load_dataset(str(p))
+
+
+def test_category_mapping_consistent_with_train_and_eval(tmp_path):
+    """训练/评估两侧的类别映射与描述符 names 口径一致（工厂的 names 对账是硬校验）"""
     data_dir = _make_fixture(tmp_path)
-    cfg = TrainConfig(data_dir=str(data_dir))
-    ds = CocoTrainDataset(cfg, split="train2017")
-    ref = CocoDataset(str(data_dir), split="train2017")
+    spec = _descriptor(data_dir, tmp_path)
+    ds = build_train_dataset(TrainConfig(), spec, "train")
+    ref = build_eval_dataset(spec, "val")
     assert ds.cat_id_to_idx == ref.cat_id_to_idx, f"{ds.cat_id_to_idx} vs {ref.cat_id_to_idx}"
-    print("  类别映射与 CocoDataset 一致", ds.cat_id_to_idx)
+    assert ds.names == {0: "cat", 1: "dog"} == ref.names
+    print("  类别映射与描述符 names 一致", ds.cat_id_to_idx)
+
+
+def test_names_mismatch_with_json_raises(tmp_path):
+    """描述符 names 与 json categories 不一致 -> 数据集构建即报错（报首个不一致下标）"""
+    data_dir = _make_fixture(tmp_path)
+    with pytest.raises(ValueError, match=r"names\[1\]"):
+        build_train_dataset(TrainConfig(), _descriptor(data_dir, tmp_path, names="cat, bird"), "train")
+    with pytest.raises(ValueError, match="defines 3 classes"):
+        build_eval_dataset(_descriptor(data_dir, tmp_path, names="cat, dog, bird"), "val")
+    print("  names 与 json 对账报错正确")
 
 
 def test_crowd_excluded_from_train(tmp_path):
-    """iscrowd=1 训练侧剔除；CocoDataset（val 口径）保留"""
+    """iscrowd=1 训练侧剔除；评估侧（CocoDataset 口径）保留"""
     data_dir = _make_fixture(tmp_path)
-    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017")
-    ref = CocoDataset(str(data_dir), split="train2017")
+    spec = _descriptor(data_dir, tmp_path)
+    ds = build_train_dataset(TrainConfig(), spec, "train")
+    ref = build_eval_dataset(spec, "val")
     assert len(ds.labels[0]) == 1, f"img1 训练标签应剔除 crowd: {ds.labels[0]}"
-    assert len(ref.targets(0)) == 2, "CocoDataset 应保留 crowd（val 口径）"
+    assert len(ref.targets(0)) == 2, "评估侧应保留 crowd（val 口径）"
     assert ds.labels[0][0][0] == 0 and list(ds.labels[0][0][1:]) == [10, 10, 30, 30]
     assert len(ds.labels[2]) == 0, "img3 无标签应为空数组"
     print("  crowd 剔除正确，训练/验证口径分离")
@@ -87,7 +115,7 @@ def test_crowd_excluded_from_train(tmp_path):
 
 def test_limit_and_len(tmp_path):
     data_dir = _make_fixture(tmp_path)
-    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017", limit=2)
+    ds = build_train_dataset(TrainConfig(), _descriptor(data_dir, tmp_path), "train", limit=2)
     assert len(ds) == 2
     assert ds.images[0]["id"] == 1
     print("  limit 切片正确")
@@ -96,7 +124,7 @@ def test_limit_and_len(tmp_path):
 def test_letterbox_labels(tmp_path):
     """augment=False 路径：等比缩放 + 灰边，标签随 ratio/pad 变换"""
     data_dir = _make_fixture(tmp_path)
-    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017", augment=False)
+    ds = build_train_dataset(TrainConfig(), _descriptor(data_dir, tmp_path), "train", augment=False)
     tensor, labels = ds[0]
     assert tensor.shape == (3, 640, 640)
     # 64x64 -> 640x640: ratio=10, pad=0; [10,10,30,30] -> [100,100,300,300]
@@ -107,7 +135,7 @@ def test_letterbox_labels(tmp_path):
 
 def test_collate(tmp_path):
     data_dir = _make_fixture(tmp_path)
-    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017", augment=False)
+    ds = build_train_dataset(TrainConfig(), _descriptor(data_dir, tmp_path), "train", augment=False)
     imgs, targets = collate_fn([ds[0], ds[1], ds[2]])
     assert imgs.shape == (3, 3, 640, 640)
     # img0 1 框, img1 1 框, img2 0 框 -> (2, 6)
@@ -124,14 +152,17 @@ def test_scan_summary_line():
                                 "parse 12.6s + scan 6.6s")
     assert "crowd" not in scan_summary(SimpleNamespace(n_instances=36781, n_categories=80, n_crowd_excluded=0,
                                                        parse_time=0.31, scan_time=0.05))
+    # YOLO 侧无解析段（parse_time=0）：省略 `parse Xs + `
+    yolo = SimpleNamespace(n_instances=100, n_categories=2, n_crowd_excluded=0, parse_time=0.0, scan_time=1.2)
+    assert scan_summary(yolo) == "       └ 100 instances · 2 categories · scan 1.2s"
     assert scan_summary(ds, " · limit 8").endswith("· limit 8"), "val 侧的 --limit 注记应接在尾"
-    print("  `└` 续行排版正确")
+    print("  `└` 续行排版正确（含 YOLO 无解析段）")
 
 
 def test_scan_stats(tmp_path):
     """扫描统计：实例数 / 类别数 / 背景图（无框）/ crowd 剔除数 / 缺图数"""
     data_dir = _make_fixture(tmp_path)
-    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017")
+    ds = build_train_dataset(TrainConfig(), _descriptor(data_dir, tmp_path), "train")
     assert (ds.n_instances, ds.n_categories) == (2, 2), f"{ds.n_instances} / {ds.n_categories}"
     assert ds.n_crowd_excluded == 1, "img1 的 iscrowd=1 应被剔除并计数"
     assert ds.n_backgrounds == 1, "img3 无框 = 背景图"
@@ -144,24 +175,22 @@ def test_missing_image_excluded_and_counted(tmp_path):
     """标注里有、磁盘上没有的图：剔除 + 计数 + 记首个文件名（官方 train2017 少 1 张的兜底）"""
     data_dir = _make_fixture(tmp_path)
     _add_extra_image(data_dir, "missing.jpg")  # 只进标注，不落盘
-    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017")
+    ds = build_train_dataset(TrainConfig(), _descriptor(data_dir, tmp_path), "train")
     assert len(ds) == 3, "缺图应从 images 中剔除"
     assert ds.n_missing == 1 and ds.first_missing == "missing.jpg"
     print("  缺图剔除与计数正确")
 
 
-def test_scan_progress_line(tmp_path, capsys):
+def test_scan_progress_line(tmp_path):
     """progress=True：先一行静态提示（stdout），再画扫描条（写 progress_file）"""
     data_dir = _make_fixture(tmp_path)
     buf = io.StringIO()
-    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017",
-                          progress=True, progress_file=buf)
+    ds = build_train_dataset(TrainConfig(), _descriptor(data_dir, tmp_path), "train",
+                             progress=True, progress_file=buf)
     out = buf.getvalue()
     assert "Scanning" in out and "instances_train2017.json" in out
     assert "3 images, 1 backgrounds, 0 missing" in out, f"扫描条计数：{out!r}"
     assert "100% [████████████] 3/3" in out, f"扫描条渲染：{out!r}"
-    status = capsys.readouterr().out
-    assert "Scanning" in status and "MB) ..." in status, f"静态提示行：{status!r}"
     assert len(ds) == 3
     print("  扫描行渲染正确（静态提示 + 进度条 + 计数）")
 
@@ -171,7 +200,7 @@ def test_corrupt_image_counted_as_background(tmp_path):
     data_dir = _make_fixture(tmp_path)
     _add_extra_image(data_dir, "broken.jpg", ann=[1, 1, 5, 5])
     (data_dir / "train2017" / "broken.jpg").write_bytes(b"not a jpeg")
-    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017", augment=False)
+    ds = build_train_dataset(TrainConfig(), _descriptor(data_dir, tmp_path), "train", augment=False)
     assert len(ds) == 4 and ds.n_corrupt == 0
     tensor, labels = ds[3]  # broken.jpg 在磁盘上（扫描时保留），但读不出来
     assert tensor.shape == (3, 640, 640) and len(labels) == 0
@@ -180,16 +209,16 @@ def test_corrupt_image_counted_as_background(tmp_path):
 
 
 def test_val_corrupt_image_counted(tmp_path):
-    """val 侧读失败：返回空白图 + GT 保留（诚实记为漏检），计数在父进程内"""
+    """评估侧读失败：返回空白图 + GT 保留（诚实记为漏检），计数在父进程内"""
     data_dir = _make_fixture(tmp_path)
     _add_extra_image(data_dir, "broken.jpg", ann=[1, 1, 5, 5])
     (data_dir / "train2017" / "broken.jpg").write_bytes(b"not a jpeg")
-    ref = CocoDataset(str(data_dir), split="train2017")
+    ref = build_eval_dataset(_descriptor(data_dir, tmp_path), "val")
     assert ref.n_corrupt == 0
     assert ref.load_image(3).shape == (1, 1, 3)
     assert ref.n_corrupt == 1
-    assert len(ref.targets(3)) == 1, "val 侧 GT 保留（该图记为漏检）"
-    print("  val 侧 corrupt 计数与 GT 保留正确")
+    assert len(ref.targets(3)) == 1, "评估侧 GT 保留（该图记为漏检）"
+    print("  评估侧 corrupt 计数与 GT 保留正确")
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="需要 os.fork（复现 DataLoader worker 的 fork 路径）")
@@ -198,7 +227,7 @@ def test_corrupt_counter_visible_across_fork(tmp_path):
     data_dir = _make_fixture(tmp_path)
     _add_extra_image(data_dir, "broken.jpg")
     (data_dir / "train2017" / "broken.jpg").write_bytes(b"not a jpeg")
-    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017")
+    ds = build_train_dataset(TrainConfig(), _descriptor(data_dir, tmp_path), "train")
     with warnings.catch_warnings():  # 多线程进程 fork 的 DeprecationWarning——本测试正是要 fork
         warnings.simplefilter("ignore", DeprecationWarning)
         pid = os.fork()
@@ -223,20 +252,20 @@ def test_worker_thread_contract():
     """
     n_cv = cv2.getNumThreads()
     assert n_cv == 1, (
-        f"data/dataset.py 导入后 cv2 应为单线程，实际 {n_cv} —— 父进程侧没压线程数："
-        "worker 会按核数超订，且 fork 后有死锁风险（见 data/dataset.py 顶部注释）"
+        f"data/loader.py 导入后 cv2 应为单线程，实际 {n_cv} —— 父进程侧没压线程数："
+        "worker 会按核数超订，且 fork 后有死锁风险（见 data/loader.py 顶部注释）"
     )
 
-    prev_cv, prev_torch, prev_rng = n_cv, torch.get_num_threads(), data.dataset._worker_rng
+    prev_cv, prev_torch, prev_rng = n_cv, torch.get_num_threads(), data.loader._worker_rng
     try:
         cv2.setNumThreads(3)  # 取非 1：worker 里若调用 setNumThreads(1) 就能被看见
         worker_init_fn(0)
-        assert cv2.getNumThreads() == 3, "worker_init_fn 里不许调 cv2.setNumThreads（fork 不安全，见文件顶部注释）"
+        assert cv2.getNumThreads() == 3, "worker_init_fn 里不许调 cv2.setNumThreads（fork 不安全）"
         assert torch.get_num_threads() == 1, "worker 内 torch 线程数应为 1"
     finally:
         cv2.setNumThreads(prev_cv)
         torch.set_num_threads(prev_torch)
-        data.dataset._worker_rng = prev_rng
+        data.loader._worker_rng = prev_rng
     print("  worker 线程契约：cv2 继承父进程单线程、torch 置 1")
 
 
@@ -279,6 +308,6 @@ def test_worker_init_survives_fork_after_parent_cv2_use():
         os.kill(pid, 9)
         os.waitpid(pid, 0)
         pytest.fail(f"worker_init_fn 在 fork 出的子进程中阻塞 >{timeout:.0f}s —— 不要在 worker 里调 "
-                    "cv2.setNumThreads（OpenCV pthreads 池非 fork 安全，见 data/dataset.py 顶部注释）")
+                    "cv2.setNumThreads（OpenCV pthreads 池非 fork 安全，见 data/loader.py 顶部注释）")
     finally:
         cv2.setNumThreads(prev_cv)

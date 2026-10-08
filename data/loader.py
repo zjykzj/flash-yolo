@@ -1,23 +1,18 @@
-"""COCO 训练数据集 + collate
+"""训练数据加载的共享件：cv2 线程契约 / 跨 fork 计数 / worker 播种 / collate / 训练集 mixin
 
-- ann json 一次解析为 per-image numpy 标签（~20MB），图像按需 cv2 加载
-- 类别映射与 CocoDataset 共用 data/coco.py 的 parse_coco（category_id 排序 -> 0..nc-1）
-- 训练侧丢弃 iscrowd=1 标注（crowd 只参与 COCO 评测的 AP50 扣分，不参与训练）
-- 标签格式 (M, 5) [cls, x1, y1, x2, y2] 原图像素坐标；collate 后为 (N, 6) [batch_idx, ...]
-- cfg 只按属性访问（duck-typing），data/ 不依赖 train/（单向依赖 train -> data）
+COCO 与 YOLO 两种训练集（data/coco.py、data/yolo.py）共用本模块——
+增强入口、corrupt 计数与 worker 线程约定只允许有一份实现（两处必然漂移）。
 """
 
 import multiprocessing
-from pathlib import Path
 
 import cv2
 import numpy as np
 import torch
 
 from data.augment import augment, letterbox_train
-from data.coco import scan_split
 
-__all__ = ["CocoTrainDataset", "collate_fn", "worker_init_fn"]
+__all__ = ["TrainMixin", "SharedCounter", "collate_fn", "worker_init_fn"]
 
 _worker_rng = None  # worker 进程内全局 RNG（worker_init_fn 播种，多进程下各 worker 独立）
 
@@ -30,7 +25,7 @@ _worker_rng = None  # worker 进程内全局 RNG（worker_init_fn 播种，多�
 cv2.setNumThreads(1)
 
 
-class _SharedCounter:
+class SharedCounter:
     """跨 fork 共享的计数器（DataLoader worker 里 +1，父进程可读）
 
     只在失败路径写、每 epoch 读一次，因此 lock=False（省锁；并发 +1 丢一两次对诊断无影响）。
@@ -48,55 +43,11 @@ class _SharedCounter:
         return self._v.value
 
 
-class CocoTrainDataset:
-    """COCO split 训练集（默认 train2017）"""
+class TrainMixin:
+    """训练数据集共用行为：增强入口 / close_mosaic / 惰性 corrupt 计数
 
-    def __init__(self, cfg, split="train2017", augment=True, limit=0, progress=False, progress_file=None):
-        self.cfg = cfg  # TrainConfig 共享引用：close_mosaic 原地清零概率
-        self.use_augment = augment
-
-        self.img_dir = Path(cfg.data_dir) / split
-        if not self.img_dir.exists():
-            self.img_dir = Path(cfg.data_dir) / "images" / split
-        ann_file = Path(cfg.data_dir) / "annotations" / f"instances_{split}.json"
-
-        # 解析 + 单趟扫描（存在的图 / 剔 crowd / 建标签 / 计数在同一个循环里，见 data/coco.py::scan_split）
-        # 训练侧丢弃 iscrowd=1（val 侧 CocoDataset 保留）；缺图（官方 train2017 比标注少 1 张的兜底）剔除
-        res = scan_split(ann_file, self.img_dir, "train", limit=limit, drop_crowd=True,
-                         build_labels=True, progress=progress, progress_file=progress_file)
-        self.images, self.labels, self.cat_id_to_idx = res.images, res.labels, res.cat_id_to_idx
-
-        self.n_instances = res.stats.n_instances
-        self.n_categories = len(self.cat_id_to_idx)
-        self.n_backgrounds = res.stats.n_backgrounds
-        self.n_missing = res.stats.n_missing
-        self.n_crowd_excluded = res.stats.n_crowd_excluded
-        self.first_missing = res.stats.first_missing
-        self.parse_time, self.scan_time = res.stats.parse_time, res.stats.scan_time
-        self._corrupt = _SharedCounter()  # worker 里读失败 +1；父进程用 n_corrupt 读
-
-    @property
-    def n_corrupt(self):
-        return self._corrupt.value
-
-    def __len__(self):
-        return len(self.images)
-
-    def image_id(self, idx):
-        """COCO image_id（调试/可视化用）"""
-        return self.images[idx]["id"]
-
-    def load_image(self, idx):
-        """(BGR img, labels 副本)——mosaic/copy_paste/mixup 的邻图加载入口
-
-        读不出来（文件损坏 / 训练中被删）时不再抛异常：计数 + 返回空白画布与空标签（当背景样本，
-        不教假框），训练不因单张坏图中断。计数在 worker 进程里 +1、父进程每 epoch 读一次。
-        """
-        img = cv2.imread(str(self.img_dir / self.images[idx]["file_name"]))
-        if img is None:
-            self._corrupt.bump()
-            return np.zeros((self.cfg.imgsz, self.cfg.imgsz, 3), np.uint8), np.zeros((0, 5), np.float32)
-        return img, self.labels[idx].copy()
+    子类需提供：cfg（duck-typing）、use_augment、load_image(idx) -> (BGR, labels)、_corrupt(SharedCounter)
+    """
 
     def __getitem__(self, idx):
         img, labels = self.load_image(idx)
@@ -107,6 +58,10 @@ class CocoTrainDataset:
     def close_mosaic(self):
         """最后 N epoch：清零 mosaic/mixup/copy_paste 概率（HSV/flip/perspective 保留）"""
         self.cfg.mosaic = self.cfg.mixup = self.cfg.copy_paste = 0.0
+
+    @property
+    def n_corrupt(self):
+        return self._corrupt.value
 
 
 def worker_init_fn(worker_id):

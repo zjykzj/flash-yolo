@@ -38,8 +38,10 @@ import cv2
 import torch
 from torch.utils.data import DataLoader
 
+from config.datasets import load_dataset
 from config.train_config import TRAIN_CONFIG_PATH, load_train_config
-from data.dataset import CocoTrainDataset, collate_fn, worker_init_fn
+from data.build import build_train_dataset
+from data.loader import collate_fn, worker_init_fn
 from model.yolo26 import CONFIG_PATH, YOLO26
 from train.ema import ModelEMA
 from train.loss import ComputeLoss
@@ -154,7 +156,8 @@ def bench_e2e(ds, model, loss_fn, opt, ema, batch, workers, threads, warm, timed
 
 def main():
     parser = argparse.ArgumentParser(description="training I/O throughput benchmark")
-    parser.add_argument("--data", required=True, help="COCO root (containing annotations/ and train2017/)")
+    parser.add_argument("--data", required=True,
+                        help="dataset descriptor: a name in config/datasets/ (local/ wins) or a .yaml path")
     parser.add_argument("--batch", type=int, nargs="+", default=[8, 16, 32, 64],
                         help="batch sizes (end-to-end stage; 阶梯候选，超显存会自动 OOM 跳过)")
     parser.add_argument("--workers", type=int, nargs="+", default=None,
@@ -171,7 +174,11 @@ def main():
     args = parser.parse_args()
 
     cfg = load_train_config(TRAIN_CONFIG_PATH)
-    cfg.data_dir = args.data
+    cfg.data = args.data
+    try:
+        spec = load_dataset(cfg.data)
+    except (ValueError, FileNotFoundError) as e:
+        parser.error(str(e))
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
 
     if not args.workers:
@@ -187,7 +194,7 @@ def main():
         logger.warning(f"batch {bad} 不整除 nbs={cfg.nbs} → accum 取整后 wd 因子 ≠ 1.0，与官方不等价"
                        f"（本仓库未实现 wd 缩放）；建议 {[b for b in (16, 32, 64, 128) if b <= cfg.nbs]}")
 
-    ds = CocoTrainDataset(cfg, split=cfg.train_split, augment=True, limit=args.limit, progress=False)
+    ds = build_train_dataset(cfg, spec, "train", augment=True, limit=args.limit, progress=False)
 
     # ---- ① loader-only 全网格 ----
     logger.info("")
@@ -208,7 +215,7 @@ def main():
     # ---- ② end-to-end ----
     logger.info("")
     logger.info(bold(f"[2/2] end-to-end（batch × loader 前三，各 {args.batches} batch）"))
-    model = YOLO26(CONFIG_PATH, cfg.scale, cfg.imgsz).to(device).train()
+    model = YOLO26(CONFIG_PATH, cfg.scale, cfg.imgsz, len(spec.names)).to(device).train()
     if cfg.channels_last:
         model.to(memory_format=torch.channels_last)
     head = model.model[-1]

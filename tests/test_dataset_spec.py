@@ -25,9 +25,13 @@ def _descriptor(tmp_path, text, name="ds.yaml"):
 
 
 def test_template_needs_path():
-    """包内 coco.yaml 是模板：path 空 + 相对角色路径 -> actionable 报错（仓库不存机器路径）"""
+    """包内 coco.yaml 是模板：path 空 + 相对角色路径 -> actionable 报错（仓库不存机器路径）
+
+    按路径直读模板（不按名字）：本机可能已有 config/datasets/local/coco.yaml 覆盖（gitignored）。
+    """
+    from config.datasets import DATASETS_DIR
     with pytest.raises(ValueError, match="path:"):
-        load_dataset("coco")
+        load_dataset(str(DATASETS_DIR / "coco.yaml"))
 
 
 def test_load_names_reads_template():

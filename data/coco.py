@@ -1,33 +1,24 @@
 """COCO 数据集读取（训练/评估共用解析与扫描）
 
-目录约定（标准 COCO 布局）：
-    <data_dir>/annotations/instances_<split>.json
-    <data_dir>/<split>/<file_name>          （兼容 <data_dir>/images/<split>/）
+路径不再由本模块推导：调用方（data/build.py，源头是 config/datasets/spec.py 的描述符）
+解出 ann_file 与 img_dir 后传入——此前 `annotations/instances_<split>.json` 与
+`<root>/<split>|images/<split>` 的模板在 CocoDataset / CocoTrainDataset 两处各写了一遍。
 
 解析口径（parse_coco）与扫描口径（scan_split）都在本模块，训练集与验证集共用，避免双份实现漂移。
 """
 
 import json
 import time
-from collections import namedtuple
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+from data.loader import SharedCounter, TrainMixin
+from data.scan import ScanResult, ScanStats
 from utils.progress import ProgressBar
 
-__all__ = ["CocoDataset", "parse_coco", "scan_split", "scan_summary", "ScanResult", "ScanStats"]
-
-
-def scan_summary(ds, extra=""):
-    """扫描行下的 `└` 续行（训练与评估共用同一排版，避免两处漂移）
-
-    形如 `       └ 849949 instances · 80 categories · crowd 10052 excluded · parse 12.6s + scan 6.6s`
-    """
-    crowd = f"crowd {ds.n_crowd_excluded} excluded · " if ds.n_crowd_excluded else ""
-    return (f"       └ {ds.n_instances} instances · {ds.n_categories} categories · {crowd}"
-            f"parse {ds.parse_time:.1f}s + scan {ds.scan_time:.1f}s{extra}")
+__all__ = ["CocoDataset", "CocoTrainDataset", "parse_coco", "scan_split"]
 
 
 def parse_coco(ann_file, status_line=None):
@@ -52,16 +43,6 @@ def parse_coco(ann_file, status_line=None):
         if a["image_id"] in by_image:
             by_image[a["image_id"]].append(a)
     return anns["images"], by_image, cat_id_to_idx, names
-
-
-# 数据集扫描统计（训练/验证共用口径）
-#   n_missing: 磁盘上不存在（已从 images 剔除）；n_backgrounds: 无框图片
-#   n_crowd_excluded: 被剔除的 iscrowd=1 标注数（val 侧不剔除，恒 0）
-ScanStats = namedtuple("ScanStats", "n_missing n_backgrounds n_crowd_excluded "
-                                    "n_instances parse_time scan_time first_missing")
-
-# 扫描结果：labels 仅训练侧非 None（build_labels=True）
-ScanResult = namedtuple("ScanResult", "images labels annotations cat_id_to_idx names stats")
 
 
 def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels=False,
@@ -120,21 +101,15 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
 
 
 class CocoDataset:
-    """按图片索引读取 COCO split 的图片与标注"""
+    """按图片索引读取一个 COCO 角色的图片与标注（val/评估口径：保留 crowd、不建标签）"""
 
-    def __init__(self, data_dir, split="val2017", progress=False, progress_file=None):
-        self.data_dir = Path(data_dir)
-        self.split = split
-        self.ann_file = self.data_dir / "annotations" / f"instances_{split}.json"
-
-        self.img_dir = self.data_dir / split
-        if not self.img_dir.exists():
-            self.img_dir = self.data_dir / "images" / split
+    def __init__(self, ann_file, img_dir, label="val", progress=False, progress_file=None):
+        self.ann_file = Path(ann_file)
+        self.img_dir = Path(img_dir)
+        self.label = label
 
         # category_id（COCO 非连续 id）-> 0..nc-1（与训练侧共用 parse_coco 口径）
-        # val 侧不剔 crowd、不建标签；progress=True 时打扫描行（默认关闭：eval/compare 输出不变）
-        res = scan_split(self.ann_file, self.img_dir, "train" if split.startswith("train") else "val",
-                         progress=progress, progress_file=progress_file)
+        res = scan_split(self.ann_file, self.img_dir, label, progress=progress, progress_file=progress_file)
         self.images, self.annotations = res.images, res.annotations
         self.cat_id_to_idx, self.names, stats = res.cat_id_to_idx, res.names, res.stats
 
@@ -147,6 +122,10 @@ class CocoDataset:
         self.scan_time = stats.scan_time
         self.first_missing = stats.first_missing
         self.n_corrupt = 0  # 验证在父进程单进程内跑，普通计数即可（见 load_image）
+
+    def gt_source(self):
+        """pycocotools 的 GT 来源：COCO 直接给 ann json 路径（YOLO 侧返回 callable，见 data/yolo.py）"""
+        return str(self.ann_file)
 
     def __len__(self):
         return len(self.images)
@@ -181,3 +160,53 @@ class CocoDataset:
             x, y, w, h = a["bbox"]
             out.append(([x, y, x + w, y + h], self.cat_id_to_idx[a["category_id"]]))
         return out
+
+
+class CocoTrainDataset(TrainMixin):
+    """COCO 训练集：单趟扫描剔 crowd + 建标签（(M,5) [cls,x1,y1,x2,y2] 原图像素）
+
+    增强入口 / close_mosaic / 惰性 corrupt 计数在 data/loader.TrainMixin（与 YOLO 训练集共用）。
+    cfg 只按属性访问（duck-typing），data/ 不依赖 train/（单向依赖 train -> data）。
+    """
+
+    def __init__(self, cfg, ann_file, img_dir, label="train", augment=True, limit=0,
+                 progress=False, progress_file=None):
+        self.cfg = cfg  # TrainConfig 共享引用：close_mosaic 原地清零概率
+        self.use_augment = augment
+        self.ann_file = Path(ann_file)
+        self.img_dir = Path(img_dir)
+        self.label = label
+
+        # 解析 + 单趟扫描（存在的图 / 剔 crowd / 建标签 / 计数在同一个循环里，见 data/coco.py::scan_split）
+        res = scan_split(self.ann_file, self.img_dir, label, limit=limit, drop_crowd=True,
+                         build_labels=True, progress=progress, progress_file=progress_file)
+        self.images, self.labels, self.cat_id_to_idx = res.images, res.labels, res.cat_id_to_idx
+        self.names = res.names
+
+        self.n_instances = res.stats.n_instances
+        self.n_categories = len(self.cat_id_to_idx)
+        self.n_backgrounds = res.stats.n_backgrounds
+        self.n_missing = res.stats.n_missing
+        self.n_crowd_excluded = res.stats.n_crowd_excluded
+        self.first_missing = res.stats.first_missing
+        self.parse_time, self.scan_time = res.stats.parse_time, res.stats.scan_time
+        self._corrupt = SharedCounter()  # worker 里读失败 +1；父进程用 n_corrupt 读
+
+    def __len__(self):
+        return len(self.images)
+
+    def image_id(self, idx):
+        """COCO image_id（调试/可视化用）"""
+        return self.images[idx]["id"]
+
+    def load_image(self, idx):
+        """(BGR img, labels 副本)——mosaic/copy_paste/mixup 的邻图加载入口
+
+        读不出来（文件损坏 / 训练中被删）时不再抛异常：计数 + 返回空白画布与空标签（当背景样本，
+        不教假框），训练不因单张坏图中断。计数在 worker 进程里 +1、父进程每 epoch 读一次。
+        """
+        img = cv2.imread(str(self.img_dir / self.images[idx]["file_name"]))
+        if img is None:
+            self._corrupt.bump()
+            return np.zeros((self.cfg.imgsz, self.cfg.imgsz, 3), np.uint8), np.zeros((0, 5), np.float32)
+        return img, self.labels[idx].copy()

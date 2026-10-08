@@ -56,18 +56,48 @@ def pr_at_max_f1(prec, rec_thrs, k, iou=0, area=_AREA_ALL, maxdet=_MAXDET_100):
     return float(p[i]), float(r[i])
 
 
+def _make_coco(gt):
+    """ann json 路径或 GT dict -> pycocotools COCO 对象
+
+    COCO() 只接受路径（内部直接 open()），dict 形态手动装配（赋 dataset + 建索引）。
+    """
+    if isinstance(gt, dict):
+        coco = COCO()
+        coco.dataset = gt
+        coco.createIndex()
+        return coco
+    return COCO(gt)
+
+
 class CocoEvaluator:
     """累积预测 -> COCOeval，compute() 输出 COCO 指标与 per-class 明细
 
     Args:
-        ann_file: instances_<split>.json 路径
+        gt: GT 来源——ann json 路径 | COCO GT dict | 返回 GT dict 的 callable（惰性物化）
+            callable 形态供 YOLO 数据集使用：归一化标签的像素化要等图尺寸，尺寸在评估循环里才拿到，
+            因此 GT dict 只能在 compute()（循环结束后）现搭
+        nc: 类别数；callable 形态必填（dict 形态的 category_id 即 0..nc-1，建恒等映射）
     """
 
-    def __init__(self, ann_file):
-        self.coco_gt = COCO(ann_file)
-        cat_ids = sorted(self.coco_gt.getCatIds())
-        self.idx_to_cat_id = {i: cid for i, cid in enumerate(cat_ids)}  # 0..nc-1 -> COCO category_id
+    def __init__(self, gt=None, nc=None):
+        self._gt_lazy = None
+        if callable(gt):
+            if nc is None:
+                raise ValueError("CocoEvaluator: `nc` is required when `gt` is a callable (lazy GT source)")
+            self.coco_gt = None
+            self._gt_lazy = gt
+            self.idx_to_cat_id = {i: i for i in range(nc)}  # dict 形态：category_id 恰为 0..nc-1
+        else:
+            self.coco_gt = _make_coco(gt)
+            cat_ids = sorted(self.coco_gt.getCatIds())
+            self.idx_to_cat_id = {i: cid for i, cid in enumerate(cat_ids)}  # 0..nc-1 -> COCO category_id
         self.results = []
+
+    def _materialize(self):
+        """惰性 GT：首次需要时调用 callable 现搭（compute 已在 redirect_prints 内，杂音不外泄）"""
+        if self.coco_gt is None:
+            self.coco_gt = _make_coco(self._gt_lazy())
+        return self.coco_gt
 
     def update(self, image_id, detections):
         """累积一张图的结果（COCO 结果格式：xywh + category_id + score）"""
@@ -86,15 +116,16 @@ class CocoEvaluator:
         """返回 COCO 指标 dict（无匹配时 -1 归一化为 0；完全无预测时 pycocotools 会崩溃，直接返回 0）"""
         if not self.results:
             return dict(_EMPTY_METRICS)
-        coco_dt = self.coco_gt.loadRes(self.results)
-        coco_eval = COCOeval(self.coco_gt, coco_dt, "bbox")
+        coco_gt = self._materialize()
+        coco_dt = coco_gt.loadRes(self.results)
+        coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
         # 评估范围 = 有预测的图片集合（否则 --limit 子集评估会被全量 GT 稀释）
         coco_eval.params.imgIds = sorted({r["image_id"] for r in self.results})
         coco_eval.evaluate()
         coco_eval.accumulate()
         coco_eval.summarize()
         s = np.nan_to_num(coco_eval.stats, nan=-1.0).clip(min=0.0)
-        per_class = self._per_class(coco_eval)
+        per_class = self._per_class(coco_eval, coco_gt)
         return {
             "mAP@[.5:.95]": round(float(s[0]), 4),
             "mAP@50": round(float(s[1]), 4),
@@ -110,7 +141,7 @@ class CocoEvaluator:
             "per_class": per_class,
         }
 
-    def _per_class(self, coco_eval):
+    def _per_class(self, coco_eval, coco_gt):
         """per-class 明细（仅含评估范围内有 GT 的类别）
 
         row = (类别名, 图片数, 实例数, P, R, AP50, AP@[.5:.95], AR@100)
@@ -121,7 +152,7 @@ class CocoEvaluator:
         recall = coco_eval.eval["recall"]  # (T, K, A, M)
         rows = []
         for k, cat_id in self.idx_to_cat_id.items():
-            img_ids = [i for i in self.coco_gt.getImgIds(catIds=cat_id) if i in eval_img_ids]
+            img_ids = [i for i in coco_gt.getImgIds(catIds=cat_id) if i in eval_img_ids]
             if not img_ids:
                 continue
             p50 = prec[0, :, k, _AREA_ALL, _MAXDET_100]
@@ -134,7 +165,7 @@ class CocoEvaluator:
             r = r[r > -1]
             ar = float(np.mean(r)) if len(r) else 0.0
             pr, rr = pr_at_max_f1(prec, rec_thrs, k)
-            name = self.coco_gt.cats[cat_id]["name"]
-            n_inst = len(self.coco_gt.getAnnIds(imgIds=img_ids, catIds=cat_id))
+            name = coco_gt.cats[cat_id]["name"]
+            n_inst = len(coco_gt.getAnnIds(imgIds=img_ids, catIds=cat_id))
             rows.append((name, len(img_ids), n_inst, pr, rr, ap50, ap, ar))
         return rows
