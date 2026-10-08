@@ -61,6 +61,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`scripts/infer.py` can run non-`n` scales**: the script had no `--scale` and always built the
+  model with `PtEngine`'s default `"n"`, so `--weights yolo26s.safetensors` died at the strict
+  load with a shape mismatch. The scale is now derived from the weights filename
+  (`model.weights.scale_from_weights`: `yolo26s.safetensors` -> `s`), `--scale` overrides it, and
+  a name that carries no scale raises a clear CLI error instead of being guessed. The header is
+  split into the shared env / model / input+params layout — it previously hard-coded `YOLO26n`
+  and merged environment, model and mode into a single line — and the weights load now happens
+  after `run.log` is attached, so load failures land in the run log instead of vanishing.
 - **Missing-image warning no longer disappears**: `data/dataset.py` used a bare `print` (invisible
   in `run.log`, emitted before the banner); it is now an aggregated `logger.warning` naming the
   first missing file, and the count is carried into the scan line and `meta.json`.

@@ -16,10 +16,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
 import cv2
+import torch
 
 from config import __version__
 from config.defaults import COCO_NAMES, IMGSZ
-from utils.engine import OnnxEngine, PtEngine
+from model.weights import scale_from_weights
+from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, setup_logging
 from utils.paths import increment_path
 from utils.visualize import draw_detections
@@ -60,15 +62,11 @@ def main():
         help="output path: single image file, or directory for directory mode (default runs/predict/predictN/)",
     )
     parser.add_argument("--device", default=None, help="pt engine device (default auto)")
+    parser.add_argument("--scale", default=None,
+                        help="model scale (n/s/m/l/x; default: inferred from the weights filename)")
     args = parser.parse_args()
 
-    end2end = not args.nms
-    engine_cls = OnnxEngine if args.engine == "onnx" else PtEngine
-    kwargs = {"end2end": end2end}
-    if args.engine == "pt":
-        kwargs["device"] = args.device
-    engine = engine_cls(args.weights, **kwargs)
-
+    # 输入清单与 run 目录先确定：日志挂到 run 目录上（engine 构建失败的报错也才进得了 run.log）
     images = _collect_images(args.image)
     if not images:
         raise FileNotFoundError(f"no images found: {args.image}")
@@ -82,7 +80,28 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
     attach_file_log(run_dir / "run.log")
 
-    logger.info(bold(f"Flash-YOLO {__version__} · YOLO26n · {'E2E (NMS-free)' if end2end else 'o2m+NMS'} · engine {args.engine}"))
+    # ---- 头部（与训练/评估同一套五段排版：环境 -> 模型 -> 输入/参数 -> 细节）----
+    # ① 环境：engine 构建之前（onnx 后端固定 CPU，见 OnnxEngine）
+    device = resolve_device(args.device) if args.engine == "pt" else "cpu"
+    logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device_label(device)}"))
+
+    # ② 模型：档位从权重文件名推（yolo26s.safetensors -> s），认不出才要求显式 --scale
+    #    此前 scale 恒为 PtEngine 默认的 "n"：喂非 n 权重会直接卡在 strict load 的尺寸不匹配上
+    scale = args.scale or scale_from_weights(args.weights)
+    if scale is None:
+        parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
+    end2end = not args.nms
+    engine_cls = OnnxEngine if args.engine == "onnx" else PtEngine
+    kwargs = {"end2end": end2end, "scale": scale}
+    if args.engine == "pt":
+        kwargs["device"] = args.device
+    engine = engine_cls(args.weights, **kwargs)
+    logger.info(bold(f"YOLO26{scale} · {engine.summary_line} · "
+                     f"{'E2E (NMS-free)' if end2end else 'o2m+NMS'} · engine {args.engine}"))
+
+    # ③ 输入清单 + 本次任务参数
+    logger.info(f"infer: {args.image} · {len(images)} image{'s' if len(images) > 1 else ''} · "
+                f"conf {args.conf} · imgsz {IMGSZ}")
 
     t_start = time.perf_counter()  # 端到端计时（含图像读/写 I/O）
     stage_sums = {"preprocess": 0.0, "inference": 0.0, "postprocess": 0.0}

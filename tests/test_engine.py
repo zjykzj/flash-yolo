@@ -5,11 +5,23 @@ from pathlib import Path
 import pytest
 import torch
 
+from model.weights import scale_from_weights
 from utils.engine import device_label, resolve_device
 
 ROOT = Path(__file__).resolve().parent.parent
 SAFE_PATH = ROOT / "weights" / "yolo26n.safetensors"
 ONNX_PATH = ROOT / "weights" / "yolo26n.onnx"
+
+
+def test_scale_from_weights():
+    """官方命名自带档位；认不出返回 None（调用方报错，而不是闷头按 n 档建模型再在 strict load 处炸）"""
+    assert scale_from_weights("weights/yolo26s.safetensors") == "s"
+    assert scale_from_weights("weights/yolo26n.onnx") == "n"
+    assert scale_from_weights("yolo26x_ep100.safetensors") == "x"
+    assert scale_from_weights("YOLO26M.safetensors") == "m"
+    assert scale_from_weights("best.safetensors") is None
+    assert scale_from_weights("yolo26s2.safetensors") is None, "s 后跟数字不算档位（避免误判 yolo26s2）"
+    print("  档位推导：官方命名识别 + 认不出返回 None")
 
 
 def test_device_label():

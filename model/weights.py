@@ -1,12 +1,27 @@
 """权重读写：safetensors <-> 模型（strict load，成功即证明拓扑一致）"""
 
 import logging
+import re
+from pathlib import Path
 
 from safetensors.torch import load_file, save_file
 
-__all__ = ["load_weights", "save_weights"]
+__all__ = ["load_weights", "save_weights", "scale_from_weights"]
 
 logger = logging.getLogger(__name__)
+
+# 官方档位命名：yolo26n/s/m/l/x（scripts/download_weights.py 与 scripts/export.py 都沿用）
+_SCALE_RE = re.compile(r"yolo26([nsmlx])($|[-_.])", re.I)
+
+
+def scale_from_weights(path):
+    """从权重文件名推模型档位：`yolo26s.safetensors` / `yolo26s.onnx` -> "s"；认不出返回 None
+
+    推理脚本据此不必强制 `--scale`：官方命名自带档位。认不出（如 `best.safetensors`）时由调用方
+    报错要求显式指定——比闷头按 n 档建模型、再到 strict load 处报尺寸不匹配要好。
+    """
+    m = _SCALE_RE.search(Path(path).stem)
+    return m.group(1).lower() if m else None
 
 
 def load_weights(model, path, strict=True):
