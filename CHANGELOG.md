@@ -62,6 +62,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **In-training validation no longer grinds on early checkpoints (yolov3-tiny)**: with an
+  untrained model every anchor/class candidate clears the validation confidence floor
+  (2535 anchors × 80 classes), and the per-class greedy NMS processed ~200k candidates per image
+  — measured 7.2 s/image, i.e. a 5000-image validation pass grinding for ~10 hours with the GPU
+  idle. `nms_per_image` is now a class-aware greedy over globally score-sorted candidates with an
+  early exit at `max_det`: because kept boxes emerge in score order, the first `max_det` kept
+  boxes are exactly the previous "full per-class NMS, then global top-`max_det`" result — outputs
+  are unchanged (bitwise identical on 300 official-weight COCO val images and on the degenerate
+  all-candidates case, modulo ordering within equal-score blocks) while the pathological case
+  drops to ~12 ms/image. A full 300-image eval at `--imgsz 416` reproduces the previous metrics
+  exactly (0.4139 mAP50 / 0.2210 mAP50-95).
 - **Progress lines no longer wrap (and smear) on narrow terminals**: dataset-scan descriptions
   used the full annotation path — 180+ characters with the counter suffix — so on any terminal
   narrower than the line the redraw (`\r`) could no longer return to the start of the physical row
