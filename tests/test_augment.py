@@ -11,7 +11,7 @@ import numpy as np
 import torch
 
 from data.augment import augment, bgr_swap, flip_lr, mosaic, random_hsv, random_perspective, resize_long_side
-from config.train import TrainConfig
+from config.train_config import TrainConfig
 
 
 def _identity_hyp(**over):

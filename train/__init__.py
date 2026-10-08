@@ -5,7 +5,7 @@ ema / lr / checkpoint / validator / trainer。
 """
 
 from train.assigner import TaskAlignedAssigner
-from config.train import TrainConfig, apply_cli, load_train_config
+from config.train_config import TrainConfig, apply_cli, load_train_config
 from train.ema import ModelEMA
 from train.loss import ComputeLoss
 from train.optimizer import MuSGD, build_param_groups

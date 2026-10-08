@@ -16,7 +16,7 @@ import time
 import numpy as np
 import torch
 
-from config.defaults import CONF_THRES, IMGSZ
+from config.inference import CONF_THRES, IMGSZ
 from data.preprocess import preprocess
 from train.metrics import FastMetrics
 from utils.engine import Detections

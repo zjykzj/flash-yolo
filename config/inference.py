@@ -1,9 +1,8 @@
-"""Flash-YOLO 默认配置（M1：yolo26n 推理 + COCO 评估）"""
+"""推理 / 评估默认值：输入尺寸 · 置信度/NMS 阈值 · 每图最大检测数
 
-from pathlib import Path
-
-# ---- 训练配置路径（超参本身在 config/train.yaml，此处只放路径常量）----
-TRAIN_CONFIG_PATH = Path(__file__).resolve().parent / "train.yaml"
+训练侧不读本模块：`Trainer` 把 `cfg.imgsz` 显式传给每轮验证（trainer.py -> validator.py），
+阈值也各走各的配置；这里只服务推理（infer/engine/postprocess）与评估（eval）链路。
+"""
 
 # ---- 推理 / 评估默认超参（与官方 val 口径一致）----
 IMGSZ = 640          # 推理输入尺寸
@@ -11,15 +10,7 @@ CONF_THRES = 0.001   # 置信度阈值（评估时与官方 val 相同）
 IOU_THRES = 0.7      # NMS IoU 阈值（与官方 val 相同）
 MAX_DET = 300        # 每图最大检测数
 
-# ---- 模型缩放档位（结构事实，见 docs/yolo26-spec.md）----
-# [depth, width, max_channels]
-YOLO26_SCALES = {
-    "n": [0.50, 0.25, 1024],
-    "s": [0.50, 0.50, 1024],
-    "m": [0.50, 1.00, 512],
-    "l": [1.00, 1.00, 512],
-    "x": [1.00, 1.50, 512],
-}
+__all__ = ["IMGSZ", "CONF_THRES", "IOU_THRES", "MAX_DET", "COCO_NAMES"]
 
 # ---- COCO 80 类 ----
 COCO_NAMES = {

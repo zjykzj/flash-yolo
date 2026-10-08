@@ -8,7 +8,7 @@ import torch.nn as nn
 from model.weights import load_weights
 from model.yolo26 import YOLO26
 from train.checkpoint import load_resume, save_best_last, save_resume
-from config.train import TrainConfig
+from config.train_config import TrainConfig
 from train.ema import ModelEMA
 from train.optimizer import MuSGD
 

@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 import torch
 
 from config import __version__
-from config.defaults import CONF_THRES, IMGSZ, IOU_THRES, MAX_DET
+from config.inference import CONF_THRES, IMGSZ, IOU_THRES, MAX_DET
 from data.coco import CocoDataset, scan_summary
 from eval.coco_evaluator import CocoEvaluator
 from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device

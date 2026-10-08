@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from config.defaults import TRAIN_CONFIG_PATH
-from config.train import RECIPES_DIR, apply_cli, load_train_config, resolve_recipe
+from config.train_config import (TRAIN_CONFIG_PATH, RECIPES_DIR, apply_cli, load_train_config,
+                                 resolve_recipe)
 
 RECIPE = "yolo26-coco-ft"
 

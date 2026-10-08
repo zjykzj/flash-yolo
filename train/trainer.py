@@ -15,7 +15,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from config import __version__
-from config.train import TrainConfig
+from config.train_config import TrainConfig
 from data.coco import CocoDataset, scan_summary
 from data.dataset import CocoTrainDataset, collate_fn, worker_init_fn
 from model.summary import summary_lines

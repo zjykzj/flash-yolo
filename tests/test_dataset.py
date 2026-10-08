@@ -16,7 +16,7 @@ import torch
 import data.dataset
 from data.coco import CocoDataset, scan_summary
 from data.dataset import CocoTrainDataset, collate_fn, worker_init_fn
-from config.train import TrainConfig
+from config.train_config import TrainConfig
 
 
 def _add_extra_image(data_dir, name, ann=None):

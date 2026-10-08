@@ -33,11 +33,11 @@ def draw_detections(image_bgr, detections, names=None, save_path=None):
     Args:
         image_bgr: (H, W, 3)
         detections: Detections（原图坐标）
-        names: dict[int, str] 类别名（默认用 config.defaults.COCO_NAMES）
+        names: dict[int, str] 类别名（默认用 config.inference.COCO_NAMES）
         save_path: 若给定则保存
     """
     if names is None:
-        from config.defaults import COCO_NAMES
+        from config.inference import COCO_NAMES
 
         names = COCO_NAMES
     out = image_bgr.copy()
@@ -66,7 +66,7 @@ def draw_target_grid(imgs, targets, save_path, n=8, names=None, scale=1.0):
         scale: 单张缩放（0.5 = 半尺寸，控文件大小）
     """
     if names is None:
-        from config.defaults import COCO_NAMES
+        from config.inference import COCO_NAMES
 
         names = COCO_NAMES
     tgt = targets.detach().cpu().numpy() if hasattr(targets, "detach") else np.asarray(targets)

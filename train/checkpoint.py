@@ -5,6 +5,8 @@
 - best/last.safetensors：EMA 权重交付物（纯张量，可审计）
 """
 
+from dataclasses import asdict
+
 import numpy as np
 import torch
 
@@ -31,7 +33,7 @@ def save_resume(path, model, ema, optimizer, scaler, epoch, best_fitness, cfg, r
         "scaler_state": scaler.state_dict() if scaler is not None else None,
         "epoch": epoch,
         "best_fitness": best_fitness,
-        "cfg": cfg,
+        "cfg": asdict(cfg),  # 纯 dict：dataclass 实例会把模块路径写进 pickle（改名后旧 resume.pt 无法反序列化）
         "run_dir": str(run_dir),
         "rng": capture_rng(),
     }

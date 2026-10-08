@@ -19,7 +19,7 @@ import cv2
 import torch
 
 from config import __version__
-from config.defaults import COCO_NAMES, IMGSZ
+from config.inference import COCO_NAMES, IMGSZ
 from model.weights import scale_from_weights
 from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, setup_logging

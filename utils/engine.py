@@ -12,7 +12,7 @@ import numpy as np
 import onnxruntime as ort
 import torch
 
-from config.defaults import CONF_THRES, IOU_THRES, MAX_DET
+from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from data.preprocess import preprocess
 from model.weights import load_weights
 from model.yolo26 import build_yolo26

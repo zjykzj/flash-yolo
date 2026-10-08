@@ -7,7 +7,7 @@ E2E 路径的 top-k 解码已在模型图内完成（model/head.py），此处�
 
 import numpy as np
 
-from config.defaults import CONF_THRES, IOU_THRES, MAX_DET
+from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from utils.iou import box_iou
 
 __all__ = ["decode_raw", "non_max_suppression", "scale_boxes"]

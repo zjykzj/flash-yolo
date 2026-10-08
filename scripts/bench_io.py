@@ -38,8 +38,7 @@ import cv2
 import torch
 from torch.utils.data import DataLoader
 
-from config.defaults import TRAIN_CONFIG_PATH
-from config.train import load_train_config
+from config.train_config import TRAIN_CONFIG_PATH, load_train_config
 from data.dataset import CocoTrainDataset, collate_fn, worker_init_fn
 from model.yolo26 import CONFIG_PATH, YOLO26
 from train.ema import ModelEMA

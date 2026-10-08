@@ -3,7 +3,7 @@
 import torch
 
 from model.yolo26 import YOLO26
-from config.train import TrainConfig
+from config.train_config import TrainConfig
 from train.loss import ComputeLoss
 
 

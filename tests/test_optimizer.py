@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 from model.yolo26 import YOLO26
-from config.train import TrainConfig
+from config.train_config import TrainConfig
 from train.lr import cosine_lr, linear_lr, set_epoch_lr, warmup_lr
 from train.optimizer import MuSGD, _ortho, build_param_groups
 

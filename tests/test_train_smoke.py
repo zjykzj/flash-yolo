@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import torch
 
-from config.train import TrainConfig
+from config.train_config import TrainConfig
 from train.trainer import Trainer
 
 pytestmark = pytest.mark.skipif(

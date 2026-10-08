@@ -18,6 +18,8 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+# 路径常量与超参分离：值在 yaml（本模块负责读/合并），此处只放路径
+TRAIN_CONFIG_PATH = Path(__file__).resolve().parent / "train.yaml"
 RECIPES_DIR = Path(__file__).resolve().parent / "recipes"
 
 
@@ -25,7 +27,7 @@ RECIPES_DIR = Path(__file__).resolve().parent / "recipes"
 class TrainConfig:
     """训练超参（默认值 = 通用训练默认 recipe: default，见 config/train.yaml）"""
 
-    recipe: str = "default"  # default = 通用默认 | official = 官方 YOLO26 发布配方（按 scale 分档）
+    recipe: str = "default"  # default = 内置基线（train.yaml）| 其他名字查 config/recipes/<name>.yaml
 
     # data / io
     data_dir: str = ""  # 空 = 未设置，必须由 CLI --data 提供（见 scripts/train.py）

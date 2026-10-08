@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 import numpy as np
 import torch
 
-from config.defaults import CONF_THRES, IOU_THRES, MAX_DET
+from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from data.coco import CocoDataset
 from data.preprocess import preprocess
 from eval.coco_evaluator import CocoEvaluator

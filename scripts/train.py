@@ -17,8 +17,7 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
 import torch
 
-from config.defaults import TRAIN_CONFIG_PATH
-from config.train import apply_cli, load_train_config
+from config.train_config import TRAIN_CONFIG_PATH, apply_cli, load_train_config
 from train.trainer import Trainer
 from utils.logger import attach_file_log, get_logger, setup_logging
 from utils.paths import increment_path

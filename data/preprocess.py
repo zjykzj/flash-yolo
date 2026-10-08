@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import torch
 
-from config.defaults import IMGSZ
+from config.inference import IMGSZ
 
 __all__ = ["letterbox", "preprocess"]
 
