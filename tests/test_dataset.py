@@ -181,8 +181,13 @@ def test_missing_image_excluded_and_counted(tmp_path):
     print("  缺图剔除与计数正确")
 
 
-def test_scan_progress_line(tmp_path):
-    """progress=True：先一行静态提示（stdout），再画扫描条（写 progress_file）"""
+def test_scan_progress_line(tmp_path, monkeypatch):
+    """progress=True：先一行静态提示（stdout，含完整路径），再画扫描条（写 progress_file）
+
+    动态行用文件名（完整路径在静态提示行），且行宽受终端宽度钳制（COLUMNS 固定 120：不触发截断，
+    截断本身由 tests/test_progress.py 覆盖）。
+    """
+    monkeypatch.setenv("COLUMNS", "120")
     data_dir = _make_fixture(tmp_path)
     buf = io.StringIO()
     ds = build_train_dataset(TrainConfig(), _descriptor(data_dir, tmp_path), "train",
@@ -191,8 +196,9 @@ def test_scan_progress_line(tmp_path):
     assert "Scanning" in out and "instances_train2017.json" in out
     assert "3 images, 1 backgrounds, 0 missing" in out, f"扫描条计数：{out!r}"
     assert "100% [████████████] 3/3" in out, f"扫描条渲染：{out!r}"
+    assert all(len(f.rstrip("\n")) <= 119 for f in out.split("\r") if f.strip()), f"进度行超宽：{out!r}"
     assert len(ds) == 3
-    print("  扫描行渲染正确（静态提示 + 进度条 + 计数）")
+    print("  扫描行渲染正确（静态提示 + 进度条 + 计数 + 宽度钳制）")
 
 
 def test_corrupt_image_counted_as_background(tmp_path):

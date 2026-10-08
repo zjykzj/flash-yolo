@@ -14,8 +14,11 @@
 
 
 进度行用 \\r 刷新，不经过 logger（控制台 UI 元素，不落日志文件）。
+行宽按终端宽度钳制（_fit_line）：折行后 \\r 回不到行首、逐帧刷新会留叠影，
+超宽时优先截 desc（计数/速度/耗时后缀永远保留）。
 """
 
+import shutil
 import sys
 import time
 
@@ -40,6 +43,25 @@ def fmt_rate(rate, unit="it"):
     <1000 时与历史输出逐字符一致（2.0it/s），因此训练/验证条改用本函数后外观零变化。
     """
     return f"{rate / 1000:.1f}K{unit}/s" if rate >= 1000 else f"{rate:.1f}{unit}/s"
+
+
+def _fit_line(desc, suffix, width, back=12):
+    """desc + suffix 钳制到单行（len <= width - 1）：超宽时 desc 右截断加 …，≤back 字符内退到词边界
+
+    \\r 只能回到**当前物理行**行首——一旦折行，逐帧刷新就盖不干净、留叠影（实测带完整
+    ann 路径的扫描行 180+ 字）。后缀（条/计数/速度/耗时）永远保留，先牺牲 desc。
+    中文路径按字符数近似（显示列宽会略低估，极窄终端属已知边界）。
+    """
+    budget = width - 1 - len(suffix)
+    if len(desc) <= budget:
+        return desc + suffix
+    if budget <= 1:
+        return "…"[:max(budget, 0)] + suffix
+    cut = desc[:budget - 1]
+    sp = cut.rfind(" ")
+    if 0 <= budget - 1 - sp <= back:
+        cut = cut[:sp]
+    return cut.rstrip() + "…" + suffix
 
 
 def fmt_num(v, width=11, prec=4):
@@ -91,8 +113,13 @@ class ProgressBar:
         pct_str = f"{int(frac * 100)}% " if self.pct else ""
         # 耗时单调递增显示（ultralytics 风格）；结束后自然停在总耗时，无需额外处理
         elapsed = now - self.start
-        line = f"\r{self.desc} {pct_str}[{bar}] {n}/{self.total} · {speed_str} · {fmt_elapsed(elapsed)}"
-        self.file.write(line + " " * max(0, self.last_len - len(line)))
+        suffix = f" {pct_str}[{bar}] {n}/{self.total} · {speed_str} · {fmt_elapsed(elapsed)}"
+        # 按终端宽度钳制（COLUMNS/ioctl；非 TTY 回落 80）：折行后 \r 失效会留叠影。
+        # 补空格（清上一帧残留）同样受宽度约束——终端中途变窄时补空格自己也不能触发折行
+        width = shutil.get_terminal_size().columns
+        line = "\r" + _fit_line(self.desc, suffix, width)
+        pad = max(0, min(self.last_len, width - 1) - len(line))
+        self.file.write(line + " " * pad)
         self.file.flush()
         self.last_len = len(line)
 

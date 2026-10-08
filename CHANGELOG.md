@@ -60,6 +60,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   yolo26-only guards on `--nms`/`--raw`. `export.py --model yolov3-tiny` writes the single decoded
   output `(1, NA, 5+nc)`.
 
+### Fixed
+
+- **Progress lines no longer wrap (and smear) on narrow terminals**: dataset-scan descriptions
+  used the full annotation path — 180+ characters with the counter suffix — so on any terminal
+  narrower than the line the redraw (`\r`) could no longer return to the start of the physical row
+  and every frame left stacked artifacts. The scan line now shows just the file (directory) name,
+  and every `ProgressBar` clamps its rendered line to the terminal width (right-truncating the
+  description with a word-boundary-aware ellipsis; the bar/count/speed/elapsed suffix is always
+  kept), so a redraw can never wrap.
+
 ## [0.3.0] - 2026-10-08
 
 ### Added

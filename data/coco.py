@@ -91,7 +91,8 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
             n_bg += not anns
         if bar is not None and (i % stride == 0 or i == len(images)):
             speed = i / max(time.monotonic() - t_scan, 1e-6)
-            bar.update(i, speed, desc=f"{prefix}Scanning {ann_file}... {len(kept)} images, "
+            # desc 只用文件名：完整路径已在上面的静态提示行；过长还会折行坏掉 \r 刷新
+            bar.update(i, speed, desc=f"{prefix}Scanning {ann_file.name} {len(kept)} images, "
                                       f"{n_bg} backgrounds, {n_missing} missing:")
     if bar is not None:
         bar.close()  # 换行保留定格行（与训练/验证条同约定）

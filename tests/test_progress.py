@@ -64,3 +64,39 @@ def test_progress_bar_throttle():
     assert buf.getvalue().count("\r") == 2
     bar.close()
     print("  节流与末帧重画正确")
+
+
+def test_fit_line_truncation():
+    """超宽行右截断（后缀永远保留、≤12 字内退词边界）
+
+    动因：\\r 折行后回不到行首——带完整 ann 路径的扫描行实测 180+ 字，逐帧刷新留叠影。
+    """
+    from utils.progress import _fit_line
+
+    suffix = " 100% [████████████] 118287/118287 · 47.1Kit/s · 10.9s"  # 54 字固定后缀
+    desc = "train: Scanning instances_train2017.json 118287 images, 1021 backgrounds, 0 missing:"
+    assert _fit_line(desc, suffix, 140) == desc + suffix, "放得下则原样"
+
+    line = _fit_line(desc, suffix, 100)  # desc 预算 45：截到文件名 + …
+    assert line == "train: Scanning instances_train2017.json…" + suffix, line
+
+    line = _fit_line(desc, suffix, 80)  # desc 预算 25：退到 "train: Scanning"
+    assert line == "train: Scanning…" + suffix, line
+
+    assert _fit_line("val", suffix, 40) == suffix, "极窄：预算用尽只留后缀（不炸）"
+    print("  超宽行截断正确（140/100/80/40 列）")
+
+
+def test_progress_bar_fits_terminal(monkeypatch):
+    """ProgressBar 渲染整体受终端宽度约束（COLUMNS 驱动 shutil.get_terminal_size）"""
+    monkeypatch.setenv("COLUMNS", "100")
+    buf = io.StringIO()
+    bar = ProgressBar(118287, desc="train: Scanning instances_train2017.json 118287 images, "
+                                   "1021 backgrounds, 0 missing:", file=buf, width=12, pct=True)
+    bar.update(118287, speed=47100)
+    line = buf.getvalue().rsplit("\r", 1)[-1]
+    assert len(line) <= 99, line
+    assert line.startswith("train: Scanning instances_train2017.json…"), line
+    assert "118287/118287" in line and "47.1Kit/s" in line
+    bar.close()
+    print("  进度条按终端宽度（COLUMNS=100）截断正确")

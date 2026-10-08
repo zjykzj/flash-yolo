@@ -125,7 +125,8 @@ def scan_labels(src, images, labels_dir, nc, label="train", limit=0, progress=Fa
             n_bg += len(lbs) == 0
         if bar is not None and (i % stride == 0 or i == len(images)):
             speed = i / max(time.monotonic() - t0, 1e-6)
-            bar.update(i, speed, desc=f"{prefix}Scanning {src}... {len(kept)} images, "
+            # desc 只用目录名：完整路径已在上面的静态提示行；过长还会折行坏掉 \r 刷新
+            bar.update(i, speed, desc=f"{prefix}Scanning {Path(src).name} {len(kept)} images, "
                                       f"{n_bg} backgrounds, {n_missing} missing:")
     if bar is not None:
         bar.close()
