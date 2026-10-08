@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 
 from model.weights import load_weights
-from model.yolo26 import YOLO26
+from model.build import DetectionModel
 from train.checkpoint import load_resume, save_best_last, save_resume
 from config.train_config import TrainConfig
 from train.ema import ModelEMA
@@ -66,15 +66,15 @@ def test_resume_roundtrip_identical(tmp_path):
 
 
 def test_best_last_weights(tmp_path):
-    """best 仅在 is_best 时落盘；safetensors 可 strict 回载到 YOLO26"""
-    model = YOLO26(scale="n")
+    """best 仅在 is_best 时落盘；safetensors 可 strict 回载到 DetectionModel"""
+    model = DetectionModel(scale="n")
     save_best_last(tmp_path, model, is_best=False)
     assert (tmp_path / "weights" / "last.safetensors").exists()
     assert not (tmp_path / "weights" / "best.safetensors").exists(), "非新高不应写 best"
     save_best_last(tmp_path, model, is_best=True)
     assert (tmp_path / "weights" / "best.safetensors").exists()
 
-    fresh = YOLO26(scale="n")
+    fresh = DetectionModel(scale="n")
     missing, unexpected = load_weights(fresh, tmp_path / "weights" / "best.safetensors", strict=True)
     assert not missing and not unexpected
     print("  best/last 落盘与 strict 回载正确")

@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 import torch
 
 from model.weights import load_weights
-from model.yolo26 import build_yolo26
+from model.build import build_yolo26
 from utils.logger import get_logger, setup_logging
 
 setup_logging()

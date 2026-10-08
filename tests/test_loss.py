@@ -2,7 +2,7 @@
 
 import torch
 
-from model.yolo26 import YOLO26
+from model.build import DetectionModel
 from config.train_config import TrainConfig
 from train.loss import ComputeLoss
 
@@ -14,7 +14,7 @@ def _preds(model, batch=1):
 
 def test_loss_gradient_flow():
     """双分支损失反向：backbone 与两个头都有梯度（o2m 路径 + o2o 自身路径）"""
-    model = YOLO26(scale="n").train()
+    model = DetectionModel(scale="n").train()
     head = model.model[-1]
     cfg = TrainConfig()
     loss_fn = ComputeLoss(cfg, head, torch.device("cpu"))
@@ -33,7 +33,7 @@ def test_loss_gradient_flow():
 
 def test_loss_empty_batch():
     """无 GT 批：损失有限（cls 目标全零）"""
-    model = YOLO26(scale="n").train()
+    model = DetectionModel(scale="n").train()
     head = model.model[-1]
     loss_fn = ComputeLoss(TrainConfig(), head, torch.device("cpu"))
     with torch.no_grad():
@@ -51,7 +51,7 @@ def test_loss_batch_scaling():
     ciou_max ≈ 0.004 < 1（大 GT 覆盖小预测框），Σt 落进 clamp 区间则非线性
     （官方同款行为）；本测试用 8 个 ~50px GT 保证 Σt ≫ 1。
     """
-    model = YOLO26(scale="n").train()
+    model = DetectionModel(scale="n").train()
     head = model.model[-1]
     loss_fn = ComputeLoss(TrainConfig(), head, torch.device("cpu"))
     with torch.no_grad():

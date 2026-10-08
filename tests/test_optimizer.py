@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 
-from model.yolo26 import YOLO26
+from model.build import DetectionModel
 from config.train_config import TrainConfig
 from train.lr import cosine_lr, linear_lr, set_epoch_lr, warmup_lr
 from train.optimizer import MuSGD, _ortho, build_param_groups
@@ -66,7 +66,7 @@ def test_step_keeps_grads():
 
 def test_build_param_groups():
     """YOLO26n 分组：muon=ndim{2,4} / bias与BN无衰减 / cv3·one2one_cv3 lr×3 / 全覆盖"""
-    model = YOLO26(scale="n")
+    model = DetectionModel(scale="n")
     head = model.model[-1]
     groups = build_param_groups(model, TrainConfig(), head)
     n_grouped = sum(len(g["params"]) for g in groups)

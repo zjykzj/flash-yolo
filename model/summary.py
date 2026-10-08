@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path（直接 python mod
 import torch
 
 from config import __version__
-from model.yolo26 import CONFIG_PATH, YOLO26
+from model.build import DetectionModel, YOLO26_CONFIG_PATH
 
 __all__ = ["model_summary", "profile_flops"]
 
@@ -85,10 +85,10 @@ def main():
     args = parser.parse_args()
 
     device = f"CUDA {torch.cuda.get_device_name(0)}" if torch.cuda.is_available() else "CPU"
-    print(f"model/summary: cfg={CONFIG_PATH}, scale={args.scale}, imgsz={args.imgsz}")
+    print(f"model/summary: cfg={YOLO26_CONFIG_PATH}, scale={args.scale}, imgsz={args.imgsz}")
     print(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device}\n")
 
-    model = YOLO26(scale=args.scale)
+    model = DetectionModel(scale=args.scale)
     model_summary(model, imgsz=args.imgsz)
 
 

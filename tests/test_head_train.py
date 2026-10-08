@@ -13,11 +13,11 @@ import torch
 import pytest
 
 from model.weights import load_weights, save_weights
-from model.yolo26 import YOLO26
+from model.build import DetectionModel
 
 
 def _build(scale="n"):
-    return YOLO26(scale=scale)
+    return DetectionModel(scale=scale)
 
 
 def test_train_mode_shapes():
@@ -91,7 +91,7 @@ def test_save_weights_roundtrip(tmp_path):
 def test_bias_init_follows_imgsz():
     """cls 先验随训练 imgsz 缩放：bias = log(5 / nc / (imgsz/stride)²)，默认 640 = 官方口径"""
     head640 = _build().model[-1]  # 默认 imgsz=640
-    head320 = YOLO26(scale="n", imgsz=320).model[-1]
+    head320 = DetectionModel(scale="n", imgsz=320).model[-1]
     for i, s in enumerate((8, 16, 32)):  # 三档 stride 逐档核对
         want640 = math.log(5 / 80 / (640 / s) ** 2)
         want320 = math.log(5 / 80 / (320 / s) ** 2)

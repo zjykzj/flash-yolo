@@ -16,7 +16,7 @@ import pytest
 import torch
 
 from config.train_config import TrainConfig
-from model.yolo26 import YOLO26
+from model.build import DetectionModel
 from train.loss import ComputeLoss
 
 v8DetectionLoss = pytest.importorskip("ultralytics.utils.loss").v8DetectionLoss
@@ -36,7 +36,7 @@ def _rel(a, b):
 
 def _case():
     torch.manual_seed(0)
-    model = YOLO26(scale="n").train()
+    model = DetectionModel(scale="n").train()
     with torch.no_grad():
         preds = model(torch.randn(BATCH, 3, IMGSZ, IMGSZ))
     targets = torch.tensor(

@@ -63,7 +63,7 @@ def test_pt_engine_custom_nc(tmp_path):
     不给 nc（默认模型 yaml 的 80 类）时由 strict load 以形状不匹配拦下——明确报错，不静默错位。
     """
     from model.weights import save_weights
-    from model.yolo26 import build_yolo26
+    from model.build import build_yolo26
     from utils.engine import PtEngine
 
     path = tmp_path / "nc2.safetensors"

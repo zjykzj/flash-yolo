@@ -18,18 +18,18 @@ SAFE_PATH = ROOT / "weights" / "yolo26n.safetensors"
 
 def _build_ours():
     from model.weights import load_weights
-    from model.yolo26 import YOLO26
+    from model.build import DetectionModel
 
-    model = YOLO26(scale="n").eval()
+    model = DetectionModel(scale="n").eval()
     load_weights(model, SAFE_PATH, strict=True)
     return model
 
 
 def test_param_count():
     """结构硬指标：yolo26n = 2,572,280 参数"""
-    from model.yolo26 import YOLO26
+    from model.build import DetectionModel
 
-    model = YOLO26(scale="n")
+    model = DetectionModel(scale="n")
     assert sum(p.numel() for p in model.parameters()) == 2_572_280
 
 
@@ -38,9 +38,9 @@ def test_strict_load():
     if not SAFE_PATH.exists():
         pytest.skip("需要先运行 scripts/download_weights.py + scripts/convert_weights.py")
     from model.weights import load_weights
-    from model.yolo26 import YOLO26
+    from model.build import DetectionModel
 
-    model = YOLO26(scale="n")
+    model = DetectionModel(scale="n")
     missing, unexpected = load_weights(model, SAFE_PATH, strict=False)
     assert not missing, f"missing keys: {missing[:5]}"
     assert not unexpected, f"unexpected keys: {unexpected[:5]}"

@@ -42,7 +42,7 @@ from config.datasets import load_dataset
 from config.train_config import TRAIN_CONFIG_PATH, load_train_config
 from data.build import build_train_dataset
 from data.loader import collate_fn, worker_init_fn
-from model.yolo26 import CONFIG_PATH, YOLO26
+from model.build import DetectionModel, YOLO26_CONFIG_PATH
 from train.ema import ModelEMA
 from train.loss import ComputeLoss
 from train.optimizer import MuSGD, build_param_groups
@@ -215,7 +215,7 @@ def main():
     # ---- ② end-to-end ----
     logger.info("")
     logger.info(bold(f"[2/2] end-to-end（batch × loader 前三，各 {args.batches} batch）"))
-    model = YOLO26(CONFIG_PATH, cfg.scale, cfg.imgsz, len(spec.names)).to(device).train()
+    model = DetectionModel(YOLO26_CONFIG_PATH, cfg.scale, cfg.imgsz, len(spec.names)).to(device).train()
     if cfg.channels_last:
         model.to(memory_format=torch.channels_last)
     head = model.model[-1]

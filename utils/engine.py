@@ -15,7 +15,7 @@ import torch
 from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from data.preprocess import preprocess
 from model.weights import load_weights
-from model.yolo26 import build_yolo26
+from model.build import build_yolo26
 from utils.postprocess import decode_raw, non_max_suppression, scale_boxes
 
 __all__ = ["Detections", "PtEngine", "OnnxEngine", "resolve_device", "device_label"]

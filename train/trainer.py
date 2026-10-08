@@ -22,7 +22,7 @@ from data.loader import collate_fn, worker_init_fn
 from data.scan import scan_summary
 from model.summary import summary_lines
 from model.weights import load_weights
-from model.yolo26 import CONFIG_PATH, YOLO26
+from model.build import DetectionModel, YOLO26_CONFIG_PATH
 from train.checkpoint import load_resume, save_best_last, save_periodic, save_resume
 from train.ema import ModelEMA
 from train.loss import ComputeLoss
@@ -57,7 +57,7 @@ class Trainer:
         # ① 环境 + 超参快照：在建模型、解析数据集之前打印（启动白屏只剩 import 时间）
         self._print_env()
 
-        model = YOLO26(CONFIG_PATH, cfg.scale, cfg.imgsz, nc=self.spec.nc)
+        model = DetectionModel(YOLO26_CONFIG_PATH, cfg.scale, cfg.imgsz, nc=self.spec.nc)
         if weights:
             load_weights(model, weights, strict=True)
         model.to(self.device).train()

@@ -31,9 +31,9 @@ def _export(extra_args, out_path):
 
 def _build_pt(end2end):
     from model.weights import load_weights
-    from model.yolo26 import YOLO26
+    from model.build import DetectionModel
 
-    model = YOLO26(scale="n").eval()
+    model = DetectionModel(scale="n").eval()
     load_weights(model, SAFE_PATH, strict=True)
     model.model[-1].end2end = end2end
     return model

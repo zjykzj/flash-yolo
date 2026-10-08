@@ -1,1 +1,1 @@
-from model.yolo26 import YOLO26, build_yolo26  # noqa: F401
+from model.build import DetectionModel, build_yolo26  # noqa: F401

@@ -4,7 +4,7 @@ import pytest
 import yaml
 
 from config.datasets import DATASETS_DIR, load_names
-from model.yolo26 import CONFIG_PATH
+from model.build import YOLO26_CONFIG_PATH
 
 
 def test_coco_names():
@@ -20,7 +20,7 @@ def test_coco_names():
 
 def test_names_match_model_nc():
     """类别数与模型结构 yaml 的 nc 一致（模型与数据集元数据不脱节）"""
-    with open(CONFIG_PATH) as f:
+    with open(YOLO26_CONFIG_PATH) as f:
         nc = yaml.safe_load(f)["nc"]
     assert len(load_names("coco")) == nc, f"names 80 类 vs yolo26.yaml nc={nc}"
     print(f"  names 与 yolo26.yaml nc={nc} 一致")
