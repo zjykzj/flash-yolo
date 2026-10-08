@@ -36,7 +36,10 @@ official darknet weights — download them with `scripts/download_weights.py --m
 convert with `scripts/convert_weights.py` and evaluate with `scripts/eval.py`. The official weights
 through this repo's pipeline (COCO val2017, pycocotools, 640 input) measure **35.90 mAP@50 /
 17.16 mAP@[.5:.95]** — the published 33.1 mAP@50 reference is COCO test-dev at 416, so the delta is
-input size plus split.
+input size plus split. For custom datasets trained from scratch, re-cluster the anchor priors first
+with `scripts/compute_anchors.py --data <descriptor>` (YOLOv5-style coverage check + darknet-style
+k-means, prints a paste-ready `anchors:` fragment); the official weights must keep the official
+anchor set.
 
 ## Quick Start
 
@@ -177,10 +180,10 @@ logs/      logs of scripts without a run dir (gitignored; run-dir scripts write 
 model/     model implementation (yaml factory build.py + arch registry / dual Detect head (yolo26)
            / anchor-based head_v3 (yolov3-tiny) / basic operator layer / weight loading)
 runs/      runtime results (gitignored)
-scripts/   download_weights / convert_weights / make_coco_subset / infer / export / eval / train /
-           bench_io / compare_official
-tests/     141 tests: weight alignment / export parity / metric correctness / training components
-           + yolov3-tiny model, loss and I/O (darknet converter, engine, export)
+scripts/   download_weights / convert_weights / compute_anchors / make_coco_subset / infer /
+           export / eval / train / bench_io / compare_official
+tests/     145 tests: weight alignment / export parity / metric correctness / training components
+           + yolov3-tiny model, loss and I/O (darknet converter, anchors, engine, export)
 train/     training: TAL+STAL assigner / dual-head ProgLoss / MuSGD / EMA / trainer / FastMetrics
            (+ per-run artifacts: periodic checkpoints, gradient diag CSV, augment samples, meta.json)
 utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualization / IoU /
@@ -190,7 +193,7 @@ utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualiz
 ## Tests
 
 ```bash
-pytest tests/    # 141 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + yolov3-tiny (model, loss, darknet converter, engines, export)
+pytest tests/    # 145 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + yolov3-tiny (model, loss, darknet converter, anchors, engines, export)
 ```
 
 `tests/test_weight_alignment.py` compares against the official .pt as a dev-time reference — install requirements-dev.txt to run it.
