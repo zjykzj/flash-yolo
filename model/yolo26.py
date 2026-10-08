@@ -1,4 +1,4 @@
-"""YOLO26 模型组装：按 config/yolo26.yaml 构建 nn.Sequential（属性树与官方 state_dict 对齐）"""
+"""YOLO26 模型组装：按 config/models/yolo26.yaml 构建 nn.Sequential（属性树与官方 state_dict 对齐）"""
 
 import ast
 import math
@@ -11,7 +11,7 @@ import yaml
 from model.basic import Conv, C3k2, SPPF, C2PSA
 from model.head import Detect
 
-__all__ = ["YOLO26", "build_yolo26"]
+__all__ = ["YOLO26", "build_yolo26", "CONFIG_PATH"]
 
 
 class Concat(nn.Module):
@@ -36,7 +36,7 @@ MODULES = {
     "Detect": Detect,
 }
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "yolo26.yaml"
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolo26.yaml"
 
 
 def make_divisible(x, divisor=8):

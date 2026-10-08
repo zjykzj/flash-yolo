@@ -41,6 +41,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Config package reorganized: one home per kind of thing** (values in yaml, mechanisms in py).
+  Model structures move to `config/models/` (`yolo26.yaml`), dataset label names to
+  `config/datasets/<name>.yaml` read through the new `config.datasets.load_names()` (the COCO
+  80-name table left the code), and the inference/eval constants module was renamed
+  `defaults.py` -> `inference.py`. The training-config mechanism (`TrainConfig` + yaml/recipe/CLI
+  merge) moved from `config/train.py` to `config/train_config.py`, removing the name collision
+  with `scripts/train.py`; `TRAIN_CONFIG_PATH` lives next to it now. The dead `YOLO26_SCALES` table
+  (duplicated `yolo26.yaml`'s scales, zero consumers) is deleted, and `config/__init__.py` no
+  longer wildcard-re-exports (submodules are imported explicitly). `resume.pt` files written
+  before this release pin the old module path and can no longer be resumed — continue from
+  `weights/*.safetensors` instead; new checkpoints store the config as a plain dict, so future
+  module renames cannot break them.
 - **`scripts/eval.py` header follows the training layout**: it used to print only after the
   dataset *and* the engine had been built silently (~1.5 s of blank terminal), with a print order
   that did not match the build order, and its single `val:` line mixed dataset facts with

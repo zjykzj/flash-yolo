@@ -119,8 +119,9 @@ python scripts/train.py --data /path/to/coco --name yolo26n-from-scratch --batch
 
 ```
 assets/    demo images (bus.jpg / zidane.jpg, provenance in assets/README.md)
-config/    model config (yolo26.yaml, n/s/m/l/x scales) + train config (train.yaml + TrainConfig)
-           + recipes/ (named training recipes: yolo26-coco-ft, yolo26-o365-pt)
+config/    inference/eval defaults (inference.py) + model structures (models/yolo26.yaml)
+           + dataset label names (datasets/*.yaml via load_names) + training config
+           (train.yaml + TrainConfig in train_config.py + recipes/: yolo26-coco-ft, yolo26-o365-pt)
 data/      COCO readers + training dataset & augmentation pipeline (official-parity augment)
 eval/      COCO evaluation (pycocotools wrapper)
 logs/      logs of scripts without a run dir (gitignored; run-dir scripts write <run>/run.log)
@@ -128,7 +129,7 @@ model/     model implementation (assembler / dual Detect head / basic operator l
 runs/      runtime results (gitignored)
 scripts/   download_weights / convert_weights / infer / export / eval / train / bench_io /
            compare_official
-tests/     67 tests: weight alignment / export parity / metric correctness / training components
+tests/     89 tests: weight alignment / export parity / metric correctness / training components
 train/     training: TAL+STAL assigner / dual-head ProgLoss / MuSGD / EMA / trainer / FastMetrics
            (+ per-run artifacts: periodic checkpoints, gradient diag CSV, augment samples, meta.json)
 utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualization / IoU /
@@ -138,7 +139,7 @@ utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualiz
 ## Tests
 
 ```bash
-pytest tests/    # 67 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics)
+pytest tests/    # 89 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics)
 ```
 
 `tests/test_weight_alignment.py` compares against the official .pt as a dev-time reference — install requirements-dev.txt to run it.

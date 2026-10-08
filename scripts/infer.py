@@ -19,7 +19,8 @@ import cv2
 import torch
 
 from config import __version__
-from config.inference import COCO_NAMES, IMGSZ
+from config.datasets import load_names
+from config.inference import IMGSZ
 from model.weights import scale_from_weights
 from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, setup_logging
@@ -29,6 +30,8 @@ from utils.visualize import draw_detections
 # 控制台立刻可用；文件日志等 run 目录确定后挂（见 attach_file_log）
 setup_logging(to_file=False)
 logger = get_logger(__name__)
+
+COCO_NAMES = load_names()  # 推理无数据集上下文，默认按 COCO 类名渲染
 
 _IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 

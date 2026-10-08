@@ -33,13 +33,13 @@ def draw_detections(image_bgr, detections, names=None, save_path=None):
     Args:
         image_bgr: (H, W, 3)
         detections: Detections（原图坐标）
-        names: dict[int, str] 类别名（默认用 config.inference.COCO_NAMES）
+        names: dict[int, str] 类别名（默认 config.datasets.load_names()，即 COCO 80 类）
         save_path: 若给定则保存
     """
     if names is None:
-        from config.inference import COCO_NAMES
+        from config.datasets import load_names
 
-        names = COCO_NAMES
+        names = load_names()
     out = image_bgr.copy()
     for box, score, cid in zip(detections.boxes, detections.scores, detections.class_ids):
         color = _COLORS[int(cid) % len(_COLORS)]
@@ -62,13 +62,13 @@ def draw_target_grid(imgs, targets, save_path, n=8, names=None, scale=1.0):
         targets: (N,6) [batch_idx, cls, x1, y1, x2, y2] 当前画布像素坐标
         save_path: 保存路径（PNG）
         n: 抽样张数（取 batch 前 n 张）
-        names: 类别名（默认 COCO_NAMES）
+        names: 类别名（默认 load_names()，即 COCO 80 类）
         scale: 单张缩放（0.5 = 半尺寸，控文件大小）
     """
     if names is None:
-        from config.inference import COCO_NAMES
+        from config.datasets import load_names
 
-        names = COCO_NAMES
+        names = load_names()
     tgt = targets.detach().cpu().numpy() if hasattr(targets, "detach") else np.asarray(targets)
     tiles = []
     b = int(imgs.shape[0])
