@@ -1,6 +1,6 @@
 """YOLO26 检测头：双分支（o2m + o2o）、无 DFL（reg_max=1）、E2E 两阶段 top-k 解码
 
-属性树（state_dict 对齐，见 docs/yolo26-spec.md 第 5 节）：
+属性树（与官方 state_dict 对齐）：
     cv2.{i}.{0,1,2}          o2m box 分支（i 为检测层）
     cv3.{i}.{0.0,0.1,1.0,1.1,2}  o2m cls 分支
     one2one_cv2 / one2one_cv3    o2o 分支（结构与上相同）

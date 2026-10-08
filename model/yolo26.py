@@ -58,7 +58,7 @@ class YOLO26(nn.Module):
         self.model, self.save = self._parse(cfg, scale, imgsz, nc)
 
     def _parse(self, d, scale, imgsz=640, nc=None):
-        """解析 backbone+head 行列表，应用缩放规则（见 docs/yolo26-spec.md 第 2 节）
+        """解析 backbone+head 行列表，应用缩放规则（depth · width · max_channels，源自论文）
 
         imgsz、nc 是训练侧的数据事实（先验尺寸 / 数据集类别数），默认 None/640 保留
         yaml 里的结构值（推理/导出与官方权重对齐走默认即可）。

@@ -16,7 +16,7 @@ class SPPF(nn.Module):
     """空间金字塔池化 - Fast（YOLO26 形式）
 
     结构：cv1(1x1, 无激活) -> n 次串行 5x5 maxpool -> 4 个中间图拼接 -> cv2(1x1)
-    特性：c1==c2 时输出加恒等残差（YOLO26 新增，见 docs/yolo26-spec.md 第 4 节）。
+    特性：c1==c2 时输出加恒等残差（YOLO26 相对 YOLO11 的新增设计）。
 
     注：仅实现 yolo26.yaml 使用的 4 参数形式；老式 3 参数 SPPF 不在范围内。
     """

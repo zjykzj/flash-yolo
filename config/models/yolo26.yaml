@@ -1,5 +1,5 @@
 # YOLO26 检测模型结构定义
-# 结构事实源自论文 Fig S1/S2（arXiv:2606.03748），详见 docs/yolo26-spec.md
+# 结构事实源自论文 Fig S1/S2（arXiv:2606.03748）
 # 行语法：[from, repeats, module, args]
 
 nc: 80

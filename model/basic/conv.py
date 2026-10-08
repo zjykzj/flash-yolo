@@ -22,8 +22,8 @@ def autopad(k, p=None):
 class Conv(nn.Module):
     """Conv2d(bias=False) + BN + SiLU
 
-    注意 BN 的 eps=0.001（非常规值，与官方实现一致；数值对齐必须相同，
-    见 docs/yolo26-spec.md 第 4 节）。属性树 conv/bn/act。
+    注意 BN 的 eps=0.001（非常规值，与官方实现一致；数值对齐必须相同）。
+    属性树 conv/bn/act。
     """
 
     default_act = nn.SiLU()

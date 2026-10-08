@@ -10,7 +10,7 @@
     PSABlock     x = x + attn(x); x = x + ffn(x)
     C2PSA        C2 结构：一半直通、一半过 PSABlock 串
 
-属性树与官方 state_dict 对齐（key 只含属性路径不含类名，见 docs/yolo26-spec.md）。
+属性树与官方 state_dict 对齐（key 只含属性路径不含类名）。
 """
 
 import torch
