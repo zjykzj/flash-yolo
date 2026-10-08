@@ -138,7 +138,7 @@ class DetectionModel(nn.Module):
                 if not len(anchors) == len(strides) == len(det_ch):
                     raise ValueError(f"anchors/strides/from length mismatch: "
                                      f"{len(anchors)}/{len(strides)}/{len(det_ch)}")
-                m_ = m(nc_, det_ch, anchors, strides, d.get("ref_imgsz", 416), imgsz)
+                m_ = m(nc_, det_ch, anchors, strides)
                 c2 = None
                 args = [nc_, det_ch]
             else:

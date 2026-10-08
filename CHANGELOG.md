@@ -13,8 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   max-pool downsampling, route/upsample neck, anchor-based two-scale head with the official COCO
   anchors kept as-is, including the original mask quirk) defined in `config/models/yolov3-tiny.yaml`
   and assembled by the generalized `model/build.py` factory (`build_model("yolov3-tiny")` /
-  `build_yolov3_tiny()`; `python model/summary.py --model yolov3-tiny`). Anchors follow
-  `imgsz / ref_imgsz` scaling and live as non-persistent buffers, so checkpoints keep a
+  `build_yolov3_tiny()`; `python model/summary.py --model yolov3-tiny`). Anchors are the official
+  darknet values kept as-is (fixed pixel units — the weights self-compensate for input scale, so
+  they must not be scaled with `imgsz`) and live as non-persistent buffers, so checkpoints keep a
   converter-friendly key set.
 - **YOLOv3-tiny training**: `train/loss_v3.py` (BCE objectness + one-hot BCE classes + CIoU box,
   per-level best-anchor matching with a 0.7 ignore band) runs through the existing Trainer and

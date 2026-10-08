@@ -3,9 +3,10 @@
 设计要点（对照 darknet cfg/yolov3-tiny.cfg）：
 - 两颗 1×1→3*(5+nc) 输出卷积在此（darknet 里是独立层；折进来与 yolo26 的 Detect 持有
   cv2/cv3 的惯例一致）：bias=True、无 BN/激活（darknet linear 卷积口径）。
-- anchors/strides 是 yaml 数据（ref_imgsz=416 的像素单位），构建时按 imgsz/ref_imgsz 线性
-  缩放；注册为 persistent=False 的 buffer——不进 state_dict（转换器键集对账、EMA 键断言、
-  strict load 三处零特判），且随 .to(device) 自动搬运。
+- anchors/strides 是 yaml 数据（darknet 固定像素单位，**不随 imgsz 缩放**——官方权重在
+  多尺度训练下由 tw 自补偿输入尺度，锚值必须保持原样；实测线性缩放到 640 会把 500 图
+  mAP50 从 0.41 打到 0.15）。注册为 persistent=False 的 buffer——不进 state_dict
+  （转换器键集对账、EMA 键断言、strict load 三处零特判），且随 .to(device) 自动搬运。
 - 解码唯一实现见 decode_level（darknet get_yolo_box 口径；训练损失与推理共用，不得各写一份）。
 """
 
@@ -50,7 +51,7 @@ class V3Detect(nn.Module):
 
     na = 3
 
-    def __init__(self, nc=80, ch=(), anchors=None, strides=None, ref_imgsz=416, imgsz=640):
+    def __init__(self, nc=80, ch=(), anchors=None, strides=None):
         super().__init__()
         if anchors is None or strides is None:
             raise ValueError("V3Detect requires anchors and strides (from the model yaml)")
@@ -58,8 +59,8 @@ class V3Detect(nn.Module):
         self.nl = len(ch)
         self.no = nc + 5
         self.m = nn.ModuleList(nn.Conv2d(c, self.no * self.na, 1) for c in ch)
-        self.register_buffer("anchors", torch.tensor(anchors, dtype=torch.float32) * (imgsz / ref_imgsz),
-                             persistent=False)  # (nl, na, 2) 输入像素单位
+        self.register_buffer("anchors", torch.tensor(anchors, dtype=torch.float32),
+                             persistent=False)  # (nl, na, 2) darknet 固定像素单位（不随 imgsz 缩放）
         self.register_buffer("stride", torch.tensor(strides, dtype=torch.float32), persistent=False)
 
     def _forward_train(self, x):

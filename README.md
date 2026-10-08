@@ -28,6 +28,16 @@ Detection performance — YOLO26n on COCO val2017:
 - ³ From scratch: trained on COCO train2017 from random weights with the built-in baseline recipe (100 epochs, fp32, one RTX 5090, ~14 h) — official pycocotools numbers. Architecture is identical to the rows above, so latency is unchanged. Not like for like with them: every official number starts from Objects365 pretraining (see Training)
 - The official published 40.1 / 40.9 come from the official metric implementation; the ~0.1 delta to this table is metric-implementation noise, not a model difference
 
+A second architecture is supported end to end: **YOLOv3-tiny**, a darknet-faithful implementation
+(LeakyReLU convolutions, max-pool downsampling, route/upsample neck, anchor-based two-scale head
+with the official COCO anchors kept as-is) selected with `--model yolov3-tiny` across train / eval /
+infer / export and driven by the same built-in baseline recipe. Its reference quality is the
+official darknet weights — download them with `scripts/download_weights.py --model yolov3-tiny`,
+convert with `scripts/convert_weights.py` and evaluate with `scripts/eval.py`. The official weights
+through this repo's pipeline (COCO val2017, pycocotools, 640 input) measure **35.90 mAP@50 /
+17.16 mAP@[.5:.95]** — the published 33.1 mAP@50 reference is COCO test-dev at 416, so the delta is
+input size plus split.
+
 ## Quick Start
 
 ```bash
@@ -129,6 +139,10 @@ python scripts/train.py --data /path/to/coco.yaml --recipe yolo26-coco-ft \
 evolutionary search from an already-converged start. Run from random init it learns measurably
 slower (same-augment screen at epoch 7: 0.215 vs 0.236 mAP@[.5:.95]). Use the baseline recipe.
 
+Other architectures: pass `--model yolov3-tiny` (leave `--scale` out — its structure is fixed).
+The same baseline recipe values, schedule, EMA and run artifacts apply; dataset descriptors and
+the data pipeline are fully shared.
+
 **What a run writes** to `runs/train/<name>/`: `weights/best.safetensors` (EMA) · `last` ·
 `best_raw` · `epochNNN.safetensors` every 20 epochs (fork mid-run) · `results.csv` (per-epoch
 metrics + val losses) · `diag/train_diag.csv` (pre-clip gradient norm, per-group lr, loss
@@ -151,7 +165,8 @@ python scripts/train.py --data /path/to/coco.yaml --name yolo26n-from-scratch --
 
 ```
 assets/    demo images (bus.jpg / zidane.jpg, provenance in assets/README.md)
-config/    inference/eval defaults (inference.py) + model structures (models/yolo26.yaml)
+config/    inference/eval defaults (inference.py) + model structures (models/yolo26.yaml,
+           models/yolov3-tiny.yaml)
            + dataset descriptors (datasets/<name>.yaml + spec.py loader; local/ = gitignored
            machine paths) + training config (train.yaml + TrainConfig in train_config.py
            + recipes/: yolo26-coco-ft, yolo26-o365-pt)
@@ -159,11 +174,13 @@ data/      COCO / YOLO readers (coco.py · yolo.py · build.py factory · scan.p
            + training pipeline (loader.py: augment entry, collate, worker contracts)
 eval/      COCO evaluation (pycocotools wrapper)
 logs/      logs of scripts without a run dir (gitignored; run-dir scripts write <run>/run.log)
-model/     model implementation (assembler / dual Detect head / basic operator layer / weight loading)
+model/     model implementation (yaml factory build.py + arch registry / dual Detect head (yolo26)
+           / anchor-based head_v3 (yolov3-tiny) / basic operator layer / weight loading)
 runs/      runtime results (gitignored)
 scripts/   download_weights / convert_weights / make_coco_subset / infer / export / eval / train /
            bench_io / compare_official
-tests/     122 tests: weight alignment / export parity / metric correctness / training components
+tests/     141 tests: weight alignment / export parity / metric correctness / training components
+           + yolov3-tiny model, loss and I/O (darknet converter, engine, export)
 train/     training: TAL+STAL assigner / dual-head ProgLoss / MuSGD / EMA / trainer / FastMetrics
            (+ per-run artifacts: periodic checkpoints, gradient diag CSV, augment samples, meta.json)
 utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualization / IoU /
@@ -173,7 +190,7 @@ utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualiz
 ## Tests
 
 ```bash
-pytest tests/    # 122 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence
+pytest tests/    # 141 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + yolov3-tiny (model, loss, darknet converter, engines, export)
 ```
 
 `tests/test_weight_alignment.py` compares against the official .pt as a dev-time reference — install requirements-dev.txt to run it.

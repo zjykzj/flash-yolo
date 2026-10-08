@@ -79,14 +79,14 @@ def test_decode_values():
     print("  解码数值正确（σ/格/exp/锚）")
 
 
-def test_anchors_scale_with_imgsz():
-    """anchors 按 imgsz/ref_imgsz 线性缩放（416 基准 → 640 为 1.5385 倍）"""
+def test_anchors_imgsz_invariant():
+    """anchors 照官方原值、不随 imgsz 缩放（官方权重多尺度训练由 tw 自补偿输入尺度；
+    线性缩放到 640 实测把 500 图 mAP50 从 0.41 打到 0.15）"""
     head416 = _build(imgsz=416).model[-1]
     head640 = _build(imgsz=640).model[-1]
-    ratio = (head640.anchors[0, 0] / head416.anchors[0, 0]).tolist()
-    assert all(abs(r - 640 / 416) < 1e-5 for r in ratio), ratio
-    assert abs(head416.anchors[0, 0, 0].item() - 23.0) < 1e-6
-    print("  anchors 随 imgsz 缩放正确")
+    assert torch.equal(head416.anchors, head640.anchors)
+    assert abs(head640.anchors[0, 0, 0].item() - 23.0) < 1e-6
+    print("  anchors 原值保留（不随 imgsz 缩放）")
 
 
 def test_unknown_scale_rejected():
