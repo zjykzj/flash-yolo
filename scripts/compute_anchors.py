@@ -1,23 +1,26 @@
-"""为 YOLOv3-tiny 评估/重算锚点先验（darknet calc_anchors 口径 + YOLOv5 式覆盖判定）
+"""锚点先验计算（通用：任何 anchor-based 检测模型）+ YOLOv5 式覆盖判定
 
-用途：自定义数据集（或换了训练输入尺寸）**从零训练**前，判断现有锚组是否合适、要不要重算。
-**官方 darknet 权重必须保留官方锚组**（权重与先验绑定，见 CLAUDE.md「YOLOv3-tiny」节）——
-本脚本只面向从零训练。
+darknet calc_anchors 口径的通用实现：k-means 聚类数据集 GT 的（归一化宽高 × imgsz），
+距离 = 1 - IoU（中心重合），n_init 次随机初始化取平均 IoU 最优，seed 固定可复现。
+输出按面积升序**均分为 `--levels` 组**（级序 = 细 → 粗），与本仓库模型 yaml 的 anchors 段
+schema 一致（每级一个 [w,h] 槽列表、级序与 Detect 的 from 顺序相同），直接可粘贴。
+`--model`（默认 yolov3-tiny，当前唯一含锚模型）指定"现锚组"从哪个模型 yaml 读取并评估；
+未来接入新的含锚模型：在其 yaml 写下 `anchors` 段即可复用本脚本，算法零改动。
 
-判定口径（YOLOv5 `check_anchors` 同款）：对每个 GT 框取与锚组的最优形状比
-    r = min_a max(w/a_w, a_w/w, h/a_h, a_h/h)
-`r <= anchor_t(4.0)` 记为覆盖；覆盖率 >= 0.98 → 先验可接受（v5 即不重算）。注意 v3 的 exp 解码
-理论上任何锚都能表示任意尺寸（没有 v5 那种硬覆盖上限），所以该覆盖率是**先验质量的经验标准**
-（覆盖差 = 匹配/收敛变差），不是硬约束。
+判定口径（YOLOv5 `check_anchors` 同款，阈值可调）：每个 GT 与锚组的最优形状比
+    r = min_a max(w/a_w, a_w/w, h/a_h, a_h/h)，r <= anchor_t 记为覆盖。
+**阈值是解码相关的**：v5 的 4.0/98% 线对应其 (2σ)²∈(0,4) 的硬边界；darknet 系 exp 解码无硬
+边界（理论任何锚可达任意尺寸），覆盖率只是先验质量的软信号——因此 verdict 同时看重聚类能把
+bestIoU 提升多少（差 <0.03 判"可选/不必"）。
 
-重算 = k-means：距离 = 1 - IoU（中心重合），像素单位 = 归一化宽高 × imgsz；
-n_init 次随机初始化取平均 IoU 最优，seed 固定可复现；输出按面积升序、前一半给 P4/16（小）、
-后一半给 P5/32（大），直接可粘进 config/models/yolov3-tiny.yaml 的 anchors 段。
+场景（见 CLAUDE.md「YOLOv3-tiny」节）：带官方权重 → 锚必须原样；从零训练且数据形状像 COCO
+→ 实测官方锚收益≈0，不必重算；形状分布不同的自定义数据 → 跑本脚本看 verdict。
 
 用法:
-    python scripts/compute_anchors.py --data <name|.yaml>              # 评估 + 重算 + 建议
+    python scripts/compute_anchors.py --data <name|.yaml>              # 默认评估 yolov3-tiny 现锚组
     python scripts/compute_anchors.py --data coco --imgsz 640          # 指定训练输入尺寸
     python scripts/compute_anchors.py --data coco --anchors 23,27,37,58,81,82,81,82,135,169,344,319
+    python scripts/compute_anchors.py --data coco --n 9 --levels 3     # 3 级 × 3 槽（未来含锚模型）
     python scripts/compute_anchors.py --data coco --out anchors.yaml   # 片段落盘（默认只打印）
 """
 
@@ -41,8 +44,6 @@ from utils.logger import get_logger, setup_logging
 # 控制台立刻可用；文件日志走 logs/ 兜底（本脚本无 run 目录，与 convert_weights 同约定）
 setup_logging()
 logger = get_logger(__name__)
-
-V3_CFG = ARCHS["yolov3-tiny"]["cfg"]
 
 
 def iou_matrix(wh, anchors):
@@ -107,21 +108,25 @@ def kmeans_anchors(wh, n, n_init=5, seed=0, iters=500):
     return anchors, best[0]
 
 
-def _fmt_anchors(anchors):
-    half = len(anchors) // 2
-    rows = []
-    for i, (w, h) in enumerate(anchors):
-        rows.append([round(float(w), 1), round(float(h), 1)])
-    small = "[" + ", ".join(f"[{w}, {h}]" for w, h in rows[:half]) + "]"
-    large = "[" + ", ".join(f"[{w}, {h}]" for w, h in rows[half:]) + "]"
-    return f"anchors:\n  - {small}    # P4/16\n  - {large}    # P5/32"
+def _fmt_anchors(anchors, levels):
+    """锚组 -> 模型 yaml 片段（按面积升序均分为 levels 组，级序 = 细 → 粗）"""
+    rows = [[round(float(w), 1), round(float(h), 1)] for w, h in anchors]
+    per = len(rows) // levels
+    out = ["anchors:"]
+    for lvl in range(levels):
+        chunk = rows[lvl * per:(lvl + 1) * per]
+        tag = "level 1 (finest stride)" if lvl == 0 else f"level {lvl + 1}"
+        out.append("  - [" + ", ".join(f"[{w}, {h}]" for w, h in chunk) + f"]    # {tag}")
+    return "\n".join(out)
 
 
-def _load_anchors(path):
-    """从模型 yaml 读 anchors（级序展平为 (k,2)）"""
-    d = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+def _load_model_anchors(model_name):
+    """模型 yaml 的 anchors 段 -> (现锚组 (k,2), 级数)；无 anchors 段返回 (None, None)"""
+    d = yaml.safe_load(Path(ARCHS[model_name]["cfg"]).read_text(encoding="utf-8"))
     a = d.get("anchors")
-    return None if not a else np.array([slot for lvl in a for slot in lvl], np.float32)
+    if not a:
+        return None, None
+    return np.concatenate([np.asarray(lvl, np.float32).reshape(-1, 2) for lvl in a], 0), len(a)
 
 
 def collect_norm_wh(spec, role, limit, progress=True):
@@ -142,13 +147,18 @@ def collect_norm_wh(spec, role, limit, progress=True):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="evaluate / re-cluster yolov3-tiny anchor priors "
+    parser = argparse.ArgumentParser(description="evaluate / re-cluster anchor priors "
                                                  "(darknet calc_anchors convention)")
     parser.add_argument("--data", required=True,
                         help="dataset descriptor: a name in config/datasets/ (local/ wins) or a .yaml path")
+    parser.add_argument("--model", default="yolov3-tiny", choices=sorted(ARCHS),
+                        help="model whose yaml `anchors:` section is evaluated as the current set")
     parser.add_argument("--role", default="train", help="descriptor role to cluster on (default train)")
     parser.add_argument("--imgsz", type=int, default=640, help="training input size the anchors are for")
-    parser.add_argument("--n", type=int, default=6, help="number of anchors (even; half per level)")
+    parser.add_argument("--levels", type=int, default=None,
+                        help="output groups, finest -> coarsest (default: from the model yaml, else 2)")
+    parser.add_argument("--n", type=int, default=None,
+                        help="number of anchors to cluster (default: current set size, else 3 per level)")
     parser.add_argument("--n-init", type=int, default=5, help="k-means random restarts")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--anchor-t", type=float, default=4.0, help="shape-ratio coverage threshold (v5 anchor_t)")
@@ -159,33 +169,39 @@ def main():
     parser.add_argument("--out", default=None, help="also write the recommended anchors yaml fragment here")
     args = parser.parse_args()
 
-    if args.n % 2 or args.n < 2:
-        parser.error(f"--n must be even and >= 2 (half per detection level), got {args.n}")
+    if args.anchors:
+        cur = np.array([float(v) for v in args.anchors.split(",")], np.float32).reshape(-1, 2)
+        cur_levels = None
+    else:
+        cur, cur_levels = _load_model_anchors(args.model)
+    levels = args.levels or cur_levels or 2
+    n = args.n or (len(cur) if cur is not None else 3 * levels)
+    if n % levels or n < levels:
+        parser.error(f"--n ({n}) must be divisible by --levels ({levels}) and >= levels")
     try:
         spec = load_dataset(args.data)
     except (ValueError, FileNotFoundError) as e:
         parser.error(str(e))
 
     wh_norm, ds, n_degenerate = collect_norm_wh(spec, args.role, args.limit)
-    if len(wh_norm) < args.n:
-        parser.error(f"only {len(wh_norm)} boxes found — need at least n={args.n} to cluster")
+    if len(wh_norm) < n:
+        parser.error(f"only {len(wh_norm)} boxes found — need at least n={n} to cluster")
     wh = wh_norm * float(args.imgsz)  # 像素单位（锚的空间）
     logger.info(f"compute_anchors: {spec.source} ({spec.name}, role {args.role}) · {len(ds)} images · "
                 f"{len(wh)} boxes ({n_degenerate} degenerate skipped) · imgsz {args.imgsz} · "
-                f"seed {args.seed} · n {args.n}")
+                f"seed {args.seed} · n {n} ({levels} levels, model {args.model})")
 
-    if args.anchors:
-        cur = np.array([float(v) for v in args.anchors.split(",")], np.float32).reshape(-1, 2)
+    if cur is None:
+        logger.info(f"current : no anchors in {Path(ARCHS[args.model]['cfg']).name} — evaluation skipped "
+                    f"(pass `--anchors` to evaluate a candidate set instead)")
     else:
-        cur = _load_anchors(V3_CFG)
-    if cur is not None:
         st = anchor_stats(wh, cur, args.anchor_t)
         served = " · ".join(f"[{i}] {100 * c:.1f}% iou {m:.3f}" for i, (c, m) in enumerate(st["per_anchor"]))
         logger.info(f"current : {len(cur)} anchors · bestIoU mean {st['iou_mean']:.3f} "
                     f"(p10 {st['iou_p10']:.3f}) · coverage(r<={args.anchor_t}) {100 * st['coverage']:.1f}%")
         logger.info(f"          per-anchor service: {served}")
 
-    anchors, score = kmeans_anchors(wh, args.n, args.n_init, args.seed)
+    anchors, score = kmeans_anchors(wh, n, args.n_init, args.seed)
     st_new = anchor_stats(wh, anchors, args.anchor_t)
     logger.info(f"k-means : n_init {args.n_init} · centroid mean IoU {score:.3f} · "
                 f"recommended-set coverage {100 * st_new['coverage']:.1f}% (bestIoU mean {st_new['iou_mean']:.3f})")
@@ -205,10 +221,10 @@ def main():
                         f"either set is usable for v3's exp decode; swap optional")
         logger.info(f"          prior-fit: bestIoU mean {st['iou_mean']:.3f} (current) -> "
                     f"{st_new['iou_mean']:.3f} (re-clustered)")
-    logger.info("recommended anchors (paste into config/models/yolov3-tiny.yaml):")
-    logger.info(_fmt_anchors(anchors))
+    logger.info(f"recommended anchors (paste into {Path(ARCHS[args.model]['cfg']).name}'s anchors section):")
+    logger.info(_fmt_anchors(anchors, levels))
     if args.out:
-        Path(args.out).write_text(_fmt_anchors(anchors) + "\n", encoding="utf-8")
+        Path(args.out).write_text(_fmt_anchors(anchors, levels) + "\n", encoding="utf-8")
         logger.info(f"saved -> {args.out}")
 
 

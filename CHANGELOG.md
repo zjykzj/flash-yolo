@@ -26,9 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`scripts/compute_anchors.py`**: evaluates the current yolov3-tiny anchor set against a dataset's
   train split with the YOLOv5-style shape-ratio coverage check (`anchor_t` 4.0) and re-clusters with
   darknet-style k-means (IoU distance, seeded/deterministic), printing a paste-ready `anchors:`
-  fragment with a three-way verdict (acceptable / swap recommended / optional). Custom-dataset
-  from-scratch training should run it first; the official darknet weights must keep the official
-  anchor set.
+  fragment with a three-way verdict (acceptable / swap recommended / optional). The tool is
+  model-agnostic: `--model` picks which model yaml's `anchors:` section is treated as the current
+  set (default yolov3-tiny) and `--levels/--n` control the output grouping, so future anchor-based
+  models reuse it unchanged. Custom-dataset from-scratch training should run it first; the official
+  darknet weights must keep the official anchor set.
 - **YOLOv3-tiny weights and inference pipeline**: `download_weights.py --model yolov3-tiny` fetches
   the official darknet `.weights` and `convert_weights.py` gains a darknet parser (cfg layer order
   incl. the P5-head interleave, 4/5-int header autodetect, exact file-length check). The engines

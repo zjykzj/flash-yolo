@@ -103,7 +103,7 @@ def test_both_formats_equal(tmp_path):
 
 
 def test_cli_smoke(tmp_path):
-    """CLI 端到端：打印判定 + 推荐锚片段，退出码 0"""
+    """CLI 端到端：v3-tiny 默认（判定 + 片段）；通用路径（无锚段模型 + 3 级自定义 n）"""
     desc = _make_mini(tmp_path, "coco")
     r = subprocess.run(["python", "scripts/compute_anchors.py", "--data", str(desc),
                         "--imgsz", "320", "--n", "6", "--n-init", "2", "--limit", "8"],
@@ -111,4 +111,12 @@ def test_cli_smoke(tmp_path):
     assert r.returncode == 0, r.stderr
     out = r.stdout
     assert "anchors:" in out and "verdict" in out and "coverage" in out, out
-    print("  CLI 冒烟通过")
+    assert out.count("  - [[") == 2, out  # 默认 2 级（来自 v3-tiny yaml）
+
+    r2 = subprocess.run(["python", "scripts/compute_anchors.py", "--data", str(desc),
+                         "--model", "yolo26", "--n", "9", "--levels", "3", "--n-init", "2", "--limit", "8"],
+                        cwd=ROOT, capture_output=True, text=True)
+    assert r2.returncode == 0, r2.stderr
+    assert "evaluation skipped" in r2.stdout, r2.stdout  # yolo26 yaml 无 anchors 段
+    assert r2.stdout.count("  - [[") == 3, r2.stdout  # --levels 3 分组
+    print("  CLI 冒烟通过（默认 v3-tiny + 通用 --model/--levels 路径）")

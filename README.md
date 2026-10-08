@@ -37,9 +37,9 @@ convert with `scripts/convert_weights.py` and evaluate with `scripts/eval.py`. T
 through this repo's pipeline (COCO val2017, pycocotools, 640 input) measure **35.90 mAP@50 /
 17.16 mAP@[.5:.95]** — the published 33.1 mAP@50 reference is COCO test-dev at 416, so the delta is
 input size plus split. For custom datasets trained from scratch, re-cluster the anchor priors first
-with `scripts/compute_anchors.py --data <descriptor>` (YOLOv5-style coverage check + darknet-style
-k-means, prints a paste-ready `anchors:` fragment); the official weights must keep the official
-anchor set.
+with `scripts/compute_anchors.py --data <descriptor>` — a model-agnostic tool (darknet-style k-means
++ YOLOv5-style coverage check; `--model/--levels/--n` target any model yaml with an `anchors:`
+section) that prints a paste-ready fragment. The official weights must keep the official anchor set.
 
 ## Quick Start
 
