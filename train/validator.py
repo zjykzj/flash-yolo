@@ -4,11 +4,14 @@
 
 控制台节奏（与训练行同机制）：调用方先打印 VAL_HEADER，进度条 desc 用实时 all 行
 （图数/实例数真实增长，指标列 '-' 占位），结束时定格为真实指标行并保留。
-val 损失（可选，传入 loss_fn 时启用）：与训练完全相同的损失实现（同一 ComputeLoss），
-复用同一次 backbone/neck 前向（forward_feats → head 训练口径双分支输出 → 损失与 E2E
-指标双用途，eval 模式 BN 不污染统计）；逐 batch 累加、按 batch 数平均，返回的
-result["loss"] = box/cls/l1/o2m/o2o（与训练行同义）。**仅写入 results.csv，控制台不
-展示**——官方 ultralytics 同口径（其控制台同样无 val 损失，值只在 val/*_loss CSV 列）。
+val 损失（可选，传入 loss_fn 时启用）：与训练完全相同的损失实现（ComputeLoss /
+ComputeLossV3），复用同一次 backbone/neck 前向（forward_feats → head 训练口径输出 →
+损失与指标双用途，eval 模式 BN 不污染统计）；逐 batch 累加、按 batch 数平均，返回的
+result["loss"] 键随损失实现（item_keys），**仅写入 results.csv，控制台不展示**——
+官方 ultralytics 同口径（其控制台同样无 val 损失，值只在 val/*_loss CSV 列）。
+
+指标侧的解码/后处理由 head.postprocess_val(preds, feats) 统一提供（每图 (M,6)
+[xyxy, conf, cls]，letterbox 像素）：Detect 走 E2E o2o 解码，V3Detect 解码 + 按类 NMS。
 """
 
 import time
@@ -27,7 +30,7 @@ __all__ = ["validate", "VAL_HEADER", "format_val_row"]
 
 VAL_HEADER = "      " + "%11s" * 7 % ("Class", "Images", "Instances", "P", "R", "mAP50", "mAP50-95")
 
-_LOSS_KEYS = ("box", "cls", "l1", "o2m", "o2o")
+_LOSS_KEYS = ("box", "cls", "l1", "o2m", "o2o")  # 无 loss_fn 时的兜底键（正常路径由 item_keys 派生）
 
 
 def format_val_row(metrics=None, images=0, instances=0):
@@ -52,24 +55,26 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
 
     Returns:
         metrics dict：mAP@50 / mAP@[.5:.95] / AR@100 / P / R / images / instances
-        （loss_fn 非空时另有 result["loss"] = {box, cls, l1, o2m, o2o}，逐 batch 平均）
+        （loss_fn 非空时另有 result["loss"]，键随损失实现，逐 batch 平均）
     """
-    model.model[-1].end2end = True
     head = model.model[-1]
+    if hasattr(head, "end2end"):
+        head.end2end = True  # YOLO26 走 E2E 解码；V3Detect 无此开关
     metrics = FastMetrics(nc=len(dataset.names))
+    loss_keys = tuple(loss_fn.item_keys) if loss_fn is not None else _LOSS_KEYS
 
     n = len(dataset) if not limit else min(limit, len(dataset))
     if n == 0:
         result = metrics.compute()
         if loss_fn is not None:
-            result["loss"] = dict.fromkeys(_LOSS_KEYS, 0.0)
+            result["loss"] = dict.fromkeys(loss_keys, 0.0)
         return result
 
     bar = ProgressBar(n, desc=format_val_row())
     t0 = time.monotonic()
     n_inst_seen = 0
     speed = None
-    loss_sums = dict.fromkeys(_LOSS_KEYS, 0.0)
+    loss_sums = dict.fromkeys(loss_keys, 0.0)
     n_batches = 0
     pending = []  # (idx, image, tensor, ratio, pad)
     for i in range(n):
@@ -80,8 +85,8 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
             continue
         with torch.no_grad():
             feats = model.forward_feats(torch.cat([p[2] for p in pending], 0).to(device))
-            preds = head._forward_train(feats)  # 训练口径双分支原始输出（eval 模式 BN，更新统计已停用）
-            outs = head._e2e_postprocess(preds["one2one"], feats).cpu().numpy()  # (b, 300, 6)
+            preds = head._forward_train(feats)  # 训练口径原始输出（eval 模式 BN，更新统计已停用）
+            outs = head.postprocess_val(preds, feats)  # 每图 (M, 6) [xyxy, conf, cls]（letterbox 像素）
             if loss_fn is not None:
                 # 目标变换到 letterbox 空间（scale_boxes 的逆变换），与训练损失同像素口径
                 tgt = []

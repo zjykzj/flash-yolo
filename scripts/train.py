@@ -1,9 +1,10 @@
-"""YOLO26 COCO 训练（从零 / --weights 微调 / --resume 续训）
+"""检测训练（YOLO26 / YOLOv3-tiny；从零 / --weights 微调 / --resume 续训）
 
 用法:
-    python scripts/train.py --data /path/to/coco                                  # 从零全量
+    python scripts/train.py --data /path/to/coco                                  # 从零全量（默认 yolo26）
     python scripts/train.py --data /path/to/coco --limit 512 --epochs 3           # 真实数据冒烟
     python scripts/train.py --data /path/to/coco --weights x.safetensors          # 权重初始化微调
+    python scripts/train.py --data /path/to/coco --model yolov3-tiny              # 换架构
     python scripts/train.py --resume runs/train/trainN/resume.pt                  # 断点续训
 """
 
@@ -19,6 +20,7 @@ import torch
 
 from config.datasets import load_dataset
 from config.train_config import TRAIN_CONFIG_PATH, apply_cli, load_train_config
+from model.build import ARCHS
 from train.trainer import Trainer
 from utils.logger import attach_file_log, get_logger, setup_logging
 from utils.paths import increment_path
@@ -32,7 +34,7 @@ _INT_FIELDS = ["epochs", "batch", "nbs", "imgsz", "workers", "seed", "close_mosa
                "limit", "ns_iters", "ema_tau", "topk", "topk_o2o", "topk2",
                "stop_after", "save_period", "keep_periodic", "diag_interval", "aug_samples"]
 _FLOAT_FIELDS = ["lr0", "lrf", "momentum", "weight_decay", "muon_w", "sgd_w", "warmup_epochs", "warmup_momentum",
-                 "box_gain", "cls_gain", "dfl_gain", "tal_alpha", "tal_beta",
+                 "box_gain", "cls_gain", "dfl_gain", "obj_gain", "tal_alpha", "tal_beta",
                  "prog_alpha_init", "prog_alpha_final", "stal_s_min", "stal_s_ref", "ema_decay",
                  "mosaic", "mixup", "copy_paste", "aug_scale", "degrees", "shear", "translate",
                  "fliplr", "flipud", "hsv_h", "hsv_s", "hsv_v", "bgr"]
@@ -40,14 +42,16 @@ _STR_FIELDS = ["copy_paste_mode"]
 
 
 def main():
-    parser = argparse.ArgumentParser(description="YOLO26 COCO training")
+    parser = argparse.ArgumentParser(description="YOLO26 / YOLOv3-tiny training")
     parser.add_argument("--data", default=None,
                         help="dataset descriptor: a name in config/datasets/ (local/ wins) or a .yaml path")
     parser.add_argument("--weights", default=None, help="init from .safetensors (finetune; default: from scratch)")
     parser.add_argument("--resume", default=None, help="resume.pt path or run dir (restores full training state)")
     parser.add_argument("--device", default=None, help="torch device (default: auto)")
     parser.add_argument("--name", default=None, help="run dir suffix (runs/train/train-<name>)")
-    parser.add_argument("--scale", dest="scale", default=None, help="model scale (n/s/m/l/x)")
+    parser.add_argument("--scale", dest="scale", default=None, help="model scale (yolo26 only: n/s/m/l/x)")
+    parser.add_argument("--model", dest="model", default=None, choices=sorted(ARCHS),
+                        help="architecture (default: train.yaml `model`, yolo26)")
     parser.add_argument("--recipe", default=None, help="recipe name (config/recipes/<name>.yaml) or a .yaml path; "
                                                        "default = the built-in baseline (config/train.yaml values)")
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=None,
@@ -80,6 +84,13 @@ def main():
     except (ValueError, FileNotFoundError) as e:
         parser.error(str(e))
     apply_cli(cfg, args)
+
+    # 架构相关收尾：v3 系档位由 yaml 固定（Trainer 里按 ARCHS 归一化为 tiny）
+    if cfg.model != "yolo26":
+        if args.scale:
+            logger.warning(f"--scale {args.scale} ignored for model {cfg.model!r} (scale is fixed to 'tiny')")
+        if cfg.recipe != "default":
+            logger.warning(f"recipe {cfg.recipe!r} is tuned for yolo26 — training {cfg.model} with it is not recommended")
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 

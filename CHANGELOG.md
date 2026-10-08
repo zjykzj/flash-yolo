@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `build_yolov3_tiny()`; `python model/summary.py --model yolov3-tiny`). Anchors follow
   `imgsz / ref_imgsz` scaling and live as non-persistent buffers, so checkpoints keep a
   converter-friendly key set.
+- **YOLOv3-tiny training**: `train/loss_v3.py` (BCE objectness + one-hot BCE classes + CIoU box,
+  per-level best-anchor matching with a 0.7 ignore band) runs through the existing Trainer and
+  validator — the default recipe drives it unchanged. `TrainConfig.model` (plus `train.py --model`)
+  selects the architecture and `obj_gain` joins the loss weights; trainer/validator column sets,
+  epoch rows, diagnostics and the val decode path now derive from the loss' `item_keys` and a
+  per-head `postprocess_val` contract, so yolo26 console/CSV output is byte-identical to before.
 
 ## [0.3.0] - 2026-10-08
 

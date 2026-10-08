@@ -23,7 +23,33 @@ padding GT 由 gt_mask 屏蔽）；按元素预算分块控显存，块内再裁
 import torch
 import torch.nn.functional as F
 
-__all__ = ["TaskAlignedAssigner", "select_highest_overlaps", "bbox_iou_torch"]
+__all__ = ["TaskAlignedAssigner", "select_highest_overlaps", "bbox_iou_torch", "padded_gt"]
+
+
+def padded_gt(targets, batch_size):
+    """(N, 6) [batch_idx, cls, x1, y1, x2, y2] -> (B, M, 5) 右侧 padding + (B, M) bool 掩码
+
+    损失目标构建的共用件（ComputeLoss / ComputeLossV3）：按图分组、O(N) 向量化无逐图循环。
+    """
+    if targets.numel() == 0:
+        return (targets.new_zeros(batch_size, 0, 5),
+                torch.zeros(batch_size, 0, dtype=torch.bool, device=targets.device))
+    bidx = targets[:, 0].long()
+    counts = torch.bincount(bidx, minlength=batch_size)
+    m = int(counts.max())
+    if m == 0:
+        return (targets.new_zeros(batch_size, 0, 5),
+                torch.zeros(batch_size, 0, dtype=torch.bool, device=targets.device))
+    # 逐图内序号：稳定排序 + 每图起始偏移（O(N) 向量化，无逐图循环）
+    order = torch.argsort(bidx, stable=True)
+    row = bidx[order]
+    starts = torch.cumsum(counts, 0) - counts
+    pos = torch.arange(row.shape[0], device=targets.device) - starts[row]
+    gt = targets.new_zeros(batch_size, m, 5)
+    gt_mask = torch.zeros(batch_size, m, dtype=torch.bool, device=targets.device)
+    gt[row, pos] = targets[order][:, 1:]
+    gt_mask[row, pos] = True
+    return gt, gt_mask
 
 
 def bbox_iou_torch(box1, box2, ciou=True, eps=1e-7):

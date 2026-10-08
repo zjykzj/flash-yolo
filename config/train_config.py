@@ -33,6 +33,7 @@ class TrainConfig:
     data: str = ""  # 数据集描述符（config/datasets/[local/]<name>.yaml 或 .yaml 路径）；
                     # 空 = 未设置，必须由 CLI --data 提供（见 scripts/train.py）
     scale: str = "n"
+    model: str = "yolo26"  # 架构名（model/build.py 的 ARCHS 注册表；yolo26 | yolov3-tiny）
     epochs: int = 100
     batch: int = 16  # 物理 batch（开箱即用值；nbs 累积保证梯度语义不变）
     nbs: int = 64
@@ -68,6 +69,7 @@ class TrainConfig:
     box_gain: float = 7.5
     cls_gain: float = 0.5
     dfl_gain: float = 1.5
+    obj_gain: float = 1.0  # v3 系 objectness 权重（yolo26 双头无独立 obj 项，不使用）
     tal_alpha: float = 0.5
     tal_beta: float = 6.0
     topk: int = 10

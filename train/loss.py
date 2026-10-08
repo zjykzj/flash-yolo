@@ -20,14 +20,17 @@ tests/test_loss_parity.py 以固定输入对官方 E2ELoss 做逐项数值 parit
 import torch
 import torch.nn.functional as F
 
-from train.assigner import TaskAlignedAssigner, bbox_iou_torch
+from train.assigner import TaskAlignedAssigner, bbox_iou_torch, padded_gt
+from train.loss_v3 import ComputeLossV3
 from utils.anchors import make_anchors
 
-__all__ = ["ComputeLoss"]
+__all__ = ["ComputeLoss", "build_loss"]
 
 
 class ComputeLoss:
     """YOLO26 双头损失（o2m + o2o，ProgLoss 渐进权重）"""
+
+    item_keys = ("box", "cls", "l1", "o2m", "o2o")  # 训练日志/CSV 列（trainer 由此派生）
 
     def __init__(self, cfg, head, device):
         self.cfg = cfg
@@ -56,28 +59,6 @@ class ComputeLoss:
         feats = [torch.zeros(1, 1, imgsz // int(s), imgsz // int(s), device=self.device) for s in self.strides]
         return make_anchors(feats, self.strides, 0.5)
 
-    def _padded_gt(self, targets, batch_size):
-        """(N, 6) [batch_idx, cls, x1, y1, x2, y2] -> (B, M, 5) 右侧 padding + (B, M) bool 掩码"""
-        if targets.numel() == 0:
-            return (targets.new_zeros(batch_size, 0, 5),
-                    torch.zeros(batch_size, 0, dtype=torch.bool, device=targets.device))
-        bidx = targets[:, 0].long()
-        counts = torch.bincount(bidx, minlength=batch_size)
-        m = int(counts.max())
-        if m == 0:
-            return (targets.new_zeros(batch_size, 0, 5),
-                    torch.zeros(batch_size, 0, dtype=torch.bool, device=targets.device))
-        # 逐图内序号：稳定排序 + 每图起始偏移（O(N) 向量化，无逐图循环）
-        order = torch.argsort(bidx, stable=True)
-        row = bidx[order]
-        starts = torch.cumsum(counts, 0) - counts
-        pos = torch.arange(row.shape[0], device=targets.device) - starts[row]
-        gt = targets.new_zeros(batch_size, m, 5)
-        gt_mask = torch.zeros(batch_size, m, dtype=torch.bool, device=targets.device)
-        gt[row, pos] = targets[order][:, 1:]
-        gt_mask[row, pos] = True
-        return gt, gt_mask
-
     def forward(self, preds, targets, batch_size, imgsz):
         """总损失（fp32 内部计算，兼容 AMP 下的 fp16 输入）
 
@@ -90,7 +71,7 @@ class ComputeLoss:
             items 为 per-image 均值口径的分解字典（日志用，float）
         """
         anchors, strides = self._anchors(imgsz)
-        gt, gt_mask = self._padded_gt(targets, batch_size)
+        gt, gt_mask = padded_gt(targets, batch_size)
         total = torch.zeros((), device=self.device)
         items = {"box": 0.0, "cls": 0.0, "l1": 0.0, "o2m": 0.0, "o2o": 0.0}
         has_o2o = "one2one" in preds
@@ -145,3 +126,14 @@ class ComputeLoss:
         return total, dict(zip(keys, vals))
 
     __call__ = forward  # 普通类不自动调用 forward，显式别名
+
+
+_LOSS_BY_ARCH = {"yolo26": ComputeLoss, "yolov3-tiny": ComputeLossV3}
+
+
+def build_loss(arch, cfg, head, device):
+    """按架构分派损失实现（trainer 的单一入口；接口同构：item_keys / __call__）"""
+    cls = _LOSS_BY_ARCH.get(arch)
+    if cls is None:
+        raise ValueError(f"unknown arch {arch!r}; available: {sorted(_LOSS_BY_ARCH)}")
+    return cls(cfg, head, device)

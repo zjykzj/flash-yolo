@@ -10,7 +10,7 @@ import numpy as np
 from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from utils.iou import box_iou
 
-__all__ = ["decode_raw", "non_max_suppression", "scale_boxes"]
+__all__ = ["decode_raw", "non_max_suppression", "nms_per_image", "v3_detections", "scale_boxes"]
 
 # 三个检测层特征图尺寸（640 输入）：P3/P4/P5
 _LEVEL_SHAPES = [(80, 80), (40, 40), (20, 20)]
@@ -82,6 +82,31 @@ def _nms(boxes, scores, iou_thres):
     return np.asarray(keep, dtype=np.int64)
 
 
+def nms_per_image(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, max_det=MAX_DET):
+    """按类 NMS（单图，xyxy 输入）
+
+    Args:
+        boxes: (N, 4) xyxy
+        score_map: (N, nc) 概率
+    Returns:
+        (M, 6) [x1, y1, x2, y2, score, cls]（按分降序、≤ max_det；无检出时 (0, 6)）
+    """
+    nc = score_map.shape[1]
+    out = []
+    for c in range(nc):
+        mask = score_map[:, c] > conf_thres
+        b, s = boxes[mask], score_map[mask, c]
+        if len(b) == 0:
+            continue
+        keep = _nms(b, s, iou_thres)
+        out.append(np.concatenate([b[keep], s[keep, None], np.full((len(keep), 1), c, np.float32)], axis=1))
+    if not out:
+        return np.zeros((0, 6), dtype=np.float32)
+    merged = np.concatenate(out)
+    top = merged[:, 4].argsort()[::-1][:max_det]
+    return merged[top]
+
+
 def non_max_suppression(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, max_det=MAX_DET):
     """按类 NMS（与官方 val 口径：conf 0.001 / iou 0.7 / 每图最多 300）
 
@@ -92,29 +117,20 @@ def non_max_suppression(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_T
     Returns:
         boxes: (M, 4) xyxy, scores: (M,), class_ids: (M,) int
     """
-    boxes = xywh2xyxy(boxes)
-    nc = score_map.shape[1]
-    out_boxes, out_scores, out_cls = [], [], []
-    for c in range(nc):
-        mask = score_map[:, c] > conf_thres
-        b, s = boxes[mask], score_map[mask, c]
-        if len(b) == 0:
-            continue
-        keep = _nms(b, s, iou_thres)
-        out_boxes.append(b[keep])
-        out_scores.append(s[keep])
-        out_cls.append(np.full(len(keep), c, dtype=np.int64))
-    if not out_boxes:
-        return (
-            np.zeros((0, 4), dtype=np.float32),
-            np.zeros((0,), dtype=np.float32),
-            np.zeros((0,), dtype=np.int64),
-        )
-    boxes = np.concatenate(out_boxes)
-    scores = np.concatenate(out_scores)
-    cls = np.concatenate(out_cls)
-    top = scores.argsort()[::-1][:max_det]
-    return boxes[top], scores[top], cls[top]
+    det = nms_per_image(xywh2xyxy(boxes), score_map, conf_thres, iou_thres, max_det)
+    return det[:, :4], det[:, 4], det[:, 5].astype(np.int64)
+
+
+def v3_detections(output, conf_thres=CONF_THRES, iou_thres=IOU_THRES, max_det=MAX_DET):
+    """YOLOv3-tiny 解码输出 -> NMS 后检测（单图）
+
+    Args:
+        output: (N, 5+nc) [x1,y1,x2,y2, obj, cls...]（V3Detect eval 前向 / postprocess_val 的单图行）
+    Returns:
+        (M, 6) [x1,y1,x2,y2, obj×cls, cls]（最终分 = obj 与类分相乘，darknet 口径）
+    """
+    score_map = output[:, 4:5] * output[:, 5:]
+    return nms_per_image(output[:, :4], score_map, conf_thres, iou_thres, max_det)
 
 
 def scale_boxes(boxes, ratio, pad, ori_h, ori_w):

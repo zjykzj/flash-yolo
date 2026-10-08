@@ -10,6 +10,7 @@ recipe: default     # 缺省/default = 只用本文件的值（从零训练 / �
 data: ""           # 数据集描述符（名字或 .yaml 路径，见 config/datasets/coco.yaml 的 schema）——
                    # 环境相关（描述符里写 path:），**必须**用 --data 指定，不在配置里写死
 scale: n
+model: yolo26      # 架构名（model/build.py 的 ARCHS 注册表）；yolov3-tiny 的 scale 固定 tiny
 epochs: 100
 batch: 16          # 物理 batch：最小可移植值（对齐 ultralytics default.yaml，8GB 笔记本可跑）。
                    # 大显存按 scripts/bench_io.py 实测值调大；梯度语义由 nbs 保证与物理 batch 无关
@@ -48,6 +49,7 @@ ns_iters: 5        # Newton-Schulz 迭代次数
 box_gain: 7.5      # CIoU
 cls_gain: 0.5      # BCE（软目标）
 dfl_gain: 1.5      # box-L1（复用 dfl 槽位，reg_max=1 无 DFL）
+obj_gain: 1.0      # v3 系 objectness 权重（yolo26 双头无独立 obj 项，不使用）
 tal_alpha: 0.5
 tal_beta: 6.0
 topk: 10           # o2m TAL top-k

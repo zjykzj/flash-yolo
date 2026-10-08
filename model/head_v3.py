@@ -12,6 +12,8 @@
 import torch
 import torch.nn as nn
 
+from utils.postprocess import v3_detections
+
 __all__ = ["V3Detect", "decode_level"]
 
 
@@ -64,11 +66,10 @@ class V3Detect(nn.Module):
         """训练口径：每级原始输出（validator 与损失共用同一入口）"""
         return [self.m[i](x[i]) for i in range(self.nl)]
 
-    def forward(self, x):
-        if self.training:
-            return self._forward_train(x)
+    def _decode(self, raws):
+        """原始输出列表 -> 解码拼接 (B, NA, 5+nc)（eval 前向与 postprocess_val 共用）"""
         outs = []
-        for lvl, raw in enumerate(self._forward_train(x)):
+        for lvl, raw in enumerate(raws):
             boxes, obj, cls = decode_level(raw, self.anchors[lvl], self.stride[lvl], self.no, self.na)
             b = boxes.shape[0]
             outs.append(torch.cat([
@@ -77,3 +78,16 @@ class V3Detect(nn.Module):
                 cls.reshape(b, -1, self.nc).sigmoid(),
             ], dim=-1))
         return torch.cat(outs, dim=1)  # (B, NA, 5+nc)
+
+    def forward(self, x):
+        if self.training:
+            return self._forward_train(x)
+        return self._decode(self._forward_train(x))
+
+    def postprocess_val(self, preds, feats):
+        """验证输出契约：每图 (M, 6) [xyxy, obj×cls, cls] numpy（letterbox 像素，已 conf 过滤 + 按类 NMS）
+
+        与 Detect.postprocess_val 同契约；validator 的逐图循环对两者无差别。
+        """
+        decoded = self._decode(preds).detach().cpu().numpy()
+        return [v3_detections(decoded[i]) for i in range(decoded.shape[0])]

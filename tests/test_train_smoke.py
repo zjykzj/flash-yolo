@@ -119,6 +119,37 @@ def test_train_smoke(tmp_path, fmt):
           f"val_box {val_box[0]:.3f} -> {val_box[-1]:.3f} · val_cls {val_cls[0]:.2f}")
 
 
+def test_train_smoke_v3(tmp_path):
+    """YOLOv3-tiny：同一条 Trainer 路径（架构由 cfg.model 选择），列名/验证/产物全走通"""
+    data = _make_mini_coco(tmp_path)
+    cfg = TrainConfig(
+        data=str(data), model="yolov3-tiny", epochs=2, batch=8, nbs=8, imgsz=320, workers=0,
+        val_epochs=1, val_limit=8, limit=0, amp=False,
+        mosaic=0.5, mixup=0.0, copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0,
+    )
+    torch.manual_seed(0)
+    run_dir = tmp_path / "run-v3"
+    trainer = Trainer(cfg, device="cpu", run_dir=run_dir)
+    trainer.train()
+
+    assert (run_dir / "weights" / "last.safetensors").exists()
+    assert (run_dir / "weights" / "best.safetensors").exists()
+    assert (run_dir / "resume.pt").exists()
+    rows = list(csv_reader(run_dir / "results.csv"))
+    assert len(rows) >= 2, f"results.csv 行数不足: {len(rows)}"
+    # 列名随损失实现派生：v3 为 box/obj/cls（无 o2m/o2o）
+    assert "obj" in rows[0] and "o2m" not in rows[0], list(rows[0])
+    losses = [float(r["loss"]) for r in rows]
+    objs = [float(r["obj"]) for r in rows]
+    assert all(np.isfinite(v) for v in losses + objs), f"出现 NaN 损失: {losses} {objs}"
+    assert all(v < 100 for v in objs), f"obj 损失疑似发散: {objs}"
+    assert all(r["mAP"] for r in rows), "每 epoch 都应有验证指标"
+    val_obj = [float(r["val_obj"]) for r in rows]
+    assert all(np.isfinite(v) and v > 0 for v in val_obj), f"val obj 损失异常: {val_obj}"
+    assert trainer.head.nc == 2, f"模型 nc 应跟随描述符: {trainer.head.nc}"
+    print(f"  [v3] 冒烟通过: obj {objs[0]:.3f} -> {objs[-1]:.3f} · val_obj {val_obj[0]:.3f} -> {val_obj[-1]:.3f}")
+
+
 def csv_reader(path):
     import csv
 

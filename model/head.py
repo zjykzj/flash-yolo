@@ -124,3 +124,11 @@ class Detect(nn.Module):
         anchor_idx = ori_idx.gather(1, idx // self.nc)               # (B, k)
         out_boxes = boxes.gather(1, anchor_idx.unsqueeze(-1).expand(-1, -1, 4))
         return torch.cat((out_boxes, top_scores.unsqueeze(-1), cls), dim=-1)  # (B, k, 6)
+
+    def postprocess_val(self, preds, feats):
+        """验证输出契约：每图 (M, 6) [x1,y1,x2,y2,conf,cls] numpy（letterbox 像素）
+
+        与 V3Detect.postprocess_val 同契约；yolo26 走 E2E o2o 解码（不额外过滤/NMS，
+        validator 的 conf 掩码与坐标还原照旧处理）。
+        """
+        return list(self._e2e_postprocess(preds["one2one"], feats).detach().cpu().numpy())

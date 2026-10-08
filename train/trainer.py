@@ -22,10 +22,10 @@ from data.loader import collate_fn, worker_init_fn
 from data.scan import scan_summary
 from model.summary import summary_lines
 from model.weights import load_weights
-from model.build import DetectionModel, YOLO26_CONFIG_PATH
+from model.build import ARCHS, arch_display_name, build_model
 from train.checkpoint import load_resume, save_best_last, save_periodic, save_resume
 from train.ema import ModelEMA
-from train.loss import ComputeLoss
+from train.loss import build_loss
 from train.lr import cosine_lr, linear_lr, set_epoch_lr, warmup_lr, warmup_momentum
 from train.optimizer import MuSGD, build_param_groups
 from train.validator import VAL_HEADER, format_val_row, validate
@@ -37,8 +37,25 @@ from utils.visualize import draw_target_grid
 logger = logging.getLogger(__name__)
 
 
+def _pred_tensors(preds):
+    """训练口径 head 输出 -> [(名字, 张量)]：dict-of-dict（Detect 双分支）与 list（V3Detect 逐级）统一"""
+    if isinstance(preds, dict):
+        for branch in preds:
+            yield f"{branch}.boxes", preds[branch]["boxes"]
+            yield f"{branch}.scores", preds[branch]["scores"]
+    else:
+        for lvl, t in enumerate(preds):
+            yield f"level{lvl}", t
+
+
 class Trainer:
-    """YOLO26 训练器（--weights 初始化微调 / --resume 断点续训）"""
+    """检测训练器（架构由 cfg.model 选择；--weights 初始化微调 / --resume 断点续训）"""
+
+    # 损失项 -> (表头名, 定点精度)：逐字符兼容历史列（新损失项在此登记，未登记回退 k_loss/3 位）
+    _LOSS_COLUMNS = {
+        "box": ("box_loss", 3), "cls": ("cls_loss", 4), "l1": ("l1_loss", 3),
+        "o2m": ("o2m_loss", 2), "o2o": ("o2o_loss", 2), "obj": ("obj_loss", 3),
+    }
 
     def __init__(self, cfg: TrainConfig, device=None, run_dir=None, resume=None, weights=None, spec=None):
         self.cfg = cfg
@@ -57,7 +74,9 @@ class Trainer:
         # ① 环境 + 超参快照：在建模型、解析数据集之前打印（启动白屏只剩 import 时间）
         self._print_env()
 
-        model = DetectionModel(YOLO26_CONFIG_PATH, cfg.scale, cfg.imgsz, nc=self.spec.nc)
+        if cfg.model != "yolo26":  # 非 yolo26 架构的档位由 yaml 固定（yolov3-tiny = tiny）；--scale 不适用
+            cfg.scale = ARCHS[cfg.model]["default_scale"]
+        model = build_model(cfg.model, cfg.scale, cfg.imgsz, nc=self.spec.nc)
         if weights:
             load_weights(model, weights, strict=True)
         model.to(self.device).train()
@@ -81,7 +100,8 @@ class Trainer:
         # AMP（opt-in）：fp16 + GradScaler。从零训练默认关闭——半精度前向在 640² 会
         # NaN（BN eps=0.001 放大级联 + fp16 溢出 / bf16 尾数舍入，见 CLAUDE.md #10）
         self.scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp) if self.device.type == "cuda" else None
-        self.loss_fn = ComputeLoss(cfg, self.head, self.device)
+        self.loss_fn = build_loss(cfg.model, cfg, self.head, self.device)
+        self.loss_keys = tuple(self.loss_fn.item_keys)  # 训练/验证/CSV 列名由此派生
 
         if resume:  # 只依赖 model/ema/optimizer/scaler，放在建数据集之前（输出顺序：模型 -> resume -> 数据）
             path = Path(resume)
@@ -96,14 +116,17 @@ class Trainer:
                 logger.warning(f"resume checkpoint was written with data={ckpt_cfg['data']!r}, now "
                                f"data={self.cfg.data!r} — the model is rebuilt from the current descriptor "
                                f"(class count may differ; strict weight load will catch a mismatch)")
+            if ckpt_cfg.get("model", "yolo26") != self.cfg.model:
+                logger.warning(f"resume checkpoint was written with model={ckpt_cfg.get('model', 'yolo26')!r}, "
+                               f"now model={self.cfg.model!r} — the model is rebuilt from the current config")
             logger.info(f"resumed from {path} at epoch {self.start_epoch + 1} -> {self.run_dir}")
 
         self.accumulate = max(round(cfg.nbs / cfg.batch), 1)
         self.val_enabled = cfg.val_epochs > 0  # val_epochs=0 时全程不验证（小数据集冒烟用）
         self.val_dataset = None  # 懒构建（JSON 解析 ~数秒，仅需一次）
-        self.csv_fields = ["epoch", "time_s", "box", "cls", "l1", "o2m", "o2o", "loss", "lr",
+        self.csv_fields = ["epoch", "time_s", *self.loss_keys, "loss", "lr",
                            "mAP", "mAP50", "P", "R", "AR@100",
-                           "val_box", "val_cls", "val_l1", "val_o2m", "val_o2o"]
+                           *(f"val_{k}" for k in self.loss_keys)]
         # close_mosaic 自动适配短跑：官方语义 = 最后 N 个 epoch 关 mosaic，但不超过总轮数的 1/5
         # （缩放结果在 _print_components 的 mosaic 行体现）
         self.close_mosaic = min(cfg.close_mosaic, cfg.epochs // 5)
@@ -115,7 +138,7 @@ class Trainer:
         self.results_csv = self.run_dir / "results.csv"
         self.diag_path = self.run_dir / "diag" / "train_diag.csv"
         self.samples_dir = self.run_dir / "samples"
-        self.diag_fields = ["epoch", "batch", "lr", "lr_x3", "gnorm", "box", "cls", "l1", "o2m", "o2o", "loss"]
+        self.diag_fields = ["epoch", "batch", "lr", "lr_x3", "gnorm", *self.loss_keys, "loss"]
 
     def _sample_epochs(self):
         """增强抽样可视化的轮次：首轮 / close_mosaic 生效首轮 / 末轮（去重）"""
@@ -158,7 +181,7 @@ class Trainer:
         row = {"epoch": epoch + 1, "batch": bi, "lr": min(base) if base else 0.0,
                "lr_x3": max((g["lr"] for g in self.optimizer.param_groups), default=0.0),
                "gnorm": round(gnorm, 3), "loss": round(loss, 5)}
-        row.update({k: round(items.get(k, 0.0), 5) for k in ("box", "cls", "l1", "o2m", "o2o")})
+        row.update({k: round(items.get(k, 0.0), 5) for k in self.loss_keys})
         new_file = not self.diag_path.exists()
         self.diag_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.diag_path, "a", newline="", encoding="utf-8") as f:
@@ -182,7 +205,8 @@ class Trainer:
                      "parse_s": round(self.val_dataset.parse_time, 2), "scan_s": round(self.val_dataset.scan_time, 2)}
                     if self.val_dataset is not None else {"disabled": True}),
             "corrupt": self._n_corrupt_seen,  # 惰性统计：训练中被读出失败的图（启动时写入 0）
-            "model": {"scale": self.cfg.scale, "params": sum(p.numel() for p in self.model.parameters())},
+            "model": {"arch": self.cfg.model, "scale": self.cfg.scale,
+                      "params": sum(p.numel() for p in self.model.parameters())},
             "train": {"accumulate": self.accumulate, "close_mosaic_from": max(self.cfg.epochs - self.close_mosaic, 0),
                       "stop_after": self.stop_after, "device": str(self.device)},
         })
@@ -200,14 +224,12 @@ class Trainer:
         """训练数据行（与表头同构：11 宽右对齐）——进度条 desc 与 epoch 定格行共用，杜绝两处漂移
 
         损失列经 fmt_num：常规输出与定点格式逐字符一致，超宽（发散值）回退科学计数保列对齐。
+        列由 loss_keys 派生（_LOSS_COLUMNS 固定精度，逐字符兼容历史列）。
         """
-        return (
-            "%11s" * 2 + fmt_num(means["box"], 11, 3) + fmt_num(means["cls"], 11, 4)
-            + fmt_num(means["l1"], 11, 3) + fmt_num(means["o2m"], 11, 2) + fmt_num(means["o2o"], 11, 2)
-            + "%11d" * 2 + "%11.5f"
-        ) % (
-            f"{epoch + 1}/{self.cfg.epochs}", f"{mem:.2f}G", n_img, self.cfg.imgsz, lr,
-        )
+        row = "%11s" * 2 + "".join(
+            fmt_num(means[k], 11, self._LOSS_COLUMNS.get(k, (k, 3))[1]) for k in self.loss_keys
+        ) + "%11d" * 2 + "%11.5f"
+        return row % (f"{epoch + 1}/{self.cfg.epochs}", f"{mem:.2f}G", n_img, self.cfg.imgsz, lr)
 
     # ---- 启动信息块（四段：① 环境 ② 模型 ③ 数据 ④ 组件；③ 在数据集构建时就地输出）----
     def _print_env(self):
@@ -228,7 +250,8 @@ class Trainer:
         汇总行由 summary_lines 统一输出（带档位名，如 YOLO26n），避免重复打印。
         """
         logger.info("")
-        lines, _, _, _ = summary_lines(self.model, self.cfg.imgsz, device=self.device, name=f"YOLO26{self.cfg.scale}")
+        lines, _, _, _ = summary_lines(self.model, self.cfg.imgsz, device=self.device,
+                                       name=arch_display_name(self.cfg.model, self.cfg.scale))
         for line in lines[:-1]:
             logger.info(line)
         logger.info(bold(lines[-1]))
@@ -282,11 +305,16 @@ class Trainer:
         logger.info(f"lr: warmup {self.cfg.warmup_epochs}ep -> {'cosine' if self.cfg.cos_lr else 'linear'} "
                     f"{self.cfg.lr0} -> {self.cfg.lr0 * self.cfg.lrf:.6f} · "
                     f"close_mosaic last {self.close_mosaic} epochs (from epoch {close_epoch}{scale_note})")
-        logger.info(f"loss: box {self.cfg.box_gain} CIoU · cls {self.cfg.cls_gain} BCE · l1 {self.cfg.dfl_gain} · "
-                    f"EMA {self.cfg.ema_decay} (tau {self.cfg.ema_tau})")
-        logger.info(f"TAL: topk o2m {self.cfg.topk} · o2o {self.cfg.topk_o2o}->{self.cfg.topk2} · "
-                    f"STAL {self.cfg.stal_s_min}->{self.cfg.stal_s_ref}px · "
-                    f"ProgLoss alpha {self.cfg.prog_alpha_init}->{self.cfg.prog_alpha_final}")
+        if self.cfg.model == "yolo26":
+            logger.info(f"loss: box {self.cfg.box_gain} CIoU · cls {self.cfg.cls_gain} BCE · l1 {self.cfg.dfl_gain} · "
+                        f"EMA {self.cfg.ema_decay} (tau {self.cfg.ema_tau})")
+            logger.info(f"TAL: topk o2m {self.cfg.topk} · o2o {self.cfg.topk_o2o}->{self.cfg.topk2} · "
+                        f"STAL {self.cfg.stal_s_min}->{self.cfg.stal_s_ref}px · "
+                        f"ProgLoss alpha {self.cfg.prog_alpha_init}->{self.cfg.prog_alpha_final}")
+        else:
+            logger.info(f"loss: box {self.cfg.box_gain} CIoU · obj {self.cfg.obj_gain} BCE · "
+                        f"cls {self.cfg.cls_gain} BCE (anchor-matched) · "
+                        f"EMA {self.cfg.ema_decay} (tau {self.cfg.ema_tau})")
         logger.info(f"aug: mosaic {self.cfg.mosaic} · copy_paste {self.cfg.copy_paste}({self.cfg.copy_paste_mode}) · "
                     f"mixup {self.cfg.mixup} · fliplr {self.cfg.fliplr} · flipud {self.cfg.flipud} · "
                     f"hsv h/s/v {self.cfg.hsv_h}/{self.cfg.hsv_s}/{self.cfg.hsv_v} · bgr {self.cfg.bgr}")
@@ -316,13 +344,15 @@ class Trainer:
         for epoch in range(self.start_epoch, self.cfg.epochs):
             if epoch > self.start_epoch:
                 logger.info("")  # epoch 间空行分隔（bar 不落日志，节奏靠它划分）
-            # 指标表头（每轮重复；列统一 11 宽右对齐，与数据行同 6 格缩进）
-            logger.info("      " + "%11s" * 10 % ("Epoch", "GPU_peak", "box_loss", "cls_loss", "l1_loss",
-                                                "o2m_loss", "o2o_loss", "Instances", "Size", "lr"))
+            # 指标表头（每轮重复；列统一 11 宽右对齐，与数据行同 6 格缩进；损失列由 loss_keys 派生）
+            loss_headers = [self._LOSS_COLUMNS.get(k, (f"{k}_loss", 3))[0] for k in self.loss_keys]
+            logger.info("      " + "%11s" * (2 + len(loss_headers) + 3) % (
+                "Epoch", "GPU_peak", *loss_headers, "Instances", "Size", "lr"))
             if epoch >= self.cfg.epochs - self.close_mosaic and self.cfg.mosaic > 0:
                 self.dataset.close_mosaic()
                 logger.info(f"close_mosaic: mosaic/mixup/copy_paste off from epoch {epoch + 1}")
-            self.loss_fn.set_alpha(epoch, self.cfg.epochs)
+            if hasattr(self.loss_fn, "set_alpha"):  # ProgLoss 仅 yolo26 有
+                self.loss_fn.set_alpha(epoch, self.cfg.epochs)
             self.model.train()
             self._opt_step = 0  # 诊断行按优化步计数（accum 边界对齐）
 
@@ -333,7 +363,7 @@ class Trainer:
             bar = ProgressBar(n_batch, desc="")
             t0 = time.monotonic()
             speed = None  # 累计平均速度（tqdm 口径：n / 已耗时）
-            sums = {"box": 0.0, "cls": 0.0, "l1": 0.0, "o2m": 0.0, "o2o": 0.0, "total": 0.0}
+            sums = {**{k: 0.0 for k in self.loss_keys}, "total": 0.0}
             lr_last = 0.0
 
             for bi, (imgs, targets) in enumerate(dl):
@@ -360,22 +390,26 @@ class Trainer:
                     preds = self.model(imgs)
                     loss, items = self.loss_fn(preds, targets, imgs.shape[0], self.cfg.imgsz)
                 # preds 诊断按 10 步窗口取样：每次 8 个 isfinite+bool 转换（同步）≈ 1.2ms，
-                # NaN 检出延迟 ≤10 步（loss 本身的有限性检查仍每步执行）
+                # NaN 检出延迟 ≤10 步（loss 本身的有限性检查仍每步执行）；两种 head 输出形态走同一枚举
                 preds_bad = ((bi + 1) % 10 == 0 or bi == n_batch - 1) and any(
-                    not torch.isfinite(preds[b]["boxes"]).all() or not torch.isfinite(preds[b]["scores"]).all()
-                    for b in preds
+                    not torch.isfinite(t).all() for _, t in _pred_tensors(preds)
                 )
                 if not torch.isfinite(loss) or preds_bad:
                     # 快速诊断：定位首个非有限值所在分支 + 权重发散程度 + 损失分解
                     # 注意：权重 NaN 时 n_pos=0 会让损失保持有限（静默死亡），必须同时查 preds
                     wmax = max(p.abs().max().item() for p in self.model.parameters())
                     logger.error(f"non-finite loss/preds at epoch {epoch + 1} batch {bi} · items={items} · max|weight|={wmax:.2f}")
-                    for branch in preds:
-                        b, s = preds[branch]["boxes"], preds[branch]["scores"]
-                        logger.error(
-                            f"  {branch}: boxes finite={torch.isfinite(b).all().item()} max={b.abs().max().item():.2f} · "
-                            f"scores finite={torch.isfinite(s).all().item()} max={s.abs().max().item():.2f}"
-                        )
+                    if isinstance(preds, dict):
+                        for branch in preds:
+                            b, s = preds[branch]["boxes"], preds[branch]["scores"]
+                            logger.error(
+                                f"  {branch}: boxes finite={torch.isfinite(b).all().item()} max={b.abs().max().item():.2f} · "
+                                f"scores finite={torch.isfinite(s).all().item()} max={s.abs().max().item():.2f}"
+                            )
+                    else:
+                        for name, t in _pred_tensors(preds):
+                            logger.error(f"  {name}: finite={torch.isfinite(t).all().item()} "
+                                         f"max={t.abs().max().item():.2f}")
                     raise RuntimeError(f"non-finite loss/preds ({loss.item()}) — 见上方分支诊断")
                 if self.scaler is not None:
                     self.scaler.scale(loss).backward()
@@ -466,16 +500,14 @@ class Trainer:
             logger.warning(f"{self._n_corrupt_seen} unreadable images replaced by blank samples during the run")
             self._write_meta()
         if self.val_enabled:  # 正式口径评估提示（best.safetensors 仅在有验证时落盘）
+            extra = f" --model {self.cfg.model}" if self.cfg.model != "yolo26" else ""
             logger.info(f"official eval: python scripts/eval.py --weights {self.run_dir / 'weights' / 'best.safetensors'} "
-                        f"--data {self.spec.source}")
+                        f"--data {self.spec.source}{extra}")
 
     def _append_results(self, epoch, elapsed, mean, lr, metrics):
-        row = {
-            "epoch": epoch + 1, "time_s": round(elapsed, 1),
-            "box": round(mean["box"], 4), "cls": round(mean["cls"], 4), "l1": round(mean["l1"], 4),
-            "o2m": round(mean["o2m"], 4), "o2o": round(mean["o2o"], 4),
-            "loss": round(mean["total"], 4), "lr": lr,
-        }
+        row = {"epoch": epoch + 1, "time_s": round(elapsed, 1)}
+        row.update({k: round(mean[k], 4) for k in self.loss_keys})
+        row.update({"loss": round(mean["total"], 4), "lr": lr})
         if metrics:
             row.update({"mAP": metrics["mAP@[.5:.95]"], "mAP50": metrics["mAP@50"],
                         "P": metrics["P"], "R": metrics["R"], "AR@100": metrics["AR@100"]})

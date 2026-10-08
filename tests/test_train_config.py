@@ -14,9 +14,10 @@ def test_default_recipe():
     """default = 内置基线（train.yaml 基础值，100 轮档，对齐 ultralytics 默认）"""
     cfg = load_train_config(TRAIN_CONFIG_PATH)
     assert cfg.recipe == "default"
+    assert cfg.model == "yolo26"
     assert cfg.epochs == 100 and cfg.lr0 == 0.01 and cfg.lrf == 0.01
     assert cfg.nbs == 64 and cfg.momentum == 0.937 and cfg.weight_decay == 0.0005
-    assert cfg.box_gain == 7.5 and cfg.cls_gain == 0.5 and cfg.dfl_gain == 1.5
+    assert cfg.box_gain == 7.5 and cfg.cls_gain == 0.5 and cfg.dfl_gain == 1.5 and cfg.obj_gain == 1.0
     assert cfg.mosaic == 1.0 and cfg.mixup == 0.0 and cfg.copy_paste == 0.0
     print("  内置 default（100 轮/通用增强）正确")
 
