@@ -5,7 +5,7 @@
 > No monolithic abstractions, no heavyweight dependencies — core runtime deps: PyTorch + NumPy only.
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.1.0-blue.svg" alt="Version 0.1.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.2.0-blue.svg" alt="Version 0.2.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python 3.12"></a>
   <a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-2.13-ee4c2c.svg" alt="PyTorch"></a>
@@ -145,7 +145,7 @@ pytest tests/    # 67 tests: weight alignment / export parity / metric correctne
 
 ## 🔥 Updates
 
-- **Unreleased** — M3 training pipeline:
+- **v0.2.0** (2026-10-08) — M3 training pipeline:
   - from-scratch YOLO26 dual-head training (ProgLoss · STAL · MuSGD) with FastMetrics validation
   - **augment pipeline aligned with the official implementation** — mosaic tile geometry, HSV space, `bgr` semantics, copy_paste, box filtering (verified pixel-identical; boxes kept per image 9.5 -> 15.4, +17.7% mAP50-95 at epoch 20 over the old path)
   - training artifacts — periodic checkpoints, gradient diagnostics, augment samples, `meta.json`, `best_raw`
