@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dataset scan statistics + progress bar (`data/coco.py::scan_split`)**: the three separate
+  passes over the training split (file-existence check, `iscrowd` filtering, per-image label
+  construction) are now one loop that also reports progress and counts. The console shows
+  `118287 images, 1021 backgrounds, 0 missing` (backgrounds = images left with no box after crowd
+  removal; missing = listed in the annotations but not on disk) on a throttled `ProgressBar`
+  (`min_interval=0.25 s`, last frame always drawn — 118k unconditional redraws would cost seconds
+  of stdout I/O), followed by a continuation line
+  `└ 849949 instances · 80 categories · crowd 10052 excluded · parse 12.6s + scan 6.6s`.
+  `ProgressBar` gains backward-compatible `unit`/`start`/`min_interval`/`pct` parameters plus
+  `fmt_rate` (`18.0Kit/s`); with default arguments the rendered string is byte-identical to before.
+- **Lazy "corrupt" accounting**: unreadable images no longer abort training. `load_image` returns
+  a blank sample and bumps a fork-shared counter (`multiprocessing.Value(lock=False)` — inherited
+  by the DataLoader workers, read once per epoch by the parent, no `resource_tracker` process);
+  the trainer warns once per epoch and records the total in `meta.json`. Train samples become
+  blank-canvas backgrounds (no fake boxes), val samples keep their GT (an honest miss). No
+  per-image decode at scan time, so startup is not slowed down.
+
+### Changed
+
+- **Training startup block now prints in build order**: environment + hyperparameters (immediately,
+  before the model is built) -> model table -> dataset scan -> training components ->
+  `Starting training`. Previously every line was deferred to `Trainer._print_startup()`, which ran
+  only after `Trainer.__init__` had silently built the model and the dataset, leaving ~20 s of blank
+  terminal (the 448 MiB `instances_train2017.json` parse alone is ~12.6 s). The JSON parse phase is
+  announced by a single static line (`train: Scanning <ann.json> (448 MB) ...`): `json.load` is a
+  blocking C call that never releases the GIL, so a spinner/clock could only be animated by forking
+  a helper process — deliberately not done. The `--resume` block moved before the dataset build so
+  its line stays inside the model section.
+
+### Fixed
+
+- **Missing-image warning no longer disappears**: `data/dataset.py` used a bare `print` (invisible
+  in `run.log`, emitted before the banner); it is now an aggregated `logger.warning` naming the
+  first missing file, and the count is carried into the scan line and `meta.json`.
+
 ## [0.2.0] - 2026-10-08
 
 ### Added

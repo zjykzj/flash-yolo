@@ -46,15 +46,25 @@ class Trainer:
         np.random.seed(cfg.seed)
         torch.backends.cudnn.benchmark = True  # 训练不追求逐位可复现（resume 口径见 checkpoint）
 
+        self.run_dir = Path(run_dir)
+        self.best_fitness = -1.0  # 首次验证必存 best（mAP 为 0 时也落盘）
+        self.start_epoch = 0
+        self._n_corrupt_seen = 0  # 惰性 corrupt 累计（每 epoch 读一次数据集里的共享计数）
+
+        # ① 环境 + 超参快照：在建模型、解析数据集之前打印（启动白屏只剩 import 时间）
+        self._print_env()
+
         model = YOLO26(CONFIG_PATH, cfg.scale)
         if weights:
             load_weights(model, weights, strict=True)
-            logger.info(f"initialized from {weights} (finetune)")
         model.to(self.device).train()
         if cfg.channels_last:  # NHWC 训练（在 EMA deepcopy 之前，副本继承布局）
             model.to(memory_format=torch.channels_last)
         self.model = model
         self.head = model.model[-1]
+
+        # ② 模型信息（逐层表 + 汇总；--weights 提示跟在模型段里）
+        self._print_model_info(weights)
 
         self.optimizer = MuSGD(
             build_param_groups(model, cfg, self.head),
@@ -69,14 +79,8 @@ class Trainer:
         # NaN（BN eps=0.001 放大级联 + fp16 溢出 / bf16 尾数舍入，见 CLAUDE.md #10）
         self.scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp) if self.device.type == "cuda" else None
         self.loss_fn = ComputeLoss(cfg, self.head, self.device)
-        t_data = time.monotonic()
-        self.dataset = CocoTrainDataset(cfg, split=cfg.train_split, augment=True, limit=cfg.limit)
-        self.data_load_time = time.monotonic() - t_data
 
-        self.run_dir = Path(run_dir)
-        self.best_fitness = -1.0  # 首次验证必存 best（mAP 为 0 时也落盘）
-        self.start_epoch = 0
-        if resume:
+        if resume:  # 只依赖 model/ema/optimizer/scaler，放在建数据集之前（输出顺序：模型 -> resume -> 数据）
             path = Path(resume)
             if path.is_dir():
                 path = path / "resume.pt"
@@ -87,7 +91,6 @@ class Trainer:
                 self.run_dir = Path(ckpt_run)
             logger.info(f"resumed from {path} at epoch {self.start_epoch + 1} -> {self.run_dir}")
 
-        self.results_csv = self.run_dir / "results.csv"
         self.accumulate = max(round(cfg.nbs / cfg.batch), 1)
         self.val_enabled = cfg.val_epochs > 0  # val_epochs=0 时全程不验证（小数据集冒烟用）
         self.val_dataset = None  # 懒构建（JSON 解析 ~数秒，仅需一次）
@@ -95,9 +98,14 @@ class Trainer:
                            "mAP", "mAP50", "P", "R", "AR@100",
                            "val_box", "val_cls", "val_l1", "val_o2m", "val_o2o"]
         # close_mosaic 自动适配短跑：官方语义 = 最后 N 个 epoch 关 mosaic，但不超过总轮数的 1/5
-        # （缩放结果在 _print_startup 的 mosaic 行体现）
+        # （缩放结果在 _print_components 的 mosaic 行体现）
         self.close_mosaic = min(cfg.close_mosaic, cfg.epochs // 5)
         self.stop_after = cfg.stop_after if cfg.stop_after > 0 else cfg.epochs  # 筛选实验：跑到第 N 轮停
+
+        # ③ 数据集（最慢的一段：解析 448MB ann json ~12s + 扫描 118k 图 ~2.6s，实时报进度）
+        self._build_data()
+
+        self.results_csv = self.run_dir / "results.csv"
         self.diag_path = self.run_dir / "diag" / "train_diag.csv"
         self.samples_dir = self.run_dir / "samples"
         self.diag_fields = ["epoch", "batch", "lr", "lr_x3", "gnorm", "box", "cls", "l1", "o2m", "o2o", "loss"]
@@ -157,7 +165,15 @@ class Trainer:
             "config": asdict(self.cfg),
             "data": {"dir": self.cfg.data_dir, "train_split": self.cfg.train_split,
                      "images": len(self.dataset), "instances": self.dataset.n_instances,
-                     "categories": self.dataset.n_categories},
+                     "categories": self.dataset.n_categories,
+                     "backgrounds": self.dataset.n_backgrounds, "missing": self.dataset.n_missing,
+                     "crowd_excluded": self.dataset.n_crowd_excluded,
+                     "parse_s": round(self.dataset.parse_time, 2), "scan_s": round(self.dataset.scan_time, 2)},
+            "val": ({"images": len(self.val_dataset), "instances": self.val_dataset.n_instances,
+                     "backgrounds": self.val_dataset.n_backgrounds, "missing": self.val_dataset.n_missing,
+                     "parse_s": round(self.val_dataset.parse_time, 2), "scan_s": round(self.val_dataset.scan_time, 2)}
+                    if self.val_dataset is not None else {"disabled": True}),
+            "corrupt": self._n_corrupt_seen,  # 惰性统计：训练中被读出失败的图（启动时写入 0）
             "model": {"scale": self.cfg.scale, "params": sum(p.numel() for p in self.model.parameters())},
             "train": {"accumulate": self.accumulate, "close_mosaic_from": max(self.cfg.epochs - self.close_mosaic, 0),
                       "stop_after": self.stop_after, "device": str(self.device)},
@@ -185,10 +201,9 @@ class Trainer:
             f"{epoch + 1}/{self.cfg.epochs}", f"{mem:.2f}G", n_img, self.cfg.imgsz, lr,
         )
 
-    # ---- 启动信息块 ----
-    def _print_startup(self):
-        """训练开始前打印完整参数快照（四模块：环境 / 超参 / 模型 / 数据，复盘无需翻 yaml）"""
-        # ① 环境
+    # ---- 启动信息块（四段：① 环境 ② 模型 ③ 数据 ④ 组件；③ 在数据集构建时就地输出）----
+    def _print_env(self):
+        """① 环境 + 超参快照（最先打印：这两行只依赖 cfg/device，不依赖任何构建结果）"""
         if self.device.type == "cuda":
             props = torch.cuda.get_device_properties(self.device)
             dev_str = f"CUDA:0 ({props.name}, {props.total_memory // 2**20}MiB)"
@@ -199,32 +214,54 @@ class Trainer:
         # 超参数快照（dict 直出，快速核对用）
         logger.info(f"hyperparameters: {asdict(self.cfg)}")
 
-        # ② 模型：逐层参数表 + 汇总（profile_flops 会切 eval，打印后恢复 train）
-        # 汇总行由 summary_lines 统一输出（带档位名，如 YOLO26n），避免重复打印
+    def _print_model_info(self, weights=None):
+        """② 模型：逐层参数表 + 汇总（profile_flops 会切 eval，打印后恢复 train）
+
+        汇总行由 summary_lines 统一输出（带档位名，如 YOLO26n），避免重复打印。
+        """
         logger.info("")
         lines, _, _, _ = summary_lines(self.model, self.cfg.imgsz, device=self.device, name=f"YOLO26{self.cfg.scale}")
         for line in lines[:-1]:
             logger.info(line)
         logger.info(bold(lines[-1]))
         self.model.train()
+        if weights:
+            logger.info(f"initialized from {weights} (finetune)")
 
-        # ③ 数据集
+    def _build_data(self):
+        """③ 数据集：扫描行（静态提示 + 进度条）由 data 层就地输出，这里补 `└` 汇总行与 run.log 记录
+
+        本机实测 118k 图：解析 instances_train2017.json（448 MiB）≈12s（C 层阻塞、无法进度化，
+        只打一行静态提示）+ 单趟扫描 ≈2.6s（进度条覆盖这一段）。
+        """
         logger.info("")
-        logger.info(f"train: {self.cfg.train_split} @ {self.cfg.data_dir} · {len(self.dataset)} images · "
-                    f"{self.dataset.n_instances:,} instances · {self.dataset.n_categories} categories · "
-                    f"load {self.data_load_time:.1f}s")
+        self.dataset = CocoTrainDataset(self.cfg, split=self.cfg.train_split, augment=True,
+                                        limit=self.cfg.limit, progress=True)
+        self._log_split("train", self.dataset)
         if self.val_enabled:
-            if self.val_dataset is None:
-                self.val_dataset = CocoDataset(self.cfg.data_dir, "val2017")
-            val_str = f"{len(self.val_dataset)} images · {self.val_dataset.n_instances:,} instances" + \
-                (f" (limit {self.cfg.val_limit})" if self.cfg.val_limit else " (full)")
-            logger.info(f"val:   val2017 {val_str}")
+            self.val_dataset = CocoDataset(self.cfg.data_dir, "val2017", progress=True)
+            self._log_split("val", self.val_dataset,
+                            extra=f" · limit {self.cfg.val_limit}" if self.cfg.val_limit else "")
         else:
             logger.info("val:   disabled (val_epochs=0)")
         logger.info(f"imgsz {self.cfg.imgsz} · batch {self.cfg.batch} · nbs {self.cfg.nbs} (accum {self.accumulate}) · "
                     f"workers {self.cfg.workers} · seed {self.cfg.seed} · AMP {'fp16' if self.cfg.amp else 'off'}")
 
-        # ④ 训练组件与超参
+    def _log_split(self, label, ds, extra=""):
+        """扫描行的续行（控制台 + run.log 都有）+ 往 run.log 补一份扫描计数
+
+        进度条只走控制台（UI 元素不进 logger），所以文件日志里另落一行同等信息。
+        """
+        crowd = f"crowd {ds.n_crowd_excluded} excluded · " if ds.n_crowd_excluded else ""
+        logger.info(f"       └ {ds.n_instances} instances · {ds.n_categories} categories · {crowd}"
+                    f"parse {ds.parse_time:.1f}s + scan {ds.scan_time:.1f}s{extra}")
+        log_file_only(f"{label}: {len(ds.images)} images · {ds.n_backgrounds} backgrounds · {ds.n_missing} missing",
+                      name=logger.name)
+        if ds.n_missing:
+            logger.warning(f"{label}: {ds.n_missing} images missing on disk, excluded (e.g. {ds.first_missing})")
+
+    def _print_components(self):
+        """④ 训练组件与超参（optimizer / lr / loss / TAL / aug / 产物）"""
         logger.info("")
         groups = self.optimizer.param_groups
         n_muon = sum(len(g["params"]) for g in groups if g.get("muon"))
@@ -257,7 +294,8 @@ class Trainer:
                     f"translate +/-{self.cfg.translate} · scale {1 - self.cfg.aug_scale:.3f}-"
                     f"{1 + self.cfg.aug_scale:.3f}")
 
-        # 开始
+    def _print_launch(self):
+        """⑤ 收尾：run 元数据 + 结果目录 + 起跑行"""
         logger.info("")
         self._write_meta()  # run 元数据（环境/配置/数据规模/命令行）
         logger.info(f"results: {self.run_dir}")
@@ -266,7 +304,8 @@ class Trainer:
     # ---- 主循环 ----
     def train(self):
         t_start = time.monotonic()  # 整段训练墙钟（含启动块与验证）
-        self._print_startup()
+        self._print_components()  # ④ 组件（①环境/②模型/③数据 已在 __init__ 里按构建时机打印）
+        self._print_launch()  # ⑤ 起跑
 
         for epoch in range(self.start_epoch, self.cfg.epochs):
             if epoch > self.start_epoch:
@@ -382,6 +421,13 @@ class Trainer:
             # 控制台定格行=进度条行；文件日志另落真均值行（time_s 同时入 results.csv）
             log_file_only(row + f" · {fmt_elapsed(elapsed)}", name=logger.name)
 
+            # 惰性 corrupt：worker 里读失败 +1（跨 fork 共享计数），每 epoch 最多一条告警
+            n_bad = self.dataset.n_corrupt + (self.val_dataset.n_corrupt if self.val_dataset is not None else 0)
+            if n_bad > self._n_corrupt_seen:
+                logger.warning(f"unreadable images: +{n_bad - self._n_corrupt_seen} this epoch "
+                               f"({n_bad} total) — replaced with blank samples")
+                self._n_corrupt_seen = n_bad
+
             # ---- 验证（训练中趋势口径；正式数字用 scripts/eval.py）----
             metrics = None
             if self.val_enabled and ((epoch + 1) % self.cfg.val_epochs == 0 or epoch == self.cfg.epochs - 1):
@@ -410,6 +456,9 @@ class Trainer:
         n_epochs = min(self.stop_after, self.cfg.epochs) - self.start_epoch
         logger.info(f"training done -> {self.run_dir} · {n_epochs} epoch{'s' if n_epochs != 1 else ''} "
                     f"completed in {fmt_elapsed(elapsed_total)}")
+        if self._n_corrupt_seen:  # 惰性 corrupt 汇总（启动时的 meta.json 里还是 0，重写一次补上）
+            logger.warning(f"{self._n_corrupt_seen} unreadable images replaced by blank samples during the run")
+            self._write_meta()
         if self.val_enabled:  # 正式口径评估提示（best.safetensors 仅在有验证时落盘）
             logger.info(f"official eval: python scripts/eval.py --weights {self.run_dir / 'weights' / 'best.safetensors'} "
                         f"--data {self.cfg.data_dir}")

@@ -1,5 +1,7 @@
-"""训练数据集验收：类别映射口径 / crowd 剔除 / limit / letterbox 标签映射 / collate / worker 线程与 fork 契约"""
+"""训练数据集验收：类别映射口径 / crowd 剔除 / limit / letterbox 标签映射 / collate / worker 线程与 fork 契约
+/ 扫描统计（背景·缺图·crowd）与惰性 corrupt 计数"""
 
+import io
 import json
 import os
 import time
@@ -14,6 +16,21 @@ import data.dataset
 from data.coco import CocoDataset
 from data.dataset import CocoTrainDataset, collate_fn, worker_init_fn
 from config.train import TrainConfig
+
+
+def _add_extra_image(data_dir, name, ann=None):
+    """往迷你 COCO 的标注里追加一张图（是否落盘由调用方决定）
+
+    ann 非 None 时同时追加一条标注。用于构造"标注里有、磁盘上没有"与"磁盘上损坏"两类图。
+    """
+    ann_file = data_dir / "annotations" / "instances_train2017.json"
+    anns = json.loads(ann_file.read_text())
+    img_id = max(i["id"] for i in anns["images"]) + 1
+    anns["images"].append({"id": img_id, "file_name": name, "width": 64, "height": 64})
+    if ann is not None:
+        anns["annotations"].append({"id": 100 + img_id, "image_id": img_id, "category_id": 1,
+                                    "bbox": ann, "iscrowd": 0})
+    ann_file.write_text(json.dumps(anns))
 
 
 def _make_fixture(tmp_path):
@@ -96,6 +113,93 @@ def test_collate(tmp_path):
     assert targets.shape == (2, 6), f"targets: {targets.shape}"
     assert (targets[:, 0].numpy() == [0, 1]).all(), "batch_idx 错误"
     print("  collate 形状与 batch_idx 正确")
+
+
+def test_scan_stats(tmp_path):
+    """扫描统计：实例数 / 类别数 / 背景图（无框）/ crowd 剔除数 / 缺图数"""
+    data_dir = _make_fixture(tmp_path)
+    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017")
+    assert (ds.n_instances, ds.n_categories) == (2, 2), f"{ds.n_instances} / {ds.n_categories}"
+    assert ds.n_crowd_excluded == 1, "img1 的 iscrowd=1 应被剔除并计数"
+    assert ds.n_backgrounds == 1, "img3 无框 = 背景图"
+    assert ds.n_missing == 0 and ds.first_missing is None
+    assert ds.parse_time >= 0 and ds.scan_time >= 0
+    print(f"  扫描统计正确：{ds.n_instances} 实例 / {ds.n_backgrounds} 背景 / {ds.n_crowd_excluded} crowd")
+
+
+def test_missing_image_excluded_and_counted(tmp_path):
+    """标注里有、磁盘上没有的图：剔除 + 计数 + 记首个文件名（官方 train2017 少 1 张的兜底）"""
+    data_dir = _make_fixture(tmp_path)
+    _add_extra_image(data_dir, "missing.jpg")  # 只进标注，不落盘
+    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017")
+    assert len(ds) == 3, "缺图应从 images 中剔除"
+    assert ds.n_missing == 1 and ds.first_missing == "missing.jpg"
+    print("  缺图剔除与计数正确")
+
+
+def test_scan_progress_line(tmp_path, capsys):
+    """progress=True：先一行静态提示（stdout），再画扫描条（写 progress_file）"""
+    data_dir = _make_fixture(tmp_path)
+    buf = io.StringIO()
+    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017",
+                          progress=True, progress_file=buf)
+    out = buf.getvalue()
+    assert "Scanning" in out and "instances_train2017.json" in out
+    assert "3 images, 1 backgrounds, 0 missing" in out, f"扫描条计数：{out!r}"
+    assert "100% [████████████] 3/3" in out, f"扫描条渲染：{out!r}"
+    status = capsys.readouterr().out
+    assert "Scanning" in status and "MB) ..." in status, f"静态提示行：{status!r}"
+    assert len(ds) == 3
+    print("  扫描行渲染正确（静态提示 + 进度条 + 计数）")
+
+
+def test_corrupt_image_counted_as_background(tmp_path):
+    """imread 失败：不抛异常，返回空白画布 + 空标签（当背景样本），并计数"""
+    data_dir = _make_fixture(tmp_path)
+    _add_extra_image(data_dir, "broken.jpg", ann=[1, 1, 5, 5])
+    (data_dir / "train2017" / "broken.jpg").write_bytes(b"not a jpeg")
+    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017", augment=False)
+    assert len(ds) == 4 and ds.n_corrupt == 0
+    tensor, labels = ds[3]  # broken.jpg 在磁盘上（扫描时保留），但读不出来
+    assert tensor.shape == (3, 640, 640) and len(labels) == 0
+    assert ds.n_corrupt == 1
+    print("  corrupt 图返回空白样本并计数")
+
+
+def test_val_corrupt_image_counted(tmp_path):
+    """val 侧读失败：返回空白图 + GT 保留（诚实记为漏检），计数在父进程内"""
+    data_dir = _make_fixture(tmp_path)
+    _add_extra_image(data_dir, "broken.jpg", ann=[1, 1, 5, 5])
+    (data_dir / "train2017" / "broken.jpg").write_bytes(b"not a jpeg")
+    ref = CocoDataset(str(data_dir), split="train2017")
+    assert ref.n_corrupt == 0
+    assert ref.load_image(3).shape == (1, 1, 3)
+    assert ref.n_corrupt == 1
+    assert len(ref.targets(3)) == 1, "val 侧 GT 保留（该图记为漏检）"
+    print("  val 侧 corrupt 计数与 GT 保留正确")
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="需要 os.fork（复现 DataLoader worker 的 fork 路径）")
+def test_corrupt_counter_visible_across_fork(tmp_path):
+    """worker 进程里 +1，父进程读得到（DataLoader 是多进程，计数必须跨 fork 可见）"""
+    data_dir = _make_fixture(tmp_path)
+    _add_extra_image(data_dir, "broken.jpg")
+    (data_dir / "train2017" / "broken.jpg").write_bytes(b"not a jpeg")
+    ds = CocoTrainDataset(TrainConfig(data_dir=str(data_dir)), split="train2017")
+    with warnings.catch_warnings():  # 多线程进程 fork 的 DeprecationWarning——本测试正是要 fork
+        warnings.simplefilter("ignore", DeprecationWarning)
+        pid = os.fork()
+    if pid == 0:
+        code = 0
+        try:
+            ds.load_image(3)
+        except BaseException:
+            code = 3
+        os._exit(code)  # 子进程里不再跑 pytest 的 atexit
+    _, status = os.waitpid(pid, 0)
+    assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, f"子进程异常 status={status}"
+    assert ds.n_corrupt == 1, "子进程里的 +1 应在父进程可见（共享计数器）"
+    print("  corrupt 计数跨 fork 共享正确")
 
 
 def test_worker_thread_contract():

@@ -87,7 +87,7 @@ def main():
     else:
         run_dir = increment_path(ROOT / "runs" / "train" / ("train" + (f"-{args.name}" if args.name else "")))
     attach_file_log(run_dir / "run.log")
-    # 头部信息由 Trainer._print_startup 统一打印（避免重复）
+    # 启动信息块由 Trainer 按构建时机分段打印（环境 -> 模型 -> 数据集 -> 组件 -> 起跑），见 train/trainer.py
 
     trainer = Trainer(cfg, device=device, run_dir=run_dir, resume=args.resume, weights=args.weights)
     trainer.train()

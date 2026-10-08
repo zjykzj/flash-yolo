@@ -7,6 +7,7 @@
 - cfg 只按属性访问（duck-typing），data/ 不依赖 train/（单向依赖 train -> data）
 """
 
+import multiprocessing
 from pathlib import Path
 
 import cv2
@@ -14,7 +15,7 @@ import numpy as np
 import torch
 
 from data.augment import augment, letterbox_train
-from data.coco import parse_coco
+from data.coco import scan_split
 
 __all__ = ["CocoTrainDataset", "collate_fn", "worker_init_fn"]
 
@@ -29,38 +30,54 @@ _worker_rng = None  # worker 进程内全局 RNG（worker_init_fn 播种，多�
 cv2.setNumThreads(1)
 
 
+class _SharedCounter:
+    """跨 fork 共享的计数器（DataLoader worker 里 +1，父进程可读）
+
+    只在失败路径写、每 epoch 读一次，因此 lock=False（省锁；并发 +1 丢一两次对诊断无影响）。
+    走 fork 继承（Linux 默认），与仓库其它 fork 约定一致（见文件顶部 cv2 线程契约）。
+    """
+
+    def __init__(self):
+        self._v = multiprocessing.Value("i", 0, lock=False)
+
+    def bump(self):
+        self._v.value += 1
+
+    @property
+    def value(self):
+        return self._v.value
+
+
 class CocoTrainDataset:
     """COCO split 训练集（默认 train2017）"""
 
-    def __init__(self, cfg, split="train2017", augment=True, limit=0):
+    def __init__(self, cfg, split="train2017", augment=True, limit=0, progress=False, progress_file=None):
         self.cfg = cfg  # TrainConfig 共享引用：close_mosaic 原地清零概率
         self.use_augment = augment
 
-        ann_file = Path(cfg.data_dir) / "annotations" / f"instances_{split}.json"
         self.img_dir = Path(cfg.data_dir) / split
         if not self.img_dir.exists():
             self.img_dir = Path(cfg.data_dir) / "images" / split
+        ann_file = Path(cfg.data_dir) / "annotations" / f"instances_{split}.json"
 
-        all_images, by_image, self.cat_id_to_idx, _ = parse_coco(ann_file)
-        self.images = all_images[:limit] if limit else all_images
+        # 解析 + 单趟扫描（存在的图 / 剔 crowd / 建标签 / 计数在同一个循环里，见 data/coco.py::scan_split）
+        # 训练侧丢弃 iscrowd=1（val 侧 CocoDataset 保留）；缺图（官方 train2017 比标注少 1 张的兜底）剔除
+        res = scan_split(ann_file, self.img_dir, "train", limit=limit, drop_crowd=True,
+                         build_labels=True, progress=progress, progress_file=progress_file)
+        self.images, self.labels, self.cat_id_to_idx = res.images, res.labels, res.cat_id_to_idx
 
-        # 官方 train2017 图片集比标注少 1 张（000000391895.jpg 缺失）——过滤文件不存在的图
-        missing_ids = {img["id"] for img in self.images if not (self.img_dir / img["file_name"]).exists()}
-        if missing_ids:
-            print(f"[WARN] {split}: {len(missing_ids)} images missing on disk, excluded from training (e.g. id {sorted(missing_ids)[0]})")
-            self.images = [img for img in self.images if img["id"] not in missing_ids]
-
-        # 训练侧丢弃 iscrowd=1（val 侧 CocoDataset 保留）
-        by_image = {img["id"]: [a for a in by_image.get(img["id"], []) if not a.get("iscrowd", 0)] for img in self.images}
-        self.labels = []
-        for img in self.images:
-            lbs = [
-                [self.cat_id_to_idx[a["category_id"]], *a["bbox"][:2], a["bbox"][0] + a["bbox"][2], a["bbox"][1] + a["bbox"][3]]
-                for a in by_image[img["id"]]
-            ]
-            self.labels.append(np.array(lbs, np.float32).reshape(-1, 5) if lbs else np.zeros((0, 5), np.float32))
-        self.n_instances = sum(len(l) for l in self.labels)
+        self.n_instances = res.stats.n_instances
         self.n_categories = len(self.cat_id_to_idx)
+        self.n_backgrounds = res.stats.n_backgrounds
+        self.n_missing = res.stats.n_missing
+        self.n_crowd_excluded = res.stats.n_crowd_excluded
+        self.first_missing = res.stats.first_missing
+        self.parse_time, self.scan_time = res.stats.parse_time, res.stats.scan_time
+        self._corrupt = _SharedCounter()  # worker 里读失败 +1；父进程用 n_corrupt 读
+
+    @property
+    def n_corrupt(self):
+        return self._corrupt.value
 
     def __len__(self):
         return len(self.images)
@@ -70,10 +87,15 @@ class CocoTrainDataset:
         return self.images[idx]["id"]
 
     def load_image(self, idx):
-        """(BGR img, labels 副本)——mosaic/copy_paste/mixup 的邻图加载入口"""
+        """(BGR img, labels 副本)——mosaic/copy_paste/mixup 的邻图加载入口
+
+        读不出来（文件损坏 / 训练中被删）时不再抛异常：计数 + 返回空白画布与空标签（当背景样本，
+        不教假框），训练不因单张坏图中断。计数在 worker 进程里 +1、父进程每 epoch 读一次。
+        """
         img = cv2.imread(str(self.img_dir / self.images[idx]["file_name"]))
         if img is None:
-            raise FileNotFoundError(f"cannot read image: {self.img_dir / self.images[idx]['file_name']}")
+            self._corrupt.bump()
+            return np.zeros((self.cfg.imgsz, self.cfg.imgsz, 3), np.uint8), np.zeros((0, 5), np.float32)
         return img, self.labels[idx].copy()
 
     def __getitem__(self, idx):

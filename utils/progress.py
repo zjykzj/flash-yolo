@@ -9,13 +9,17 @@
     bar.update(total, speed)
     bar.close()
 
+    # 数据集扫描（data/coco.py::scan_split）：min_interval 节流重绘（11.8 万次调用）、
+    # start 把时钟起点提到 ann json 解析之前、pct=True 在条前加百分比记号
+
+
 进度行用 \\r 刷新，不经过 logger（控制台 UI 元素，不落日志文件）。
 """
 
 import sys
 import time
 
-__all__ = ["ProgressBar", "fmt_elapsed"]
+__all__ = ["ProgressBar", "fmt_elapsed", "fmt_rate"]
 
 
 def fmt_elapsed(seconds):
@@ -28,6 +32,14 @@ def fmt_elapsed(seconds):
         return f"{m} min {sec:02d} s"
     h, m = divmod(m, 60)
     return f"{h} h {m:02d} min"
+
+
+def fmt_rate(rate, unit="it"):
+    """速率人性化：>=1000 加 K 前缀（数据集扫描 18.0Kit/s）
+
+    <1000 时与历史输出逐字符一致（2.0it/s），因此训练/验证条改用本函数后外观零变化。
+    """
+    return f"{rate / 1000:.1f}K{unit}/s" if rate >= 1000 else f"{rate:.1f}{unit}/s"
 
 
 def fmt_num(v, width=11, prec=4):
@@ -43,12 +55,19 @@ def fmt_num(v, width=11, prec=4):
 class ProgressBar:
     """单行进度条：百分比条 + 计数 + 瞬时速度 + ETA"""
 
-    def __init__(self, total, desc="", width=10, file=None):
+    def __init__(self, total, desc="", width=10, file=None, unit="it", start=None, min_interval=0.0, pct=False):
         self.total = total
         self.desc = desc
         self.width = width
         self.file = file or sys.stdout
-        self.start = time.monotonic()  # 单调时钟：不受墙钟跳变影响（WSL2 时钟同步会回拨 time.time()）
+        self.unit = unit
+        self.pct = pct  # True: 条前加 "100% " 记号（数据集扫描行，对齐 ultralytics 观感）
+        self.min_interval = min_interval  # >0 时节流重绘（数据集扫描 11.8 万次调用）
+        self.last_draw = -float("inf")
+        # 单调时钟：不受墙钟跳变影响（WSL2 时钟同步会回拨 time.time()）
+        # start 非 None 时由调用方指定起点：数据集扫描条从 ann json 解析开始计时，
+        # 最终帧 elapsed = 解析 + 扫描（解析期那段由静态提示行占位，见 data/coco.py）
+        self.start = start if start is not None else time.monotonic()
         self.last_len = 0
 
     def update(self, n, speed=None, desc=None):
@@ -60,14 +79,19 @@ class ProgressBar:
             desc: 行前缀描述（如指标列），None 保持上次值；前缀随每次调用原地刷新
         """
         if desc is not None:
-            self.desc = desc
+            self.desc = desc  # 先落 desc：被节流跳过的帧不会让下次重绘拿到旧值
+        now = time.monotonic()
+        if self.min_interval and n < self.total and now - self.last_draw < self.min_interval:
+            return  # 节流（末帧永远重画）
+        self.last_draw = now
         frac = min(n / self.total, 1.0) if self.total else 1.0
         filled = int(self.width * frac)
         bar = "█" * filled + "░" * (self.width - filled)
-        speed_str = f"{speed:.1f}it/s" if speed is not None else "----it/s"
+        speed_str = fmt_rate(speed, self.unit) if speed is not None else f"----{self.unit}/s"
+        pct_str = f"{int(frac * 100)}% " if self.pct else ""
         # 耗时单调递增显示（ultralytics 风格）；结束后自然停在总耗时，无需额外处理
-        elapsed = time.monotonic() - self.start
-        line = f"\r{self.desc} [{bar}] {n}/{self.total} · {speed_str} · {fmt_elapsed(elapsed)}"
+        elapsed = now - self.start
+        line = f"\r{self.desc} {pct_str}[{bar}] {n}/{self.total} · {speed_str} · {fmt_elapsed(elapsed)}"
         self.file.write(line + " " * max(0, self.last_len - len(line)))
         self.file.flush()
         self.last_len = len(line)

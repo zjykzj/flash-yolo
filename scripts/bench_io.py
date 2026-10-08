@@ -188,7 +188,7 @@ def main():
         logger.warning(f"batch {bad} 不整除 nbs={cfg.nbs} → accum 取整后 wd 因子 ≠ 1.0，与官方不等价"
                        f"（本仓库未实现 wd 缩放）；建议 {[b for b in (16, 32, 64, 128) if b <= cfg.nbs]}")
 
-    ds = CocoTrainDataset(cfg, split=cfg.train_split, augment=True, limit=args.limit)
+    ds = CocoTrainDataset(cfg, split=cfg.train_split, augment=True, limit=args.limit, progress=False)
 
     # ---- ① loader-only 全网格 ----
     logger.info("")
