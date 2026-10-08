@@ -48,34 +48,65 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/
 #    --dynamic for dynamic batch, default fixed batch=1)
 python scripts/export.py --weights weights/yolo26n.safetensors --out weights/yolo26n.onnx
 
-# 5. COCO evaluation (both paths verified against official numbers)
-python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/coco          # E2E -> 40.1
-python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/coco --nms    # NMS -> 40.9
-python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data /path/to/coco   # onnx engine
+# 5. COCO evaluation (both paths verified against official numbers; --data is a dataset descriptor,
+#    --split picks a role in it, default val)
+python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/coco.yaml          # E2E -> 40.1
+python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/coco.yaml --nms    # NMS -> 40.9
+python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data /path/to/coco.yaml   # onnx engine
 
-# 6. Train YOLO26 — from scratch, any model size, finetune or resume (see "Training" below
-#    for recipes, artifacts and the from-scratch vs finetuned distinction)
-python scripts/train.py --data /path/to/coco --name yolo26n                     # from scratch, 100 epochs
-python scripts/train.py --data /path/to/coco --name yolo26s --scale s           # same recipe, other sizes
-python scripts/train.py --data /path/to/coco --name ft --weights w.safetensors  # finetune from weights
-python scripts/train.py --data /path/to/coco --resume runs/train/<name>         # resume (full state)
-python scripts/bench_io.py --data /path/to/coco               # optional: pick batch/workers for this box
+# 6. Train YOLO26 — from scratch, any model size, finetune or resume (see "Datasets" and "Training"
+#    below for descriptors, recipes, artifacts and the from-scratch vs finetuned distinction)
+python scripts/train.py --data /path/to/coco.yaml --name yolo26n                     # from scratch, 100 epochs
+python scripts/train.py --data /path/to/coco.yaml --name yolo26s --scale s           # same recipe, other sizes
+python scripts/train.py --data /path/to/coco.yaml --name ft --weights w.safetensors  # finetune from weights
+python scripts/train.py --data /path/to/coco.yaml --resume runs/train/<name>         # resume (full state)
+python scripts/bench_io.py --data /path/to/coco.yaml          # optional: pick batch/workers for this box
 
 # 7. Evaluate trained weights (official pycocotools numbers)
-python scripts/eval.py --weights runs/train/<name>/weights/best.safetensors --data /path/to/coco
+python scripts/eval.py --weights runs/train/<name>/weights/best.safetensors --data /path/to/coco.yaml
 ```
+
+## Datasets
+
+Datasets are described by a small yaml (schema + template: `config/datasets/coco.yaml`):
+
+```yaml
+format: coco                 # coco (json annotations) | yolo (labels/*.txt)
+path: /path/to/coco          # dataset root — machine paths live here, not in code
+names: [person, ...]         # class names, index = class id; the model's nc follows this list
+train:
+  images: images/train2017
+  ann: annotations/instances_train2017.json      # coco only; yolo reads labels/ next to images
+val:
+  images: images/val2017
+  ann: annotations/instances_val2017.json
+```
+
+`--data <name|.yaml>` is the entry for train / eval / bench_io; name lookup prefers
+`config/datasets/local/<name>.yaml` (gitignored — that is where machine paths belong) over the
+shipped templates. Roles replace split names (`eval --split` picks one, default `val`; `train`/`val`
+are required-ish for what each script does). YOLO-format datasets skip `ann` and read
+`labels/*.txt` (`cls xc yc w h`, normalized) — `labels:` is optional and defaults to the `images`
+path with its `images` segment swapped for `labels`. Missing/empty label files count as backgrounds;
+a wrong labels dir fails loudly instead of training on 100 % background; a numeric-stem fallback
+makes `1.txt` ↔ `000001.jpg` (and dataflow-cv's COCO-image-id naming) resolve. Standalone
+evaluation works for both formats, and the model's class count comes from `names` (no model-yaml
+edit for custom datasets).
+
+Tiny datasets for a fast loop: `scripts/make_coco_subset.py` extracts a seeded N-image subset of an
+existing COCO root, hard-links the images, writes coco/yolo descriptors (copied into
+`config/datasets/local/`, so `--data coco-tiny` resolves), and prints the
+`dataflow-cv convert coco2yolo` commands — a 2,000/1,000-image subset turns a full train + eval
+cycle into minutes.
 
 ## Training
 
 ```bash
-# COCO-format dataset: <split>/ or images/<split>/ + annotations/instances_<split>.json.
-# YOLO labels -> COCO json: dataflow-cv convert yolo2coco <images> <labels> <classes.txt> <out.json>
-#
 # --data is required: the shipped config deliberately carries no machine paths, and neither do
 # batch/workers (16/8 are the minimal portable values). scripts/bench_io.py sweeps loader-only
 # then end-to-end and prints what to pass for *this* box — it only advises, it never edits the config.
-python scripts/bench_io.py --data /path/to/coco
-python scripts/train.py --data /path/to/coco --name yolo26n --batch 64 --workers 16
+python scripts/bench_io.py --data /path/to/coco.yaml
+python scripts/train.py --data /path/to/coco.yaml --name yolo26n --batch 64 --workers 16
 ```
 
 **Recipes.** With no `--recipe` you get the built-in baseline — the from-scratch recipe (fp32,
@@ -111,7 +142,7 @@ E2E path (**37.15** / 52.67 with NMS) — the gap to the official numbers is the
 pretraining plus the longer finetune schedule:
 
 ```bash
-python scripts/train.py --data /path/to/coco --name yolo26n-from-scratch --batch 64 --workers 16
+python scripts/train.py --data /path/to/coco.yaml --name yolo26n-from-scratch --batch 64 --workers 16
 # -> runs/train/train-yolo26n-from-scratch/weights/best.safetensors (evaluate with scripts/eval.py)
 ```
 
@@ -120,16 +151,18 @@ python scripts/train.py --data /path/to/coco --name yolo26n-from-scratch --batch
 ```
 assets/    demo images (bus.jpg / zidane.jpg, provenance in assets/README.md)
 config/    inference/eval defaults (inference.py) + model structures (models/yolo26.yaml)
-           + dataset label names (datasets/*.yaml via load_names) + training config
-           (train.yaml + TrainConfig in train_config.py + recipes/: yolo26-coco-ft, yolo26-o365-pt)
-data/      COCO readers + training dataset & augmentation pipeline (official-parity augment)
+           + dataset descriptors (datasets/<name>.yaml + spec.py loader; local/ = gitignored
+           machine paths) + training config (train.yaml + TrainConfig in train_config.py
+           + recipes/: yolo26-coco-ft, yolo26-o365-pt)
+data/      COCO / YOLO readers (coco.py · yolo.py · build.py factory · scan.py shared scan types)
+           + training pipeline (loader.py: augment entry, collate, worker contracts)
 eval/      COCO evaluation (pycocotools wrapper)
 logs/      logs of scripts without a run dir (gitignored; run-dir scripts write <run>/run.log)
 model/     model implementation (assembler / dual Detect head / basic operator layer / weight loading)
 runs/      runtime results (gitignored)
-scripts/   download_weights / convert_weights / infer / export / eval / train / bench_io /
-           compare_official
-tests/     89 tests: weight alignment / export parity / metric correctness / training components
+scripts/   download_weights / convert_weights / make_coco_subset / infer / export / eval / train /
+           bench_io / compare_official
+tests/     122 tests: weight alignment / export parity / metric correctness / training components
 train/     training: TAL+STAL assigner / dual-head ProgLoss / MuSGD / EMA / trainer / FastMetrics
            (+ per-run artifacts: periodic checkpoints, gradient diag CSV, augment samples, meta.json)
 utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualization / IoU /
@@ -139,7 +172,7 @@ utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualiz
 ## Tests
 
 ```bash
-pytest tests/    # 89 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics)
+pytest tests/    # 122 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence
 ```
 
 `tests/test_weight_alignment.py` compares against the official .pt as a dev-time reference — install requirements-dev.txt to run it.
