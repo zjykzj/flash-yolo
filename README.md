@@ -89,9 +89,10 @@ are required-ish for what each script does). YOLO-format datasets skip `ann` and
 `labels/*.txt` (`cls xc yc w h`, normalized) — `labels:` is optional and defaults to the `images`
 path with its `images` segment swapped for `labels`. Missing/empty label files count as backgrounds;
 a wrong labels dir fails loudly instead of training on 100 % background; a numeric-stem fallback
-makes `1.txt` ↔ `000001.jpg` (and dataflow-cv's COCO-image-id naming) resolve. Standalone
-evaluation works for both formats, and the model's class count comes from `names` (no model-yaml
-edit for custom datasets).
+makes `1.txt` ↔ `000001.jpg` (and dataflow-cv's COCO-image-id naming) resolve. Training and
+standalone evaluation work for both formats, and the model's class count comes from `names` (no
+model-yaml edit for custom datasets). The downstream end of the chain takes the same numbers:
+`infer --data <name|.yaml>` (nc + label names) and `export --nc N` (ONNX head).
 
 Tiny datasets for a fast loop: `scripts/make_coco_subset.py` extracts a seeded N-image subset of an
 existing COCO root, hard-links the images, writes coco/yolo descriptors (copied into
@@ -120,7 +121,7 @@ EMA, ProgLoss, close_mosaic over the last epochs, 100 epochs). Named recipes liv
 | `yolo26-o365-pt` | published Objects365 pretraining | the Objects365 dataset | 150 |
 
 ```bash
-python scripts/train.py --data /path/to/coco --recipe yolo26-coco-ft \
+python scripts/train.py --data /path/to/coco.yaml --recipe yolo26-coco-ft \
     --weights yolo26n-objv1-150.safetensors        # published COCO stage (n: 245 epochs)
 ```
 
