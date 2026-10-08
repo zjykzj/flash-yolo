@@ -42,9 +42,9 @@ from config.datasets import load_dataset
 from config.train_config import TRAIN_CONFIG_PATH, load_train_config
 from data.build import build_train_dataset
 from data.loader import collate_fn, worker_init_fn
-from model.build import DetectionModel, YOLO26_CONFIG_PATH
+from model.build import ARCHS, build_model
 from train.ema import ModelEMA
-from train.loss import ComputeLoss
+from train.loss import build_loss
 from train.optimizer import MuSGD, build_param_groups
 from utils.logger import bold, get_logger, setup_logging
 
@@ -171,9 +171,15 @@ def main():
                         help="bench on the first N train images (0 = full; keeps page cache stable)")
     parser.add_argument("--loader-only", action="store_true", help="skip the end-to-end stage")
     parser.add_argument("--device", default=None)
+    parser.add_argument("--model", default=None, choices=sorted(ARCHS),
+                        help="architecture (default: train.yaml `model`)")
     args = parser.parse_args()
 
     cfg = load_train_config(TRAIN_CONFIG_PATH)
+    if args.model:
+        cfg.model = args.model
+    if cfg.model != "yolo26":  # 档位由架构固定（与 Trainer 同口径）
+        cfg.scale = ARCHS[cfg.model]["default_scale"]
     cfg.data = args.data
     try:
         spec = load_dataset(cfg.data)
@@ -215,12 +221,13 @@ def main():
     # ---- ② end-to-end ----
     logger.info("")
     logger.info(bold(f"[2/2] end-to-end（batch × loader 前三，各 {args.batches} batch）"))
-    model = DetectionModel(YOLO26_CONFIG_PATH, cfg.scale, cfg.imgsz, len(spec.names)).to(device).train()
+    model = build_model(cfg.model, cfg.scale, cfg.imgsz, len(spec.names)).to(device).train()
     if cfg.channels_last:
         model.to(memory_format=torch.channels_last)
     head = model.model[-1]
-    loss_fn = ComputeLoss(cfg, head, device)
-    loss_fn.set_alpha(0, cfg.epochs)
+    loss_fn = build_loss(cfg.model, cfg, head, device)
+    if hasattr(loss_fn, "set_alpha"):
+        loss_fn.set_alpha(0, cfg.epochs)
     opt = MuSGD(build_param_groups(model, cfg, head), lr=0.0,
                 momentum=cfg.momentum, muon_w=cfg.muon_w, sgd_w=cfg.sgd_w, ns_iters=cfg.ns_iters)
     ema = ModelEMA(model, decay=cfg.ema_decay, tau=cfg.ema_tau)

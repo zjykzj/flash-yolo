@@ -2,6 +2,7 @@
 
 E2E 路径：模型图内完成 top-k（输出 (300,6)），此处仅过滤置信度与还原坐标。
 NMS 路径：模型输出原始 (4+nc, 8400)，此处做 numpy 解码 + 按类 NMS。
+v3 路径：模型（V3Detect eval）输出解码 (NA, 5+nc)，此处按 obj×cls + 按类 NMS。
 """
 
 import time
@@ -15,8 +16,8 @@ import torch
 from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from data.preprocess import preprocess
 from model.weights import load_weights
-from model.build import build_yolo26
-from utils.postprocess import decode_raw, non_max_suppression, scale_boxes
+from model.build import build_model
+from utils.postprocess import decode_raw, non_max_suppression, scale_boxes, v3_detections
 
 __all__ = ["Detections", "PtEngine", "OnnxEngine", "resolve_device", "device_label"]
 
@@ -45,10 +46,14 @@ class Detections:
     class_ids: np.ndarray  # (N,) int
 
 
-def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres):
+def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres, arch="yolo26"):
     """引擎输出 -> Detections（原图坐标）"""
     h, w = ori_shape
-    if end2end:
+    if arch != "yolo26":
+        # out: (NA, 5+nc) [x1,y1,x2,y2, obj, cls...]；最终分 = obj×cls，按类 NMS
+        det = v3_detections(out, conf_thres or CONF_THRES, iou_thres, MAX_DET)
+        boxes, scores, cls = det[:, :4], det[:, 4], det[:, 5].astype(np.int64)
+    elif end2end:
         # out: (300, 6) [x1, y1, x2, y2, conf, cls]，图内 top-k 已完成
         mask = out[:, 4] > (conf_thres if conf_thres is not None else 0.25)
         boxes, scores, cls = out[mask][:, :4], out[mask][:, 4], out[mask][:, 5].astype(np.int64)
@@ -63,12 +68,15 @@ def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres):
 class PtEngine:
     """PyTorch 权重推理"""
 
-    def __init__(self, weights, scale="n", end2end=True, device=None, nc=None):
+    def __init__(self, weights, scale="n", end2end=True, device=None, nc=None, model="yolo26"):
         self.device = resolve_device(device)
         self.scale = scale
+        self.arch = model
         self.end2end = end2end
-        self.model = build_yolo26(scale, nc=nc)
-        self.model.model[-1].end2end = end2end
+        self.model = build_model(model, scale, nc=nc)
+        head = self.model.model[-1]
+        if hasattr(head, "end2end"):  # V3Detect 无此开关（前向即解码）
+            head.end2end = end2end
         load_weights(self.model, weights, strict=True)
         self.model.to(self.device).eval()
         self._warmup()
@@ -104,7 +112,8 @@ class PtEngine:
         with torch.no_grad():
             out = self.model(img.to(self.device))[0].cpu().numpy()
         t2 = time.perf_counter()
-        dets = _to_detections(out, self.end2end, ratio, pad, image_bgr.shape[:2], conf_thres, iou_thres)
+        dets = _to_detections(out, self.end2end, ratio, pad, image_bgr.shape[:2], conf_thres, iou_thres,
+                              arch=self.arch)
         t3 = time.perf_counter()
         return dets, {"preprocess": (t1 - t0) * 1e3, "inference": (t2 - t1) * 1e3, "postprocess": (t3 - t2) * 1e3}
 
@@ -112,8 +121,9 @@ class PtEngine:
 class OnnxEngine:
     """onnxruntime 推理（配合 scripts/export.py 导出的 onnx）"""
 
-    def __init__(self, onnx_path, scale="n", end2end=True):
+    def __init__(self, onnx_path, scale="n", end2end=True, model="yolo26"):
         self.scale = scale
+        self.arch = model
         self.end2end = end2end
         self.onnx_path = onnx_path
         self.sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
@@ -158,6 +168,7 @@ class OnnxEngine:
         t1 = time.perf_counter()
         out = self.sess.run(None, {self.input_name: img.numpy()})[0][0]
         t2 = time.perf_counter()
-        dets = _to_detections(out, self.end2end, ratio, pad, image_bgr.shape[:2], conf_thres, iou_thres)
+        dets = _to_detections(out, self.end2end, ratio, pad, image_bgr.shape[:2], conf_thres, iou_thres,
+                              arch=self.arch)
         t3 = time.perf_counter()
         return dets, {"preprocess": (t1 - t0) * 1e3, "inference": (t2 - t1) * 1e3, "postprocess": (t3 - t2) * 1e3}

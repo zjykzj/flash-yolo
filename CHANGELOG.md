@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selects the architecture and `obj_gain` joins the loss weights; trainer/validator column sets,
   epoch rows, diagnostics and the val decode path now derive from the loss' `item_keys` and a
   per-head `postprocess_val` contract, so yolo26 console/CSV output is byte-identical to before.
+- **YOLOv3-tiny weights and inference pipeline**: `download_weights.py --model yolov3-tiny` fetches
+  the official darknet `.weights` and `convert_weights.py` gains a darknet parser (cfg layer order
+  incl. the P5-head interleave, 4/5-int header autodetect, exact file-length check). The engines
+  accept `model=` and decode + NMS the v3 head output (`utils/postprocess.v3_detections`);
+  `infer.py`/`eval.py`/`export.py` take `--model` with filename inference (`resolve_arch_scale`) and
+  yolo26-only guards on `--nms`/`--raw`. `export.py --model yolov3-tiny` writes the single decoded
+  output `(1, NA, 5+nc)`.
 
 ## [0.3.0] - 2026-10-08
 

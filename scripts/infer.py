@@ -1,9 +1,10 @@
-"""单图 / 目录推理 + 可视化（pt / onnx）
+"""单图 / 目录推理 + 可视化（pt / onnx；YOLO26 / YOLOv3-tiny）
 
 用法:
     python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/bus.jpg
     python scripts/infer.py --weights yolo26n.onnx --engine onnx --image assets/     # 目录批量
     python scripts/infer.py --weights weights/yolo26n.safetensors --image bus.jpg --nms  # o2m+NMS 路径
+    python scripts/infer.py --weights weights/yolov3-tiny.safetensors --image bus.jpg  # v3（档位由架构固定）
 """
 
 import argparse
@@ -21,7 +22,8 @@ import torch
 from config import __version__
 from config.datasets import load_dataset, load_names
 from config.inference import IMGSZ
-from model.weights import scale_from_weights
+from model.build import ARCHS, arch_display_name
+from model.weights import resolve_arch_scale
 from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, setup_logging
 from utils.paths import increment_path
@@ -52,19 +54,21 @@ def _summary(image_path, image, dets, pipeline_ms, idx, total, names):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="YOLO26 single-image / directory inference")
+    parser = argparse.ArgumentParser(description="single-image / directory inference (YOLO26 / YOLOv3-tiny)")
     parser.add_argument("--weights", required=True, help=".safetensors or .onnx weights path")
     parser.add_argument("--image", required=True, help="input image path or directory")
     parser.add_argument("--engine", choices=["pt", "onnx"], default="pt")
     parser.add_argument("--conf", type=float, default=0.25, help="confidence threshold")
-    parser.add_argument("--nms", action="store_true", help="use o2m+NMS path (default E2E NMS-free)")
+    parser.add_argument("--nms", action="store_true", help="use o2m+NMS path (yolo26 only)")
+    parser.add_argument("--model", default=None, choices=sorted(ARCHS),
+                        help="architecture (default: inferred from the weights filename)")
     parser.add_argument(
         "--output", default=None,
         help="output path: single image file, or directory for directory mode (default runs/predict/predictN/)",
     )
     parser.add_argument("--device", default=None, help="pt engine device (default auto)")
     parser.add_argument("--scale", default=None,
-                        help="model scale (n/s/m/l/x; default: inferred from the weights filename)")
+                        help="model scale (yolo26 only: n/s/m/l/x; default: inferred from the weights filename)")
     parser.add_argument("--data", default=None,
                         help="dataset descriptor (name or .yaml): sets nc and label names for models "
                              "trained on a non-COCO dataset (default: COCO, nc from the model yaml)")
@@ -97,20 +101,24 @@ def main():
     device = resolve_device(args.device) if args.engine == "pt" else "cpu"
     logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device_label(device)}"))
 
-    # ② 模型：档位从权重文件名推（yolo26s.safetensors -> s），认不出才要求显式 --scale
-    #    此前 scale 恒为 PtEngine 默认的 "n"：喂非 n 权重会直接卡在 strict load 的尺寸不匹配上
-    scale = args.scale or scale_from_weights(args.weights)
-    if scale is None:
+    # ② 模型：架构/档位从权重文件名推（yolo26s -> yolo26/s；yolov3-tiny -> v3），认不出才要求显式指定
+    arch, scale = resolve_arch_scale(args.weights, args.model, args.scale)
+    if arch is None:
+        parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
+    if arch == "yolo26" and scale is None:
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
+    if arch != "yolo26" and args.nms:
+        parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
     end2end = not args.nms
     engine_cls = OnnxEngine if args.engine == "onnx" else PtEngine
-    kwargs = {"end2end": end2end, "scale": scale}
+    kwargs = {"end2end": end2end, "scale": scale, "model": arch}
     if args.engine == "pt":
         kwargs["device"] = args.device
         kwargs["nc"] = nc  # onnx 图内置类别数，只有 pt 引擎需要重建头
     engine = engine_cls(args.weights, **kwargs)
-    logger.info(bold(f"YOLO26{scale} · {engine.summary_line} · "
-                     f"{'E2E (NMS-free)' if end2end else 'o2m+NMS'} · engine {args.engine}"))
+    mode = ("E2E (NMS-free)" if end2end else "o2m+NMS") if arch == "yolo26" else "decode+NMS"
+    logger.info(bold(f"{arch_display_name(arch, scale)} · {engine.summary_line} · "
+                     f"{mode} · engine {args.engine}"))
 
     # ③ 输入清单 + 本次任务参数
     logger.info(f"infer: {args.image} · {len(images)} image{'s' if len(images) > 1 else ''} · "

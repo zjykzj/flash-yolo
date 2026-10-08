@@ -1,12 +1,15 @@
 """pt (safetensors) -> onnx 导出
 
-默认导出 E2E 融合图：单输出 output0 (B, 300, 6)，解码与两阶段 top-k 全部在图内；
+yolo26：默认导出 E2E 融合图，单输出 output0 (B, 300, 6)，解码与两阶段 top-k 全部在图内；
 --raw 导出原始头输出 (B, 4+nc, 8400)，配合 NMS 路径在外部解码（utils/postprocess.py）。
+yolov3-tiny：单输出解码 (B, NA, 5+nc)——obj×cls 与按类 NMS 在外部（utils/postprocess.v3_detections），
+--raw 不适用。
 默认 batch 固定为 1（边缘工具链偏好固定 shape），--dynamic 打开动态 batch。
 
 用法:
     python scripts/export.py --weights weights/yolo26n.safetensors --out weights/yolo26n.onnx
     python scripts/export.py --weights weights/yolo26n.safetensors --out weights/yolo26n_raw.onnx --raw
+    python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov3-tiny
 """
 
 import argparse
@@ -18,8 +21,8 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
 import torch
 
-from model.weights import load_weights
-from model.build import build_yolo26
+from model.weights import load_weights, resolve_arch_scale
+from model.build import ARCHS, build_model
 from utils.logger import get_logger, setup_logging
 
 setup_logging()
@@ -30,9 +33,11 @@ def main():
     parser = argparse.ArgumentParser(description="safetensors -> onnx")
     parser.add_argument("--weights", required=True, help=".safetensors path")
     parser.add_argument("--out", default=None, help="output .onnx path (default runs/export/<weights>.onnx)")
-    parser.add_argument("--raw", action="store_true", help="export raw head output (for NMS path)")
+    parser.add_argument("--raw", action="store_true", help="export raw head output (yolo26 only)")
     parser.add_argument("--dynamic", action="store_true", help="dynamic batch axis (default: fixed batch=1)")
-    parser.add_argument("--scale", default="n", help="model scale (n/s/m/l/x)")
+    parser.add_argument("--model", default=None, choices=sorted(ARCHS),
+                        help="architecture (default: inferred from the weights filename)")
+    parser.add_argument("--scale", default="n", help="model scale (yolo26 only: n/s/m/l/x)")
     parser.add_argument("--nc", type=int, default=None,
                         help="class count for models trained on a non-COCO dataset "
                              "(default: the model yaml's nc)")
@@ -40,9 +45,19 @@ def main():
     parser.add_argument("--opset", type=int, default=18)
     args = parser.parse_args()
 
-    model = build_yolo26(args.scale, nc=args.nc)
+    arch, scale = resolve_arch_scale(args.weights, args.model, args.scale)
+    if arch is None:
+        parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
+    if arch == "yolo26" and scale is None:
+        parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
+    if arch != "yolo26" and args.raw:
+        parser.error(f"--raw is only supported for yolo26 (got model={arch!r})")
+
+    model = build_model(arch, scale, nc=args.nc)
     load_weights(model, args.weights, strict=True)
-    model.model[-1].end2end = not args.raw
+    head = model.model[-1]
+    if hasattr(head, "end2end"):  # V3Detect 无此开关（前向即解码）
+        head.end2end = not args.raw
     model.eval()
 
     out_path = args.out or str(ROOT / "runs" / "export" / (Path(args.weights).stem + ".onnx"))
@@ -62,7 +77,8 @@ def main():
             opset_version=args.opset,
             dynamo=False,  # TorchScript 导出器：权重内嵌单文件；dynamo 默认把权重拆到 .onnx.data
         )
-    logger.info(f"exported ({'raw NMS path' if args.raw else 'E2E fused'}) -> {out_path}")
+    mode = ("raw NMS path" if args.raw else "E2E fused") if arch == "yolo26" else "decoded (v3)"
+    logger.info(f"exported ({mode}) -> {out_path}")
 
 
 if __name__ == "__main__":

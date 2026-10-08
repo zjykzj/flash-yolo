@@ -6,12 +6,14 @@ from pathlib import Path
 
 from safetensors.torch import load_file, save_file
 
-__all__ = ["load_weights", "save_weights", "scale_from_weights"]
+__all__ = ["load_weights", "save_weights", "scale_from_weights", "arch_from_weights", "resolve_arch_scale"]
 
 logger = logging.getLogger(__name__)
 
 # 官方档位命名：yolo26n/s/m/l/x（scripts/download_weights.py 与 scripts/export.py 都沿用）
 _SCALE_RE = re.compile(r"yolo26([nsmlx])($|[-_.])", re.I)
+# 架构命名：yolov3-tiny（官方 darknet 权重命名）
+_ARCH_RE = re.compile(r"(yolov3-tiny)($|[-_.])", re.I)
 
 
 def scale_from_weights(path):
@@ -22,6 +24,28 @@ def scale_from_weights(path):
     """
     m = _SCALE_RE.search(Path(path).stem)
     return m.group(1).lower() if m else None
+
+
+def arch_from_weights(path):
+    """从权重文件名推架构：`yolov3-tiny.safetensors` -> "yolov3-tiny"；认不出返回 None"""
+    m = _ARCH_RE.search(Path(path).stem)
+    return m.group(1).lower() if m else None
+
+
+def resolve_arch_scale(weights, model=None, scale=None):
+    """(arch, scale) 解析：显式参数优先，缺省从权重文件名推断；都认不出返回 (None, None)
+
+    yolo26 系：`yolo26s.safetensors` -> ("yolo26", "s")（档位认不出时 scale=None，调用方报错）；
+    v3 系：`yolov3-tiny.safetensors` -> ("yolov3-tiny", None)（档位由架构固定，build_model 用默认档）。
+    """
+    if model is None:
+        # 文件名里的架构优先（yolov3-tiny 命名 + 误传的 --scale 不应把它当 yolo26）
+        model = arch_from_weights(weights) or ("yolo26" if (scale or scale_from_weights(weights)) else None)
+    if model is None:
+        return None, None
+    if model == "yolo26":
+        return model, scale or scale_from_weights(weights)
+    return model, None  # 非 yolo26 架构：档位固定（--scale 不适用）
 
 
 def load_weights(model, path, strict=True):

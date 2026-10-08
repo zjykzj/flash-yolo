@@ -1,7 +1,8 @@
-"""COCO 评估（pt / onnx，E2E 与 NMS 两条路径）
+"""COCO 评估（pt / onnx；YOLO26 E2E/NMS 两路径 + YOLOv3-tiny 解码+NMS）
 
 官方对照（COCO val2017，yolo26n）：
     E2E 路径 mAP 40.1 / NMS 路径 mAP 40.9
+yolov3-tiny（darknet 官方权重）：COCO test-dev AP50 = 33.1（本仓库为 pycocotools val2017 口径）。
 
 输出表格与训练侧 val 表同款（11 宽右对齐 + 6 空格缩进），列比训练侧多两项：
     P / R（pycocotools 无此槽位，取 101 点召回网格上 F1 最大点，与训练侧 FastMetrics 同口径）
@@ -11,6 +12,7 @@
     python scripts/eval.py --weights weights/yolo26n.safetensors --data coco --split val
     python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/dataset.yaml
     python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data coco --nms
+    python scripts/eval.py --weights weights/yolov3-tiny.safetensors --data coco     # v3（档位由架构固定）
     python scripts/eval.py ... --limit 100      # 只跑前 100 张（冒烟）
     python scripts/eval.py ... --summary-only   # 只打 all 行（默认打全部 80 类明细）
     python scripts/eval.py ... --verbose        # 显示第三方库（pycocotools）调试输出
@@ -38,6 +40,8 @@ from config.inference import CONF_THRES, IMGSZ, IOU_THRES, MAX_DET
 from data.build import build_eval_dataset
 from data.scan import scan_summary
 from eval.coco_evaluator import CocoEvaluator
+from model.build import ARCHS, arch_display_name
+from model.weights import resolve_arch_scale
 from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_file_only, redirect_prints, setup_logging
 from utils.paths import increment_path
@@ -70,8 +74,10 @@ def main():
                         help="dataset descriptor: a name in config/datasets/ (local/ wins) or a .yaml path")
     parser.add_argument("--split", default="val", help="role to evaluate (a key in the descriptor: train/val/...)")
     parser.add_argument("--engine", choices=["pt", "onnx"], default="pt")
-    parser.add_argument("--scale", default="n", help="model scale (n/s/m/l/x, used by pt engine)")
-    parser.add_argument("--nms", action="store_true", help="use o2m+NMS path (default E2E NMS-free)")
+    parser.add_argument("--model", default=None, choices=sorted(ARCHS),
+                        help="architecture (default: inferred from the weights filename)")
+    parser.add_argument("--scale", default="n", help="model scale (yolo26 only: n/s/m/l/x)")
+    parser.add_argument("--nms", action="store_true", help="use o2m+NMS path (yolo26 only; default E2E NMS-free)")
     parser.add_argument("--conf", type=float, default=CONF_THRES, help=f"confidence threshold (default {CONF_THRES})")
     parser.add_argument("--iou", type=float, default=IOU_THRES, help=f"NMS IoU threshold (default {IOU_THRES})")
     parser.add_argument("--max-det", type=int, default=MAX_DET)
@@ -98,16 +104,25 @@ def main():
     device = resolve_device(args.device) if args.engine == "pt" else torch.device("cpu")
     logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device_label(device)}"))
 
-    # ② 模型：pt = 模块树口径 / onnx = 部署口径（两者的"参数量"不是同一个量，见 engine.summary_line）
+    # ② 模型：架构/档位从权重文件名推（yolo26s -> yolo26/s；yolov3-tiny -> v3）；
+    #    pt = 模块树口径 / onnx = 部署口径（两者的"参数量"不是同一个量，见 engine.summary_line）
+    arch, scale = resolve_arch_scale(args.weights, args.model, args.scale)
+    if arch is None:
+        parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
+    if arch == "yolo26" and scale is None:
+        parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
+    if arch != "yolo26" and args.nms:
+        parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
     end2end = not args.nms
     engine_cls = OnnxEngine if args.engine == "onnx" else PtEngine
-    kwargs = {"end2end": end2end, "scale": args.scale}
+    kwargs = {"end2end": end2end, "scale": scale, "model": arch}
     if args.engine == "pt":
         kwargs["device"] = args.device
     with redirect_prints(logger):
         engine = engine_cls(args.weights, **kwargs)
-    logger.info(bold(f"YOLO26{args.scale} · {engine.summary_line} · "
-                     f"{'E2E (NMS-free)' if end2end else 'o2m+NMS'} · engine {args.engine}"))
+    mode = ("E2E (NMS-free)" if end2end else "o2m+NMS") if arch == "yolo26" else "decode+NMS"
+    logger.info(bold(f"{arch_display_name(arch, scale)} · {engine.summary_line} · "
+                     f"{mode} · engine {args.engine}"))
 
     # ③ 数据集：扫描行与训练日志同语法（静态提示 + 进度条 + `└` 汇总）
     # 注意不包 redirect_prints：提示行是裸 print、进度条写的是构造时捕获的 sys.stdout，
@@ -176,10 +191,13 @@ def main():
     model_line = (f"       model-only inference {avg['inference']:.1f} ms/image "
                   f"({1e3 / max(avg['inference'], 1e-9):.0f} img/s) at shape (1, 3, {IMGSZ}, {IMGSZ})")
     done_line = f"Done: {n_total} images · {elapsed:.1f}s"
-    ref_lines = [
-        "Reference: published yolo26n = E2E 40.1 / NMS 40.9 (Objects365 pretrain + COCO finetune)",
-        "           same pipeline with the official weights = E2E 40.27 / NMS 40.89",
-    ]
+    if arch == "yolo26":
+        ref_lines = [
+            "Reference: published yolo26n = E2E 40.1 / NMS 40.9 (Objects365 pretrain + COCO finetune)",
+            "           same pipeline with the official weights = E2E 40.27 / NMS 40.89",
+        ]
+    else:
+        ref_lines = ["Reference: official darknet yolov3-tiny = 33.1 AP50 (COCO test-dev, 416; val2017 here)"]
     for line in ("", size_line, thr_line, speed_line, model_line, done_line, *ref_lines):
         logger.info(line)
 
