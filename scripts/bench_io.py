@@ -208,7 +208,7 @@ def main():
     # ---- ② end-to-end ----
     logger.info("")
     logger.info(bold(f"[2/2] end-to-end（batch × loader 前三，各 {args.batches} batch）"))
-    model = YOLO26(CONFIG_PATH, cfg.scale).to(device).train()
+    model = YOLO26(CONFIG_PATH, cfg.scale, cfg.imgsz).to(device).train()
     if cfg.channels_last:
         model.to(memory_format=torch.channels_last)
     head = model.model[-1]

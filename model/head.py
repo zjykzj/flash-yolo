@@ -65,15 +65,19 @@ class Detect(nn.Module):
     def end2end(self, value):
         self._end2end = value
 
-    def bias_init(self):
-        """初始化末层偏置（需先设置 stride；从零训练时使用，加载官方权重后会被覆盖）"""
+    def bias_init(self, imgsz=640):
+        """初始化末层偏置（需先设置 stride；从零训练时使用，加载官方权重后会被覆盖）
+
+        cls 先验 = 每图 5 个目标摊到 nc 类与 (imgsz/stride)² 个格子上；imgsz 取训练输入尺寸
+        （官方实现写死 640，非 640 从零训练时先验偏 (640/imgsz)² 倍，此处按实际尺寸算）。
+        """
         heads = [(self.cv2, self.cv3)]
         if getattr(self, "one2one_cv2", None) is not None:
             heads.append((self.one2one_cv2, self.one2one_cv3))
         for box_head, cls_head in heads:
             for i in range(self.nl):
                 box_head[i][2].bias.data[:] = 2.0
-                cls_head[i][2].bias.data[: self.nc] = math.log(5 / self.nc / (640 / self.stride[i]) ** 2)
+                cls_head[i][2].bias.data[: self.nc] = math.log(5 / self.nc / (imgsz / self.stride[i]) ** 2)
 
     # ---- 前向 ----
     def forward(self, x):

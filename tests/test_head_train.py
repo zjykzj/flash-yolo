@@ -4,7 +4,10 @@
 - o2o detach：o2o-only 损失反向时 backbone 无梯度、o2o 头有梯度（detach 特征输入而非输出）
 - eval 模式：与改造前行为一致（推理/导出/评估路径不受影响）
 - save_weights：safetensors 往返 strict 加载后参数一致
+- bias_init 的 cls 先验随训练 imgsz 走
 """
+
+import math
 
 import torch
 import pytest
@@ -83,3 +86,19 @@ def test_save_weights_roundtrip(tmp_path):
     for (n1, p1), (n2, p2) in zip(model.state_dict().items(), fresh.state_dict().items()):
         assert n1 == n2 and torch.equal(p1, p2), f"参数不一致: {n1}"
     print(f"  safetensors 往返一致（{len(model.state_dict())} 个张量）")
+
+
+def test_bias_init_follows_imgsz():
+    """cls 先验随训练 imgsz 缩放：bias = log(5 / nc / (imgsz/stride)²)，默认 640 = 官方口径"""
+    head640 = _build().model[-1]  # 默认 imgsz=640
+    head320 = YOLO26(scale="n", imgsz=320).model[-1]
+    for i, s in enumerate((8, 16, 32)):  # 三档 stride 逐档核对
+        want640 = math.log(5 / 80 / (640 / s) ** 2)
+        want320 = math.log(5 / 80 / (320 / s) ** 2)
+        assert abs(head640.cv3[i][2].bias[0].item() - want640) < 1e-6, f"stride {s}: 640 口径偏移"
+        assert abs(head320.cv3[i][2].bias[0].item() - want320) < 1e-6, f"stride {s}: 320 口径偏移"
+    # o2o 头同款初始化；box 头偏置恒 2.0（与 imgsz 无关）
+    assert torch.equal(head320.cv3[0][2].bias, head320.one2one_cv3[0][2].bias)
+    assert (head320.cv2[0][2].bias == 2.0).all()
+    print(f"  bias_init 随 imgsz 缩放正确：stride8 cls bias {head320.cv3[0][2].bias[0].item():.4f}（320）"
+          f" vs {head640.cv3[0][2].bias[0].item():.4f}（640）")

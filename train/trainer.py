@@ -54,7 +54,7 @@ class Trainer:
         # ① 环境 + 超参快照：在建模型、解析数据集之前打印（启动白屏只剩 import 时间）
         self._print_env()
 
-        model = YOLO26(CONFIG_PATH, cfg.scale)
+        model = YOLO26(CONFIG_PATH, cfg.scale, cfg.imgsz)
         if weights:
             load_weights(model, weights, strict=True)
         model.to(self.device).train()

@@ -73,6 +73,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Classification bias prior follows the training image size**: `Detect.bias_init` hard-coded the
+  640 inside `log(5 / nc / (imgsz / stride)^2)` (as the official implementation does), so a
+  from-scratch run at any other `--imgsz` started with a per-cell classification prior off by
+  `(640 / imgsz)^2`. The size is now threaded through (`YOLO26(..., imgsz=)` / `build_yolo26`,
+  `bias_init(imgsz)`), and the trainer and `bench_io` build with `cfg.imgsz`; the default stays
+  640, so standard runs and the official-weight alignment are unchanged.
 - **`scripts/infer.py` can run non-`n` scales**: the script had no `--scale` and always built the
   model with `PtEngine`'s default `"n"`, so `--weights yolo26s.safetensors` died at the strict
   load with a shape mismatch. The scale is now derived from the weights filename

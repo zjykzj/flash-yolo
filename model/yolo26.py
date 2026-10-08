@@ -50,15 +50,18 @@ class YOLO26(nn.Module):
     state_dict key = `model.{i}.{属性路径}`，与官方 checkpoint 零映射对齐。
     """
 
-    def __init__(self, cfg_path=None, scale="n"):
+    def __init__(self, cfg_path=None, scale="n", imgsz=640):
         super().__init__()
         cfg_path = cfg_path or CONFIG_PATH
         with open(cfg_path) as f:
             cfg = yaml.safe_load(f)
-        self.model, self.save = self._parse(cfg, scale)
+        self.model, self.save = self._parse(cfg, scale, imgsz)
 
-    def _parse(self, d, scale):
-        """解析 backbone+head 行列表，应用缩放规则（见 docs/yolo26-spec.md 第 2 节）"""
+    def _parse(self, d, scale, imgsz=640):
+        """解析 backbone+head 行列表，应用缩放规则（见 docs/yolo26-spec.md 第 2 节）
+
+        imgsz 只喂给 Detect.bias_init（从零训练的分类先验随输入尺寸走）；推理/导出无感。
+        """
         depth, width, max_ch = d["scales"][scale]
         layers, ch, save = [], [3], set()
         for i, (f, n, name, args) in enumerate(d["backbone"] + d["head"]):
@@ -85,7 +88,7 @@ class YOLO26(nn.Module):
                 det_ch = [ch[x] for x in f]
                 m_ = m(d["nc"], d["reg_max"], d["end2end"], det_ch)
                 m_.stride = torch.tensor([8 * 2**i for i in range(len(det_ch))])
-                m_.bias_init()
+                m_.bias_init(imgsz)
                 c2 = None
                 save.update(f)
                 args = [d["nc"], d["reg_max"], d["end2end"], det_ch]
@@ -141,9 +144,9 @@ class YOLO26(nn.Module):
         return [x if j == -1 else y[j] for j in f]
 
 
-def build_yolo26(scale="n", cfg_path=None):
-    """构建指定档位模型，默认 eval 且走 E2E 路径"""
-    model = YOLO26(cfg_path, scale)
+def build_yolo26(scale="n", cfg_path=None, imgsz=640):
+    """构建指定档位模型，默认 eval 且走 E2E 路径（imgsz 只影响从零训练先验，推理/导出无感）"""
+    model = YOLO26(cfg_path, scale, imgsz)
     model.eval()
     head = model.model[-1]
     if isinstance(head, Detect) and getattr(head, "one2one_cv2", None) is not None:
