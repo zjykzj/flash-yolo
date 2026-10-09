@@ -1,4 +1,4 @@
-"""COCO 评估（pt / onnx；YOLO26 E2E/NMS 两路径 + YOLOv3-tiny 解码+NMS）
+"""COCO 评估（pt / onnx / trt；YOLO26 E2E/NMS 两路径 + YOLOv3-tiny 解码+NMS）
 
 官方对照（COCO val2017，yolo26n）：
     E2E 路径 mAP 40.1 / NMS 路径 mAP 40.9
@@ -40,9 +40,9 @@ from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from data.build import build_eval_dataset
 from data.scan import scan_summary
 from eval.coco_evaluator import CocoEvaluator
-from model.build import ARCHS, arch_display_name
+from model.build import ARCHS, YOLO26_FAMILY, arch_display_name
 from model.weights import resolve_arch_scale, resolve_imgsz
-from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
+from utils.engine import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_file_only, log_params, redirect_prints, setup_logging
 from utils.paths import increment_path
 from utils.progress import ProgressBar
@@ -73,7 +73,7 @@ def main():
     parser.add_argument("--data", required=True,
                         help="dataset descriptor: a name in config/datasets/ (local/ wins) or a .yaml path")
     parser.add_argument("--split", default="val", help="role to evaluate (a key in the descriptor: train/val/...)")
-    parser.add_argument("--engine", choices=["pt", "onnx"], default="pt")
+    parser.add_argument("--engine", choices=["pt", "onnx", "trt"], default="pt")
     parser.add_argument("--model", default=None, choices=sorted(ARCHS),
                         help="architecture (default: inferred from the weights filename)")
     parser.add_argument("--scale", default="n", help="model scale (yolo26 only: n/s/m/l/x)")
@@ -104,7 +104,7 @@ def main():
         parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
     if arch == "yolo26" and scale is None:
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
-    if arch != "yolo26" and args.nms:
+    if arch not in YOLO26_FAMILY and args.nms:
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
 
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 构建后以 engine.imgsz 为准，onnx 取图内 shape）
@@ -118,20 +118,21 @@ def main():
 
     # ---- 头部（与训练日志同一套五段排版：环境 -> 模型 -> 数据集 -> 评估参数 -> 细节）----
     # ① 环境：设备名不依赖 engine（engine 构建 + 3 次 warmup 约 1s，这行要先落地；onnx 固定 CPU）
-    device = resolve_device(args.device) if args.engine == "pt" else torch.device("cpu")
+    device = (resolve_device(args.device) if args.engine == "pt"
+              else (torch.device("cuda") if args.engine == "trt" else torch.device("cpu")))
     logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device_label(device)}"))
 
     # ② 模型（arch/scale 已在参数校验段解析）：pt = 模块树口径 / onnx = 部署口径
     #    （两者的"参数量"不是同一个量，见 engine.summary_line）
     end2end = not args.nms
-    engine_cls = OnnxEngine if args.engine == "onnx" else PtEngine
+    engine_cls = {"pt": PtEngine, "onnx": OnnxEngine, "trt": TRTEngine}[args.engine]
     kwargs = {"end2end": end2end, "scale": scale, "model": arch, "imgsz": args.imgsz}
     if args.engine == "pt":
         kwargs["device"] = args.device
     with redirect_prints(logger):
         engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
-    mode = ("E2E (NMS-free)" if end2end else "o2m+NMS") if arch == "yolo26" else "decode+NMS"
+    mode = ("E2E (NMS-free)" if end2end else "o2m+NMS") if arch in YOLO26_FAMILY else "decode+NMS"
     logger.info(bold(f"{arch_display_name(arch, scale)} · {engine.summary_line} · "
                      f"{mode} · engine {args.engine}"))
 
@@ -207,6 +208,8 @@ def main():
             "Reference: published yolo26n = E2E 40.1 / NMS 40.9 (Objects365 pretrain + COCO finetune)",
             "           same pipeline with the official weights = E2E 40.27 / NMS 40.89",
         ]
+    elif arch in YOLO26_FAMILY:
+        ref_lines = ["Reference: Flash-YOLO (this repo's own design) — GFLOPs below yolo26n by design"]
     else:
         ref_lines = ["Reference: official darknet yolov3-tiny = 33.1 AP50 (COCO test-dev, 416; val2017 here)"]
     for line in ("", size_line, thr_line, speed_line, model_line, done_line, *ref_lines):

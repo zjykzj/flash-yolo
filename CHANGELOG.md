@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   operator/channel surgery with per-layer GFLOPs/params tables and index-remapping for layer
   insertion), `LiteBlock` joins `model/basic` for block-level neck variants, and a new **`--cfg`**
   flag trains unregistered variant yamls (recorded in meta/resume) for screening runs.
+- **TensorRT inference — the three-engine matrix is complete**: `utils/engine.py` gains `TRTEngine`
+  + `build_trt_engine` beside the PyTorch and ONNX-Runtime-CPU engines — all sharing the same
+  `predict`/`predict_timed` contract. The `tensorrt` dependency is optional (lazily imported, with
+  an actionable error) and a built `.engine` is bound to the build machine's GPU + TRT version,
+  stated plainly in the docs. `scripts/export.py --trt` chains safetensors → onnx → `.engine` in
+  one command, `eval.py`/`infer.py` take `--engine trt`, and the yolo26-only guards on
+  `--nms`/`--raw` now key off the `YOLO26_FAMILY` set so flash-yolo gets them too. Batch-1 fp32
+  latency on this machine: flash-yolo **1.35 ms** vs yolo26n 1.52 ms (+12.6% throughput) vs
+  yolov3-tiny@416 0.40 ms — TRT narrows the eager-to-deployment gap for every model (yolo26n
+  5.97 → 1.52 ms). A parity test pins the fp32 engine's raw outputs to PyTorch within 2e-3.
 
 ## [0.4.0] - 2026-10-09
 

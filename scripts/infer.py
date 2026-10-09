@@ -21,9 +21,9 @@ import torch
 
 from config import __version__
 from config.datasets import load_dataset, load_names
-from model.build import ARCHS, arch_display_name
+from model.build import ARCHS, YOLO26_FAMILY, arch_display_name
 from model.weights import load_meta, resolve_arch_scale, resolve_imgsz
-from utils.engine import OnnxEngine, PtEngine, device_label, resolve_device
+from utils.engine import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_params, setup_logging
 from utils.paths import increment_path
 from utils.visualize import draw_detections
@@ -56,7 +56,7 @@ def main():
     parser = argparse.ArgumentParser(description="single-image / directory inference (YOLO26 / YOLOv3-tiny)")
     parser.add_argument("--weights", required=True, help=".safetensors or .onnx weights path")
     parser.add_argument("--image", required=True, help="input image path or directory")
-    parser.add_argument("--engine", choices=["pt", "onnx"], default="pt")
+    parser.add_argument("--engine", choices=["pt", "onnx", "trt"], default="pt")
     parser.add_argument("--conf", type=float, default=0.25, help="confidence threshold")
     parser.add_argument("--nms", action="store_true", help="use o2m+NMS path (yolo26 only)")
     parser.add_argument("--model", default=None, choices=sorted(ARCHS),
@@ -101,7 +101,7 @@ def main():
         parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
     if arch == "yolo26" and scale is None:
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
-    if arch != "yolo26" and args.nms:
+    if arch not in YOLO26_FAMILY and args.nms:
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
 
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 内部同一规则，构建后以 engine.imgsz 为准）
@@ -118,20 +118,21 @@ def main():
                engine=args.engine, conf=args.conf, imgsz=imgsz)
 
     # ---- 头部（与训练/评估同一套五段排版：环境 -> 模型 -> 输入/参数 -> 细节）----
-    # ① 环境：engine 构建之前（onnx 后端固定 CPU，见 OnnxEngine）
-    device = resolve_device(args.device) if args.engine == "pt" else "cpu"
+    # ① 环境：engine 构建之前（onnx 后端固定 CPU、trt 后端固定 CUDA，见各自 Engine）
+    device = (resolve_device(args.device) if args.engine == "pt"
+              else ("cuda" if args.engine == "trt" else "cpu"))
     logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {device_label(device)}"))
 
     # ② 模型（arch/scale 已在前段解析）
     end2end = not args.nms
-    engine_cls = OnnxEngine if args.engine == "onnx" else PtEngine
+    engine_cls = {"pt": PtEngine, "onnx": OnnxEngine, "trt": TRTEngine}[args.engine]
     kwargs = {"end2end": end2end, "scale": scale, "model": arch, "imgsz": args.imgsz}
     if args.engine == "pt":
         kwargs["device"] = args.device
         kwargs["nc"] = nc  # onnx 图内置类别数，只有 pt 引擎需要重建头
     engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
-    mode = ("E2E (NMS-free)" if end2end else "o2m+NMS") if arch == "yolo26" else "decode+NMS"
+    mode = ("E2E (NMS-free)" if end2end else "o2m+NMS") if arch in YOLO26_FAMILY else "decode+NMS"
     logger.info(bold(f"{arch_display_name(arch, scale)} · {engine.summary_line} · "
                      f"{mode} · engine {args.engine}"))
 

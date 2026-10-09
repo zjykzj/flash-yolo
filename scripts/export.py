@@ -10,6 +10,9 @@ yolov3-tiny：单输出解码 (B, NA, 5+nc)——obj×cls 与按类 NMS 在外�
     python scripts/export.py --weights weights/yolo26n.safetensors --out weights/yolo26n.onnx
     python scripts/export.py --weights weights/yolo26n.safetensors --out weights/yolo26n_raw.onnx --raw
     python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov3-tiny
+    python scripts/export.py --weights weights/yolo26n.safetensors --trt [--fp16]   # 顺带构建 TensorRT engine
+
+--trt：onnx 导出后继续构建序列化 engine（与构建机 GPU/TRT 版本绑定、不跨机移植；换机需重构建）。
 """
 
 import argparse
@@ -22,7 +25,7 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 import torch
 
 from model.weights import load_weights, resolve_arch_scale, resolve_imgsz
-from model.build import ARCHS, build_model
+from model.build import ARCHS, YOLO26_FAMILY, build_model
 from utils.logger import get_logger, log_params, setup_logging
 
 setup_logging()
@@ -44,6 +47,9 @@ def main():
     parser.add_argument("--imgsz", type=int, default=None,
                         help="export input size (default: weights metadata, else 640)")
     parser.add_argument("--opset", type=int, default=18)
+    parser.add_argument("--trt", action="store_true",
+                        help="also build a TensorRT engine (.engine) from the exported onnx (needs tensorrt + CUDA)")
+    parser.add_argument("--fp16", action="store_true", help="build the TRT engine with fp16 precision (requires --trt)")
     args = parser.parse_args()
 
     arch, scale = resolve_arch_scale(args.weights, args.model, args.scale)
@@ -51,14 +57,18 @@ def main():
         parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
     if arch == "yolo26" and scale is None:
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
-    if arch != "yolo26" and args.raw:
+    if arch not in YOLO26_FAMILY and args.raw:
         parser.error(f"--raw is only supported for yolo26 (got model={arch!r})")
+    if args.fp16 and not args.trt:
+        parser.error("--fp16 requires --trt")
+    if args.trt and args.dynamic:
+        parser.error("--trt requires fixed shapes (drop --dynamic)")
     imgsz = resolve_imgsz(args.weights, args.imgsz)  # CLI > 权重 metadata > 640
 
     out_path = args.out or str(ROOT / "runs" / "export" / (Path(args.weights).stem + ".onnx"))
     log_params(logger, __file__, weights=args.weights, out=out_path, model=arch, imgsz=imgsz,
                nc=args.nc if args.nc is not None else 80, opset=args.opset,
-               dynamic=args.dynamic, raw=args.raw)
+               dynamic=args.dynamic, raw=args.raw, trt=args.trt, fp16=args.fp16)
 
     model = build_model(arch, scale, nc=args.nc)
     load_weights(model, args.weights, strict=True)
@@ -83,8 +93,20 @@ def main():
             opset_version=args.opset,
             dynamo=False,  # TorchScript 导出器：权重内嵌单文件；dynamo 默认把权重拆到 .onnx.data
         )
-    mode = ("raw NMS path" if args.raw else "E2E fused") if arch == "yolo26" else "decoded (v3)"
+    mode = ("raw NMS path" if args.raw else "E2E fused") if arch in YOLO26_FAMILY else "decoded (v3)"
     logger.info(f"exported ({mode}) -> {out_path}")
+
+    if args.trt:
+        from utils.engine import build_trt_engine  # 懒加载：非 trt 路径不引入 engine 依赖
+
+        engine_path = Path(out_path).with_suffix(".engine")
+        try:
+            build_trt_engine(out_path, engine_path, fp16=args.fp16)
+        except (ImportError, RuntimeError) as e:
+            parser.error(str(e))
+        mib = Path(engine_path).stat().st_size / 2**20
+        logger.info(f"exported TensorRT engine ({'fp16' if args.fp16 else 'fp32'}) -> {engine_path} "
+                    f"({mib:.1f} MiB; bound to this GPU + TRT version)")
 
 
 if __name__ == "__main__":
