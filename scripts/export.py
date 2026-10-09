@@ -97,7 +97,7 @@ def main():
     logger.info(f"exported ({mode}) -> {out_path}")
 
     if args.trt:
-        from utils.engine import build_trt_engine  # 懒加载：非 trt 路径不引入 engine 依赖
+        from utils.engines import build_trt_engine  # 懒加载：非 trt 路径不引入 engine 依赖
 
         engine_path = Path(out_path).with_suffix(".engine")
         try:

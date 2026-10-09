@@ -66,7 +66,7 @@ def test_apply_meta_anchors():
 
 def test_engine_reads_weights_meta(tmp_path):
     """PtEngine 免参数读取 metadata：nc（建头）/ imgsz（前处理+warmup）/ anchors（解码）"""
-    from utils.engine import PtEngine
+    from utils.engines import PtEngine
 
     path = tmp_path / "best.safetensors"  # 文件名推不出档位
     save_weights(build_yolov3_tiny(nc=2), path,

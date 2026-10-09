@@ -42,7 +42,7 @@ from data.scan import scan_summary
 from eval.coco_evaluator import CocoEvaluator
 from model.build import ARCHS, YOLO26_FAMILY, arch_display_name
 from model.weights import resolve_arch_scale, resolve_imgsz
-from utils.engine import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
+from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_file_only, log_params, redirect_prints, setup_logging
 from utils.paths import increment_path
 from utils.progress import ProgressBar

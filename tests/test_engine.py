@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from model.weights import scale_from_weights
-from utils.engine import device_label, resolve_device
+from utils.engines import device_label, resolve_device
 
 ROOT = Path(__file__).resolve().parent.parent
 SAFE_PATH = ROOT / "weights" / "yolo26n.safetensors"
@@ -37,7 +37,7 @@ def test_pt_engine_summary_line():
     """pt 摘要行 = 模块树口径（与训练日志同源，可直接对照 yaml 逐层表）"""
     if not SAFE_PATH.exists():
         pytest.skip("需要 weights/yolo26n.safetensors（先跑 download_weights + convert_weights）")
-    from utils.engine import PtEngine
+    from utils.engines import PtEngine
 
     line = PtEngine(str(SAFE_PATH), device="cpu").summary_line
     assert line == "260 layers · 2,572,280 params", line
@@ -48,7 +48,7 @@ def test_onnx_engine_summary_line():
     """onnx 摘要行 = 部署口径：不打参数量（initializer 含被折叠的 BN，与 pt 不可比）"""
     if not ONNX_PATH.exists():
         pytest.skip("需要 weights/yolo26n.onnx（先跑 scripts/export.py）")
-    from utils.engine import OnnxEngine
+    from utils.engines import OnnxEngine
 
     line = OnnxEngine(str(ONNX_PATH)).summary_line
     assert line.startswith("ONNX ") and "MiB" in line, line
@@ -64,7 +64,7 @@ def test_pt_engine_custom_nc(tmp_path):
     """
     from model.weights import save_weights
     from model.build import build_yolo26
-    from utils.engine import PtEngine
+    from utils.engines import PtEngine
 
     path = tmp_path / "nc2.safetensors"
     save_weights(build_yolo26("n", nc=2), path)

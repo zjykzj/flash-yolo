@@ -5,7 +5,7 @@ import json
 import numpy as np
 
 from eval.coco_evaluator import CocoEvaluator
-from utils.engine import Detections
+from utils.engines import Detections
 
 
 def _make_ann_file(tmp_path, images, annotations):

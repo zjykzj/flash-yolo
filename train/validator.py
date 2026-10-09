@@ -22,7 +22,7 @@ import torch
 from config.inference import CONF_THRES, IMGSZ
 from data.preprocess import preprocess
 from train.metrics import FastMetrics
-from utils.engine import Detections
+from utils.engines import Detections
 from utils.postprocess import scale_boxes
 from utils.progress import ProgressBar
 

@@ -100,7 +100,7 @@ def test_darknet_converter_size_guard(tmp_path):
 
 def test_pt_engine_v3(tmp_path):
     """PtEngine 走 v3 分支：解码 + 按类 NMS，Detections 形状正确"""
-    from utils.engine import PtEngine
+    from utils.engines import PtEngine
 
     path = tmp_path / "yolov3-tiny.safetensors"
     save_weights(build_yolov3_tiny(nc=2), path)
@@ -123,7 +123,7 @@ def test_v3_export_parity(tmp_path):
     subprocess.run(["python", "scripts/export.py", "--weights", str(path), "--out", str(onnx_path),
                     "--model", "yolov3-tiny", "--nc", "2"], cwd=ROOT, check=True)
 
-    from utils.engine import OnnxEngine
+    from utils.engines import OnnxEngine
 
     line = OnnxEngine(str(onnx_path), model="yolov3-tiny").summary_line
     assert "out (1, 6000, 7)" in line, line
@@ -151,7 +151,7 @@ def test_onnx_engine_imgsz_from_graph(tmp_path):
     subprocess.run(["python", "scripts/export.py", "--weights", str(path), "--out", str(onnx_path),
                     "--model", "yolov3-tiny", "--nc", "2", "--imgsz", "416"], cwd=ROOT, check=True)
 
-    from utils.engine import OnnxEngine
+    from utils.engines import OnnxEngine
 
     engine = OnnxEngine(str(onnx_path), model="yolov3-tiny")
     assert engine.imgsz == 416 and "in (1, 3, 416, 416)" in engine.summary_line, engine.summary_line

@@ -14,7 +14,7 @@ if not torch.cuda.is_available():
     pytest.skip("TensorRT engine tests require CUDA", allow_module_level=True)
 
 from model.build import build_model  # noqa: E402
-from utils.engine import TRTEngine, build_trt_engine  # noqa: E402
+from utils.engines import TRTEngine, build_trt_engine  # noqa: E402
 
 
 def test_trt_raw_output_matches_pytorch(tmp_path):
@@ -35,6 +35,6 @@ def test_trt_raw_output_matches_pytorch(tmp_path):
     build_trt_engine(onnx_path, engine_path, fp16=False)
 
     eng = TRTEngine(engine_path, model="flash-yolo", end2end=False, imgsz=320)
-    out = eng._run(x.numpy())  # (1, 4+nc, N)：与 torch 输出同形（批量维保留，对拍不剥批）
+    out = eng._forward(x)  # (1, 4+nc, N)：与 torch 输出同形（批量维保留，对拍不剥批）
     assert out.shape == ref.shape, (out.shape, ref.shape)
     np.testing.assert_allclose(out, ref, atol=2e-3, rtol=1e-3)

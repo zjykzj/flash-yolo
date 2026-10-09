@@ -13,7 +13,7 @@ from config.datasets import load_dataset
 from config.train_config import TrainConfig
 from data.build import build_eval_dataset, build_train_dataset
 from eval.coco_evaluator import CocoEvaluator
-from utils.engine import Detections
+from utils.engines import Detections
 
 SIZE = 64
 # 3 图 2 类；框为像素 [x1, y1, x2, y2]（coco 写 bbox xywh；yolo 写归一化 cxcywh）

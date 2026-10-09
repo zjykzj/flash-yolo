@@ -25,7 +25,7 @@ from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from data.build import build_eval_dataset
 from data.preprocess import preprocess
 from eval.coco_evaluator import CocoEvaluator
-from utils.engine import Detections
+from utils.engines import Detections
 from utils.postprocess import non_max_suppression, scale_boxes
 from utils.progress import ProgressBar
 

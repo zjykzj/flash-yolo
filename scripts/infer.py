@@ -23,7 +23,7 @@ from config import __version__
 from config.datasets import load_dataset, load_names
 from model.build import ARCHS, YOLO26_FAMILY, arch_display_name
 from model.weights import load_meta, resolve_arch_scale, resolve_imgsz
-from utils.engine import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
+from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_params, setup_logging
 from utils.paths import increment_path
 from utils.visualize import draw_detections
