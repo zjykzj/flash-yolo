@@ -11,12 +11,13 @@ import torch
 import torch.nn as nn
 import yaml
 
-from model.basic import C2PSA, C3k2, Conv, LeakyConv, SPPF
+from model.basic import C2PSA, C3k2, Conv, DWConv, LeakyConv, LiteBlock, PoolConv, SPPF
 from model.head import Detect
 from model.head_v3 import V3Detect
 
 __all__ = ["DetectionModel", "build_model", "build_yolo26", "build_yolov3_tiny",
-           "arch_display_name", "ARCHS", "YOLO26_CONFIG_PATH", "V3_CONFIG_PATH"]
+           "arch_display_name", "ARCHS", "YOLO26_FAMILY", "YOLO26_CONFIG_PATH", "V3_CONFIG_PATH",
+           "FLASH_CONFIG_PATH"]
 
 
 class Concat(nn.Module):
@@ -33,6 +34,9 @@ class Concat(nn.Module):
 # 模块注册表（yaml 模块名 -> 类，显式映射避免动态 eval）
 MODULES = {
     "Conv": Conv,
+    "DWConv": DWConv,
+    "PoolConv": PoolConv,   # flash-yolo：池化下采样（v3-tiny 口径）
+    "LiteBlock": LiteBlock,  # flash-yolo：1×1 -> DW 3×3 -> 1×1
     "Concat": Concat,
     "C3k2": C3k2,
     "SPPF": SPPF,
@@ -50,12 +54,17 @@ CHANNEL_PRESERVING = {"Upsample", "MaxPool2d", "ZeroPad2d"}
 
 YOLO26_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolo26.yaml"
 V3_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolov3-tiny.yaml"
+FLASH_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "flash-yolo.yaml"
 
 # 架构注册表：name -> yaml 路径 + 默认档位 + 展示名模板（新增架构在此登记）
 ARCHS = {
     "yolo26": {"cfg": YOLO26_CONFIG_PATH, "default_scale": "n", "display": "YOLO26{scale}"},
     "yolov3-tiny": {"cfg": V3_CONFIG_PATH, "default_scale": "tiny", "display": "YOLOv3-tiny"},
+    "flash-yolo": {"cfg": FLASH_CONFIG_PATH, "default_scale": "flash", "display": "Flash-YOLO"},
 }
+
+# yolo26 系检测头（Detect 双分支 / E2E，含 flash-yolo）：--nms/--raw 门控与解码分派按此判定
+YOLO26_FAMILY = {"yolo26", "flash-yolo"}
 
 
 def arch_display_name(arch, scale):

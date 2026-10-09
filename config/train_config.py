@@ -33,7 +33,8 @@ class TrainConfig:
     data: str = ""  # 数据集描述符（config/datasets/[local/]<name>.yaml 或 .yaml 路径）；
                     # 空 = 未设置，必须由 CLI --data 提供（见 scripts/train.py）
     scale: str = "n"
-    model: str = "yolo26"  # 架构名（model/build.py 的 ARCHS 注册表；yolo26 | yolov3-tiny）
+    model: str = "yolo26"  # 架构名（model/build.py 的 ARCHS 注册表；yolo26 | yolov3-tiny | flash-yolo）
+    cfg_path: str = ""  # 自定义模型 yaml 覆盖 ARCHS 注册路径（架构筛选实验用；"" = 用注册表）
     epochs: int = 100
     batch: int = 16  # 物理 batch（开箱即用值；nbs 累积保证梯度语义不变）
     nbs: int = 64

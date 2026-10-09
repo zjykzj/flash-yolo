@@ -22,7 +22,7 @@ from data.loader import collate_fn, worker_init_fn
 from data.scan import scan_summary
 from model.summary import summary_lines
 from model.weights import encode_anchors, load_weights
-from model.build import ARCHS, arch_display_name, build_model
+from model.build import ARCHS, YOLO26_FAMILY, arch_display_name, build_model
 from train.checkpoint import load_resume, save_best_last, save_periodic, save_resume
 from train.ema import ModelEMA
 from train.loss import build_loss
@@ -76,7 +76,10 @@ class Trainer:
 
         if cfg.model != "yolo26":  # 非 yolo26 架构的档位由 yaml 固定（yolov3-tiny = tiny）；--scale 不适用
             cfg.scale = ARCHS[cfg.model]["default_scale"]
-        model = build_model(cfg.model, cfg.scale, cfg.imgsz, nc=self.spec.nc)
+        model = build_model(cfg.model, cfg.scale, cfg.imgsz, nc=self.spec.nc,
+                            cfg_path=cfg.cfg_path or None)
+        if cfg.cfg_path:
+            logger.info(f"model cfg: {cfg.cfg_path} (custom structure, not from the ARCHS registry)")
         if weights:
             load_weights(model, weights, strict=True)
         model.to(self.device).train()
@@ -128,6 +131,10 @@ class Trainer:
             if ckpt_cfg.get("model", "yolo26") != self.cfg.model:
                 logger.warning(f"resume checkpoint was written with model={ckpt_cfg.get('model', 'yolo26')!r}, "
                                f"now model={self.cfg.model!r} — the model is rebuilt from the current config")
+            cur_cfg = self.cfg.cfg_path or None
+            if ckpt_cfg.get("cfg_path") != cur_cfg:
+                logger.warning(f"resume checkpoint was written with cfg_path={ckpt_cfg.get('cfg_path')!r}, "
+                               f"now cfg_path={cur_cfg!r} — the model is rebuilt from the current config")
             logger.info(f"resumed from {path} at epoch {self.start_epoch + 1} -> {self.run_dir}")
 
         self.accumulate = max(round(cfg.nbs / cfg.batch), 1)
@@ -315,7 +322,7 @@ class Trainer:
         logger.info(f"lr: warmup {self.cfg.warmup_epochs}ep -> {'cosine' if self.cfg.cos_lr else 'linear'} "
                     f"{self.cfg.lr0} -> {self.cfg.lr0 * self.cfg.lrf:.6f} · "
                     f"close_mosaic last {self.close_mosaic} epochs (from epoch {close_epoch}{scale_note})")
-        if self.cfg.model == "yolo26":
+        if self.cfg.model in YOLO26_FAMILY:
             logger.info(f"loss: box {self.cfg.box_gain} CIoU · cls {self.cfg.cls_gain} BCE · l1 {self.cfg.dfl_gain} · "
                         f"EMA {self.cfg.ema_decay} (tau {self.cfg.ema_tau})")
             logger.info(f"TAL: topk o2m {self.cfg.topk} · o2o {self.cfg.topk_o2o}->{self.cfg.topk2} · "

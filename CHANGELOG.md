@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Flash-YOLO — the framework's own lightweight architecture**: a pooled-downsampling redesign
+  of the yolo26 meta-architecture (`config/models/flash-yolo.yaml`, plus three screening variants),
+  keeping the Detect head, E2E semantics and the full training pipeline. It replaces every stride-2
+  3×3 downsampling convolution with a new `PoolConv` operator (max-pool + 1×1, the yolov3-tiny
+  downsampling philosophy) and cuts the consumer-less P1/P2 stem to a channel projection: @640 that
+  budgets **3.8 GFLOPs / 1.97M params** (−31% / −23% vs yolo26n) and it beats yolo26n at batch-1
+  inference on CPU and CUDA-graph measurement (ORT-CPU +45%, torch-CPU +11%, CUDA-graph +11%; raw
+  eager is a Python-dispatch-bound tie). `scripts/search_arch.py` searches the design space (in-place
+  operator/channel surgery with per-layer GFLOPs/params tables and index-remapping for layer
+  insertion), `LiteBlock` joins `model/basic` for block-level neck variants, and a new **`--cfg`**
+  flag trains unregistered variant yamls (recorded in meta/resume) for screening runs.
+
 ## [0.4.0] - 2026-10-09
 
 ### Changed

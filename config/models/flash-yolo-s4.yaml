@@ -1,0 +1,128 @@
+# flash-yolo 筛选变体（scripts/search_arch.py 生成；S1 主设计见 flash-yolo.yaml）
+nc: 80
+reg_max: 1
+end2end: true
+scales:
+  flash:
+  - 1.0
+  - 1.0
+  - 1024
+backbone:
+- - -1
+  - 1
+  - Conv
+  - - 16
+    - 3
+    - 2
+- - -1
+  - 1
+  - PoolConv
+  - - 32
+- - -1
+  - 1
+  - Conv
+  - - 64
+    - 1
+    - 1
+- - -1
+  - 1
+  - PoolConv
+  - - 64
+- - -1
+  - 1
+  - C3k2
+  - - 128
+    - false
+    - 0.25
+- - -1
+  - 1
+  - PoolConv
+  - - 128
+- - -1
+  - 1
+  - C3k2
+  - - 128
+    - true
+- - -1
+  - 1
+  - PoolConv
+  - - 256
+- - -1
+  - 1
+  - C3k2
+  - - 256
+    - true
+- - -1
+  - 1
+  - SPPF
+  - - 256
+    - 5
+    - 3
+    - true
+- - -1
+  - 1
+  - C2PSA
+  - - 256
+head:
+- - -1
+  - 1
+  - Upsample
+  - - None
+    - 2
+    - nearest
+- - - -1
+    - 6
+  - 1
+  - Concat
+  - - 1
+- - -1
+  - 1
+  - LiteBlock
+  - - 128
+- - -1
+  - 1
+  - Upsample
+  - - None
+    - 2
+    - nearest
+- - - -1
+    - 4
+  - 1
+  - Concat
+  - - 1
+- - -1
+  - 1
+  - LiteBlock
+  - - 64
+- - -1
+  - 1
+  - PoolConv
+  - - 64
+- - - -1
+    - 13
+  - 1
+  - Concat
+  - - 1
+- - -1
+  - 1
+  - LiteBlock
+  - - 128
+- - -1
+  - 1
+  - PoolConv
+  - - 128
+- - - -1
+    - 10
+  - 1
+  - Concat
+  - - 1
+- - -1
+  - 1
+  - LiteBlock
+  - - 256
+- - - 16
+    - 19
+    - 22
+  - 1
+  - Detect
+  - - nc

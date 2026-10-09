@@ -52,6 +52,8 @@ def main():
     parser.add_argument("--scale", dest="scale", default=None, help="model scale (yolo26 only: n/s/m/l/x)")
     parser.add_argument("--model", dest="model", default=None, choices=sorted(ARCHS),
                         help="architecture (default: train.yaml `model`, yolo26)")
+    parser.add_argument("--cfg", dest="cfg_path", default=None,
+                        help="model yaml path override (custom structure; screening/experiment variants)")
     parser.add_argument("--recipe", default=None, help="recipe name (config/recipes/<name>.yaml) or a .yaml path; "
                                                        "default = the built-in baseline (config/train.yaml values)")
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=None,
@@ -84,11 +86,14 @@ def main():
     except (ValueError, FileNotFoundError) as e:
         parser.error(str(e))
     apply_cli(cfg, args)
+    if cfg.cfg_path and not Path(cfg.cfg_path).is_file():
+        parser.error(f"--cfg not found: {cfg.cfg_path}")
 
     # 架构相关收尾：v3 系档位由 yaml 固定（此处归一化供参数预览显示；Trainer 内有同款守卫）
     if cfg.model != "yolo26":
         if args.scale:
-            logger.warning(f"--scale {args.scale} ignored for model {cfg.model!r} (scale is fixed to 'tiny')")
+            logger.warning(f"--scale {args.scale} ignored for model {cfg.model!r} "
+                           f"(scale is fixed to {ARCHS[cfg.model]['default_scale']!r})")
         cfg.scale = ARCHS[cfg.model]["default_scale"]
         if cfg.recipe != "default":
             logger.warning(f"recipe {cfg.recipe!r} is tuned for yolo26 — training {cfg.model} with it is not recommended")

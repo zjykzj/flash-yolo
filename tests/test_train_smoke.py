@@ -164,3 +164,30 @@ def csv_reader(path):
 
     with open(path, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
+
+
+def test_flash_yolo_smoke(tmp_path):
+    """flash-yolo 走同一条 Trainer 路径（与 yolo26 同头/同损失）：3 epoch 无 NaN、检查点与 metadata 齐全"""
+    data = _make_mini_coco(tmp_path)
+    cfg = TrainConfig(
+        data=str(data), model="flash-yolo", epochs=3, batch=8, nbs=8, imgsz=320, workers=0,
+        val_epochs=1, val_limit=8, limit=0, amp=False,
+        mosaic=0.5, mixup=0.0, copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0,
+    )
+    torch.manual_seed(0)
+    run_dir = tmp_path / "run-flash-yolo"
+    trainer = Trainer(cfg, device="cpu", run_dir=run_dir)
+    trainer.train()
+    assert (run_dir / "weights" / "last.safetensors").exists()
+    assert (run_dir / "weights" / "best.safetensors").exists()
+    rows = list(csv_reader(run_dir / "results.csv"))
+    assert len(rows) >= 3, f"results.csv 行数不足: {len(rows)}"
+    # 损失列随实现派生：flash-yolo 复用 yolo26 双头损失（o2m/o2o 列存在）
+    assert "o2m" in rows[0] and "o2o" in rows[0], list(rows[0])
+    losses = [float(r["loss"]) for r in rows]
+    assert all(np.isfinite(v) for v in losses), f"出现 NaN 损失: {losses}"
+    assert all(r["mAP"] for r in rows), "每 epoch 都应有验证指标"
+    from model.weights import load_meta
+    wm = load_meta(run_dir / "weights" / "best.safetensors")
+    assert wm["arch"] == "flash-yolo" and wm["nc"] == 2 and wm["imgsz"] == 320, wm
+    print(f"  [flash-yolo] 冒烟通过: loss {losses[0]:.3f} -> {losses[-1]:.3f}")

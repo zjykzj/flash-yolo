@@ -1,4 +1,4 @@
-"""组合块类：残差/CSP 家族 + 注意力家族
+"""组合块类：残差/CSP 家族 + 注意力家族 + 轻量块（flash-yolo）
 
 残差与 CSP（backbone/neck 的特征提取主体）：
     Bottleneck   两个 3x3 卷积的残差块
@@ -10,15 +10,18 @@
     PSABlock     x = x + attn(x); x = x + ffn(x)
     C2PSA        C2 结构：一半直通、一半过 PSABlock 串
 
+轻量块（flash-yolo 自有，无官方对齐约束）：
+    LiteBlock    1×1 -> DW 3×3 -> 1×1（无 expansion 的深度可分离块）
+
 属性树与官方 state_dict 对齐（key 只含属性路径不含类名）。
 """
 
 import torch
 import torch.nn as nn
 
-from model.basic.conv import Conv
+from model.basic.conv import Conv, DWConv
 
-__all__ = ["Bottleneck", "C3k", "C3k2", "Attention", "PSABlock", "C2PSA"]
+__all__ = ["Bottleneck", "C3k", "C3k2", "Attention", "PSABlock", "C2PSA", "LiteBlock"]
 
 
 class Bottleneck(nn.Module):
@@ -137,3 +140,20 @@ class C2PSA(nn.Module):
         a, b = self.cv1(x).split((self.c, self.c), dim=1)
         b = self.m(b)
         return self.cv2(torch.cat((a, b), 1))
+
+
+class LiteBlock(nn.Module):
+    """轻量块（flash-yolo）：1×1 -> DW 3×3 -> 1×1
+
+    无 expansion 的深度可分离块；同通道下 GFLOPs 约为 C3k2 的 2/3，
+    用于 neck 的容量-算力配平（设计流程见 scripts/search_arch.py 的 S4 候选）。
+    """
+
+    def __init__(self, c1, c2):
+        super().__init__()
+        self.cv1 = Conv(c1, c2, 1, 1)
+        self.dw = DWConv(c2, c2, 3, 1)
+        self.cv2 = Conv(c2, c2, 1, 1)
+
+    def forward(self, x):
+        return self.cv2(self.dw(self.cv1(x)))

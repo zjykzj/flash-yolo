@@ -128,7 +128,7 @@ class ComputeLoss:
     __call__ = forward  # 普通类不自动调用 forward，显式别名
 
 
-_LOSS_BY_ARCH = {"yolo26": ComputeLoss, "yolov3-tiny": ComputeLossV3}
+_LOSS_BY_ARCH = {"yolo26": ComputeLoss, "yolov3-tiny": ComputeLossV3, "flash-yolo": ComputeLoss}
 
 
 def build_loss(arch, cfg, head, device):

@@ -1,0 +1,44 @@
+# Flash-YOLO 检测模型结构定义（本项目自有架构，v1；2026-10-09）
+#
+# 设计命题：v3-tiny 的廉价下采样哲学（PoolConv = maxpool + 1×1）× yolo26 的 CSP 容量分配；
+#          头（Detect, E2E）与损失/训练管线完全复用 yolo26。
+# 相对 yolo26n @640：GFLOPs 3.68（−31%，analytic 口径；summary 约 3.78）· 参数 1.97M。
+# 设计流程与候选空间见 scripts/search_arch.py（S1 = 本结构；S2/S3/S4 为筛选变体）。
+#
+# 档位：单档 flash，通道已材料化（width = 1.0，无缩放）；行语法：[from, repeats, module, args]
+
+nc: 80
+reg_max: 1
+end2end: True
+
+scales:
+  # [depth, width, max_channels]
+  flash: [1.0, 1.0, 1024]
+
+backbone:
+  - [-1, 1, Conv, [16, 3, 2]]            # 0  P1/2（RGB 入口，保留 3×3 s2）
+  - [-1, 1, PoolConv, [32]]              # 1  P2/4（全池化下采样）
+  - [-1, 1, Conv, [64, 1, 1]]            # 2  stem 通道投影（P1/P2 输出无下游消费者）
+  - [-1, 1, PoolConv, [64]]              # 3  P3/8
+  - [-1, 1, C3k2, [128, False, 0.25]]    # 4
+  - [-1, 1, PoolConv, [128]]             # 5  P4/16
+  - [-1, 1, C3k2, [128, True]]           # 6
+  - [-1, 1, PoolConv, [256]]             # 7  P5/32
+  - [-1, 1, C3k2, [256, True]]           # 8
+  - [-1, 1, SPPF, [256, 5, 3, True]]     # 9
+  - [-1, 1, C2PSA, [256]]                # 10
+
+head:
+  - [-1, 1, Upsample, [None, 2, "nearest"]]  # 11
+  - [[-1, 6], 1, Concat, [1]]                # 12
+  - [-1, 1, C3k2, [128, True]]               # 13
+  - [-1, 1, Upsample, [None, 2, "nearest"]]  # 14
+  - [[-1, 4], 1, Concat, [1]]                # 15
+  - [-1, 1, C3k2, [64, True]]                # 16 (P3/8)
+  - [-1, 1, PoolConv, [64]]                  # 17
+  - [[-1, 13], 1, Concat, [1]]               # 18
+  - [-1, 1, C3k2, [128, True]]               # 19 (P4/16)
+  - [-1, 1, PoolConv, [128]]                 # 20
+  - [[-1, 10], 1, Concat, [1]]               # 21
+  - [-1, 1, C3k2, [256, True, 0.5, True]]    # 22 (P5/32, attn)
+  - [[16, 19, 22], 1, Detect, [nc]]          # 23
