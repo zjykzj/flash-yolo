@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generated in fp32 and cast (the TorchScript ONNX exporter rejects half-dtype `arange`, which
   blocked the whole half-export path; fp32 numerics are unchanged).
 
+### Changed
+
+- **README restructured around the four workflows** (train · evaluate · export · infer): a scannable
+  Highlights intro replaces the opening results table and its footnote block, Quick Start splits into
+  four one-command subsections, Evaluation and Verification get dedicated sections, the reproduction
+  numbers are consolidated in a single Results section, and the TensorRT material now states the
+  tested engine versions (TensorRT 11.4 / onnxruntime 1.30) and its cross-version compatibility story.
+
 ## [0.5.0] - 2026-10-10
 
 ### Added

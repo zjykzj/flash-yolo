@@ -11,78 +11,68 @@
   <a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-2.13-ee4c2c.svg" alt="PyTorch"></a>
 </p>
 
-Detection performance — YOLO26n on COCO val2017:
+## Highlights
 
-| Path | mAP@[.5:.95] | mAP@50 | Params | Latency¹ |
-|---|---|---|---|---|
-| This repo · E2E (NMS-free) | **40.27** | 55.80 | 2.57M | 20.4ms GPU · 57.2ms ONNX CPU |
-| Official · E2E² | 40.27 | 55.80 | 2.57M | 18.6ms GPU |
-| This repo · NMS (o2m) | **40.89** | 56.88 | 2.57M | 16.5ms GPU |
-| Official · NMS² | 40.89 | 56.88 | 2.57M | 14.6ms GPU |
-| This repo · from scratch, 100 ep · E2E (NMS-free)³ | **36.22** | 51.32 | 2.57M | — |
-| This repo · from scratch, 100 ep · NMS (o2m)³ | **37.15** | 52.67 | 2.57M | — |
-
-- 260 layers · 2,572,280 params — identical to the official summary; weights load with `strict=True` zero-key-mapping, and the inference output is **bit-identical** to the official model
-- ¹ Latency = inference stage only, averaged over 20 runs on this machine: RTX 4060 Laptop GPU / WSL2 CPU (onnxruntime)
-- ² The official weights re-run through this repo's pipeline (same preprocessing, postprocessing, and pycocotools metrics, same hardware) — the numbers match this repo's exactly, which is the expected consequence of bit-identical reproduction
-- ³ From scratch: trained on COCO train2017 from random weights with the built-in baseline recipe (100 epochs, fp32, one RTX 5090, ~14 h) — official pycocotools numbers. Architecture is identical to the rows above, so latency is unchanged. Not like for like with them: every official number starts from Objects365 pretraining (see Training)
-- The official published 40.1 / 40.9 come from the official metric implementation; the ~0.1 delta to this table is metric-implementation noise, not a model difference
-
-A second architecture is supported end to end: **YOLOv3-tiny**, a darknet-faithful implementation
-(LeakyReLU convolutions, max-pool downsampling, route/upsample neck, anchor-based two-scale head
-with the official COCO anchors kept as-is) selected with `--model yolov3-tiny` across train / eval /
-infer / export and driven by the same built-in baseline recipe. Its reference quality is the
-official darknet weights — download them with `scripts/download_weights.py --model yolov3-tiny`,
-convert with `scripts/convert_weights.py` and evaluate with `scripts/eval.py`. The official weights
-through this repo's pipeline (COCO val2017, pycocotools, 640 input) measure **35.90 mAP@50 /
-17.16 mAP@[.5:.95]** — the published 33.1 mAP@50 reference is COCO test-dev at 416, so the delta is
-input size plus split. For custom datasets trained from scratch, re-cluster the anchor priors first
-with `scripts/compute_anchors.py --data <descriptor>` — a model-agnostic tool (darknet-style k-means
-+ YOLOv5-style coverage check; `--model/--levels/--n` target any model yaml with an `anchors:`
-section) that prints a paste-ready fragment. The official weights must keep the official anchor set;
-a re-clustered set used for training travels with the saved checkpoints (weights metadata), so
-evaluation restores it automatically.
+- **Reproduces YOLO26n bit-identically** — the official weights load with zero key mapping
+  (260 layers · 2,572,280 params) and the inference output is bit-for-bit identical. COCO val2017
+  through this pipeline: **40.27** mAP@[.5:.95] E2E (NMS-free) / **40.89** with NMS — published: 40.1 / 40.9.
+- **Trains from scratch, and says so** — no official checkpoint was trained on COCO from random
+  weights; this repo's own from-scratch baseline (100 epochs, one RTX 5090) reaches **36.22 / 51.32**
+  — the honest reference point for what a 100-epoch budget buys.
+- **A second architecture, end to end** — **YOLOv3-tiny**, darknet-faithful, selected with
+  `--model yolov3-tiny` across train / eval / infer / export; the official darknet weights verified
+  through the same pipeline (**17.16** mAP@[.5:.95] @640).
+- **Its own lightweight model** — **flash-yolo**: 3.80 GFLOPs / 1.97M params @640 (**−31% / −23%**
+  vs YOLO26n) keeping all three detection levels, from a screened design space — see [Flash-YOLO](#flash-yolo).
+- **Three runtimes, one contract** — PyTorch / ONNX Runtime (CPU) / TensorRT (GPU, fp32 **and**
+  fp16) all answer the same `predict()`; `scripts/export.py` chains safetensors → onnx → serialized
+  engine in one command (see [Export & Deployment](#export--deployment)).
+- **Small on dependencies, big on verification** — core runtime is PyTorch + NumPy; every module is
+  readable on its own and covered by 168 tests (weight alignment, export parity, loss parity,
+  format equivalence, engine correctness) — see [Project Structure](#project-structure).
 
 ## Quick Start
 
-```bash
-# 1. Install
-pip install -r requirements.txt
+Prerequisites — install, then prepare the official weights once (AGPL-3.0, personal research /
+verification use only; conversion writes pure safetensors — the runtime never needs ultralytics):
 
-# 2. Prepare weights (official models are AGPL-3.0, personal research / verification only).
-#    Convert once to pure safetensors; runtime never needs ultralytics.
+```bash
+pip install -r requirements.txt
 python scripts/download_weights.py --model yolo26n
 python scripts/convert_weights.py --src weights/yolo26n.pt --dst weights/yolo26n.safetensors
+```
 
-# 3. Inference (default E2E NMS-free; --nms for o2m+NMS; --engine onnx for onnx;
-#    --image accepts a single image or a directory)
+Then each of the four workflows is one command away:
+
+### Train
+
+```bash
+# from scratch on your dataset (--data is a descriptor, see "Datasets"; ~14 h on one RTX 5090)
+python scripts/train.py --data /path/to/coco.yaml --name my-run --batch 64 --workers 16
+```
+
+### Evaluate
+
+```bash
+# formal pycocotools numbers for the run you just trained
+python scripts/eval.py --weights runs/train/my-run/weights/best.safetensors --data /path/to/coco.yaml
+```
+
+### Export
+
+```bash
+# safetensors -> onnx -> TensorRT engine (fp32; add --fp16 for the half-precision deployment build)
+python scripts/export.py --weights weights/yolo26n.safetensors --trt
+python scripts/export.py --weights weights/yolo26n.safetensors --trt --fp16
+```
+
+### Inference
+
+```bash
+# E2E NMS-free by default; --nms for the o2m path, --engine onnx|trt to switch runtimes;
+# --image takes a file or a directory
 python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/bus.jpg
 python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/
-
-# 4. Export pt -> onnx (E2E fused graph, single output (B,300,6); --raw for the raw head output;
-#    --dynamic for dynamic batch, default fixed batch=1; --trt stitches on a TensorRT engine,
-#    --fp16 switches it to the half-precision deployment build — see "TensorRT Deployment")
-python scripts/export.py --weights weights/yolo26n.safetensors --out weights/yolo26n.onnx
-python scripts/export.py --weights weights/yolo26n.safetensors --trt          # + fp32 engine
-python scripts/export.py --weights weights/yolo26n.safetensors --trt --fp16   # + fp16 engine
-
-# 5. COCO evaluation (both paths verified against official numbers; --data is a dataset descriptor,
-#    --split picks a role in it, default val)
-python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/coco.yaml          # E2E -> 40.1
-python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/coco.yaml --nms    # NMS -> 40.9
-python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data /path/to/coco.yaml   # onnx engine
-python scripts/eval.py --weights w.safetensors --data /path/to/coco.yaml --imgsz 416            # input size: metadata > 640, --imgsz overrides
-
-# 6. Train YOLO26 — from scratch, any model size, finetune or resume (see "Datasets" and "Training"
-#    below for descriptors, recipes, artifacts and the from-scratch vs finetuned distinction)
-python scripts/train.py --data /path/to/coco.yaml --name yolo26n                     # from scratch, 100 epochs
-python scripts/train.py --data /path/to/coco.yaml --name yolo26s --scale s           # same recipe, other sizes
-python scripts/train.py --data /path/to/coco.yaml --name ft --weights w.safetensors  # finetune from weights
-python scripts/train.py --data /path/to/coco.yaml --resume runs/train/<name>         # resume (full state)
-python scripts/bench_io.py --data /path/to/coco.yaml          # optional: pick batch/workers for this box
-
-# 7. Evaluate trained weights (official pycocotools numbers)
-python scripts/eval.py --weights runs/train/<name>/weights/best.safetensors --data /path/to/coco.yaml
 ```
 
 ## Datasets
@@ -103,15 +93,13 @@ val:
 
 `--data <name|.yaml>` is the entry for train / eval / bench_io; name lookup prefers
 `config/datasets/local/<name>.yaml` (gitignored — that is where machine paths belong) over the
-shipped templates. Roles replace split names (`eval --split` picks one, default `val`; `train`/`val`
-are required-ish for what each script does). YOLO-format datasets skip `ann` and read
-`labels/*.txt` (`cls xc yc w h`, normalized) — `labels:` is optional and defaults to the `images`
-path with its `images` segment swapped for `labels`. Missing/empty label files count as backgrounds;
-a wrong labels dir fails loudly instead of training on 100 % background; a numeric-stem fallback
-makes `1.txt` ↔ `000001.jpg` (and dataflow-cv's COCO-image-id naming) resolve. Training and
-standalone evaluation work for both formats, and the model's class count comes from `names` (no
-model-yaml edit for custom datasets). The downstream end of the chain takes the same numbers:
-`infer --data <name|.yaml>` (nc + label names) and `export --nc N` (ONNX head).
+shipped templates. Roles replace split names (`eval --split` picks one, default `val`). YOLO-format
+datasets skip `ann` and read `labels/*.txt` (`cls xc yc w h`, normalized; `labels:` is optional and
+defaults to the `images` path with its `images` segment swapped for `labels`). Missing/empty label
+files count as backgrounds, and a labels dir with zero hits fails loudly instead of training on
+100 % background. The model's class count comes from `names` (no model-yaml edit for custom
+datasets), and the downstream end of the chain takes the same numbers: `infer --data <name|.yaml>`
+(nc + label names) and `export --nc N` (ONNX head).
 
 Tiny datasets for a fast loop: `scripts/make_coco_subset.py` extracts a seeded N-image subset of an
 existing COCO root, hard-links the images, writes coco/yolo descriptors (copied into
@@ -121,10 +109,11 @@ cycle into minutes.
 
 ## Training
 
+Batch size and worker count are machine-dependent and deliberately not baked in (`16 / 8` are the
+minimal portable values); `scripts/bench_io.py` sweeps loader-only then end-to-end and prints what
+to pass for *this* box — it only advises, it never edits the config.
+
 ```bash
-# --data is required: the shipped config deliberately carries no machine paths, and neither do
-# batch/workers (16/8 are the minimal portable values). scripts/bench_io.py sweeps loader-only
-# then end-to-end and prints what to pass for *this* box — it only advises, it never edits the config.
 python scripts/bench_io.py --data /path/to/coco.yaml
 python scripts/train.py --data /path/to/coco.yaml --name yolo26n --batch 64 --workers 16
 ```
@@ -162,40 +151,138 @@ names, and the yolov3-tiny anchors), so `eval` / `infer` / `export` can read a r
 configuration straight from the file — CLI flags still override, and weights without metadata
 behave exactly as before.
 
-**Not like for like.** The published 40.1 is Objects365 pretrain (150 epochs) + COCO finetune
-(245 epochs) — no official checkpoint was trained on COCO from random weights, so a from-scratch
-COCO number is not comparable to it. For reference, this repo's own baseline run (100 epochs from
-random init on COCO train2017, built-in recipe) reaches **36.22** mAP@[.5:.95] / 51.32 mAP@50 on the
-E2E path (**37.15** / 52.67 with NMS) — the gap to the official numbers is the Objects365
-pretraining plus the longer finetune schedule:
+**From scratch vs the published numbers.** The published 40.1 is Objects365 pretrain (150 epochs)
++ COCO finetune (245 epochs) — no official checkpoint was trained on COCO from random weights, so a
+from-scratch number is not comparable to it. This repo's own 100-epoch from-scratch baseline
+reaches **36.22 / 51.32** (E2E; **37.15 / 52.67** with NMS) — full table and command in
+[Results](#results).
+
+## Evaluation
+
+`scripts/eval.py` is the single formal metric pipeline (pycocotools, COCO val2017; per-class and
+size-bucket breakdowns). In-training numbers (`FastMetrics`, printed each epoch and used to pick
+`best.safetensors`) are a fast approximation for ranking only — the numbers to quote always come
+from `eval.py`.
 
 ```bash
-python scripts/train.py --data /path/to/coco.yaml --name yolo26n-from-scratch --batch 64 --workers 16
-# -> runs/train/train-yolo26n-from-scratch/weights/best.safetensors (evaluate with scripts/eval.py)
+python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/coco.yaml        # E2E -> 40.27
+python scripts/eval.py --weights weights/yolo26n.safetensors --data /path/to/coco.yaml --nms  # o2m + NMS -> 40.89
+python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data /path/to/coco.yaml # any runtime
+python scripts/eval.py --weights w.safetensors --data /path/to/coco.yaml --imgsz 416          # input size: metadata > 640
+python scripts/eval.py --weights w.safetensors --data /path/to/coco.yaml --split val --limit 100  # role + smoke subset
 ```
 
-## Training Results
+- **E2E vs NMS**: the default is the NMS-free end-to-end head; `--nms` switches to the one-to-many
+  head + NMS (slightly better mAP, slightly slower). YOLOv3-tiny has a single decode + NMS path.
+- **Engines**: `--engine pt|onnx|trt` swaps the runtime without touching the metric pipeline.
+- `--split` picks a role in the descriptor (default `val`); `--limit N` evaluates the first N
+  images; `--imgsz` precedence is CLI > weights metadata > 640.
 
-From-scratch reproducibility runs of the built-in baseline recipe (COCO train2017, one RTX 5090,
-official pycocotools numbers on COCO val2017 — mAP@[.5:.95] / mAP@50):
+## Export & Deployment
 
-| Model | Input | Epochs | E2E (NMS-free) | NMS (o2m) | Train command |
-|---|---|---|---|---|---|
-| YOLO26n | 640 | 100 | 36.22 / 51.32 | 37.15 / 52.67 | `python scripts/train.py --data coco --name yolo26n-from-scratch --batch 64 --workers 16` |
-| YOLOv3-tiny | 416 | 100 | — | 12.70 / 24.84 | same command with `--model yolov3-tiny --imgsz 416 --epochs 100` |
-| YOLOv3-tiny | 416 | 300 | — | **14.23 / 27.50** | `python scripts/train.py --data coco --model yolov3-tiny --name v3-coco-e300 --batch 64 --workers 16 --imgsz 416 --epochs 300` |
+`scripts/export.py` exports the E2E fused graph (single output `(B, 300, 6)`, decode and top-k
+in-graph; `--raw` for the raw head output `(B, 4+nc, N)`, YOLO26 only). Fixed batch 1 by default
+(edge toolchains prefer static shapes); `--dynamic` opens the batch axis. `--trt` stitches on a
+serialized TensorRT engine:
 
-Evaluate any run with `python scripts/eval.py --weights runs/train/<name>/weights/best.safetensors
---data coco` (add `--nms` for the o2m path on YOLO26; YOLOv3-tiny has a single decode + NMS path).
+```bash
+python scripts/export.py --weights weights/yolo26n.safetensors --out weights/yolo26n.onnx
+python scripts/export.py --weights weights/yolo26n.safetensors --trt          # + fp32 engine
+python scripts/export.py --weights weights/yolo26n.safetensors --trt --fp16   # + fp16 engine
+```
 
-- YOLOv3-tiny trains at 416 because that is its GFLOPs-parity point with YOLO26n@640 (5.56 vs
-  5.48 GFLOPs). The official darknet weights through this same pipeline measure 16.94 / 34.37 at
-  416 — the from-scratch gap is training-side (budget alone: 100 → 300 epochs moves 12.70 → 14.23;
-  the remainder is recipe terms such as multi-scale training and the darknet step-LR schedule),
-  not implementation. Both sides train on the same COCO train2017 images (darknet's released
-  `coco.data` uses `trainvalno5k` — the 2014 train+val set minus the 5k val images).
-- Reference points at matched input sizes, official YOLO26n weights through this pipeline:
-  34.31 / 48.61 at 416 and 37.49 / 52.59 at 512 (vs 40.27 / 55.80 at 640).
+Three runtimes share one `predict()` contract — PyTorch (`--engine pt`, GPU/CPU), ONNX Runtime
+(`--engine onnx`, CPU), TensorRT (`--engine trt`, GPU); a built `.engine` is bound to the build
+machine's GPU + TensorRT version. `scripts/infer.py` accepts the same switches. TensorRT is
+optional and not pinned in `requirements.txt` (install the matching wheel, e.g. `tensorrt-cu13`);
+this repo is built and measured with **TensorRT 11.4 / onnxruntime 1.30**, and the engine code
+adapts across TensorRT major versions — fp16 uses strongly-typed networks (TRT ≥ 8.6), fp32 handles
+both the TRT 10 `EXPLICIT_BATCH` flag and its removal in TRT 11.
+
+**fp16 engines.** TensorRT 11 removed the `FP16` builder flag, so `--fp16` exports the model in
+half precision (`model.half()` → `<name>.fp16.onnx`, same flags) and builds the engine from it with
+a strongly-typed network. The fp32 and fp16 artifacts coexist, and an fp32 graph handed to an fp16
+build is rejected instead of silently producing an fp32 engine.
+
+Measured on this machine (RTX 5090; E2E engines; inference stage only; best-case `min` of ~180
+samples per config — the GPUs were shared with two training runs throughout):
+
+| Model | b1 fp32 | b1 fp16 | b8 fp32 | b8 fp16 |
+|---|---|---|---|---|
+| YOLO26n @640 | 1.40 ms | 1.43 ms | 0.252 ms/img | **0.141 ms/img** |
+| flash-yolo @640 | 1.40 ms | 1.43 ms | 0.213 ms/img | **0.137 ms/img** |
+
+- **Batch 1 is launch-bound** — these models run at a few percent of fp32 peak utilization, so
+  per-kernel overhead dominates and fp16 buys nothing (−2%, within noise). At b1 prefer the fp32
+  engine: it is the exactly verifiable chain (`pt → onnx → engine`, engine output < 2e-3 vs PyTorch).
+- **fp16 pays off with batch** — +44% (YOLO26n) / +36% (flash-yolo) per image at batch 8. (Batch-8
+  numbers come from a raw probe — `scripts/export.py` ships fixed batch 1; batch>1 engines are built
+  from a batched export and run outside `TRTEngine`'s batch-1 contract.)
+- **No measurable accuracy cost** — COCO val2017 first 500 images, fp32 vs fp16 engine on identical
+  weights: YOLO26n 0.4432 → 0.4434 mAP@[.5:.95] (0.5994 → 0.6001 mAP@50); flash-yolo (S2 screening
+  weights) 0.3218 → 0.3223 (0.4553 → 0.4558). Every delta sits inside subset noise. The fp16 E2E
+  graph decodes box coordinates in half precision (~0.5 px quantization at 640 px); on real images
+  detection counts and class ids stay identical (max box delta 0.84 px).
+
+## Results
+
+All numbers: COCO val2017, official pycocotools (`scripts/eval.py`), mAP@[.5:.95] / mAP@50.
+
+### YOLO26 (reproduction)
+
+| Path | mAP@[.5:.95] | mAP@50 | Params | Latency¹ |
+|---|---|---|---|---|
+| This repo · E2E (NMS-free) | **40.27** | 55.80 | 2.57M | 20.4ms GPU · 57.2ms ONNX CPU |
+| Official · E2E² | 40.27 | 55.80 | 2.57M | 18.6ms GPU |
+| This repo · NMS (o2m) | **40.89** | 56.88 | 2.57M | 16.5ms GPU |
+| Official · NMS² | 40.89 | 56.88 | 2.57M | 14.6ms GPU |
+| This repo · from scratch, 100 ep · E2E (NMS-free)³ | **36.22** | 51.32 | 2.57M | — |
+| This repo · from scratch, 100 ep · NMS (o2m)³ | **37.15** | 52.67 | 2.57M | — |
+
+```bash
+python scripts/train.py --data coco --name yolo26n-from-scratch --batch 64 --workers 16
+python scripts/eval.py --weights runs/train/yolo26n-from-scratch/weights/best.safetensors --data coco
+```
+
+- ¹ Latency = inference stage only, averaged over 20 runs on this machine: RTX 4060 Laptop GPU / WSL2 CPU (onnxruntime)
+- ² The official weights re-run through this repo's pipeline (same preprocessing, postprocessing, and pycocotools metrics, same hardware) — the numbers match this repo's exactly, which is the expected consequence of bit-identical reproduction
+- ³ From scratch: COCO train2017, random init, built-in baseline recipe (100 epochs, fp32, ~14 h). Not like for like with the rows above: every official number starts from Objects365 pretraining (see [Training](#training)). Architecture is identical, so latency is unchanged
+- The official published 40.1 / 40.9 come from the official metric implementation; the ~0.1 delta to this table is metric-implementation noise, not a model difference
+
+### YOLOv3-tiny
+
+A darknet-faithful implementation (LeakyReLU convolutions, max-pool downsampling, route/upsample
+neck, anchor-based two-scale head with the official COCO anchors kept as-is), selected with
+`--model yolov3-tiny` across train / eval / infer / export. Official weights:
+`scripts/download_weights.py --model yolov3-tiny` → `scripts/convert_weights.py` → `scripts/eval.py`.
+
+| Weights | Input | mAP@[.5:.95] | mAP@50 |
+|---|---|---|---|
+| Official darknet (this pipeline) | 640 | 17.16 | 35.90 |
+| From scratch, 100 ep | 416 | 12.70 | 24.84 |
+| From scratch, 300 ep | 416 | **14.23** | **27.50** |
+
+```bash
+python scripts/train.py --data coco --model yolov3-tiny --name v3-coco-e300 --batch 64 --workers 16 --imgsz 416 --epochs 300
+python scripts/eval.py --weights runs/train/v3-coco-e300/weights/best.safetensors --data coco
+```
+
+- 416 is its GFLOPs-parity point with YOLO26n@640 (5.56 vs 5.48 GFLOPs). The published 33.1 mAP@50
+  reference is COCO test-dev at 416, so the delta to the official weights through this same pipeline
+  (35.90 @640 / 34.37 @416) is split plus input size, not implementation.
+- The from-scratch gap is training-side: budget alone (100 → 300 epochs) moves 12.70 → 14.23; the
+  remainder is recipe terms such as multi-scale training and the darknet step-LR schedule (both
+  built in — `config/recipes/yolov3-tiny-darknet.yaml`). Both sides train on the same COCO train2017
+  images (darknet's released `coco.data` uses `trainvalno5k`, the 2014 train+val set minus the 5k
+  val images).
+- For custom datasets, re-cluster the anchor priors first with
+  `scripts/compute_anchors.py --data <descriptor>` — a model-agnostic tool (darknet-style k-means +
+  YOLOv5-style coverage check; `--model/--levels/--n` target any model yaml with an `anchors:`
+  section) that prints a paste-ready fragment. The official weights must keep the official anchors;
+  a re-clustered set travels with the saved checkpoints (weights metadata), so evaluation restores
+  it automatically.
+- Reference at matched input sizes, official YOLO26n weights through this pipeline: 34.31 / 48.61
+  at 416 and 37.49 / 52.59 at 512 (vs 40.27 / 55.80 at 640).
 
 ## Flash-YOLO
 
@@ -232,50 +319,36 @@ full-length run; the neck-channel route (S3) trades −18% GFLOPs for −1.9 poi
 blocks with LiteBlock fails (−3.2 vs S3 at equal GFLOPs). All five runs were still improving at
 epoch 20.
 
-## TensorRT Deployment
+## Verification
 
-`scripts/export.py --trt` chains safetensors → onnx → a serialized TensorRT engine (bound to the
-build machine's GPU + TensorRT version). `--trt --fp16` additionally exports the half-precision
-graph (`model.half()` → `<name>.fp16.onnx`, same flags) and builds `<name>.fp16.engine` from it —
-TensorRT 11 removed the `FP16` builder flag, so precision is controlled by the graph's tensor types
-(strongly-typed network), and an fp32 graph handed to an fp16 build is rejected instead of silently
-producing an fp32 engine. The fp32 and fp16 artifacts coexist, and engine outputs are normalized
-back to fp32 (raw / YOLOv3-tiny graphs decode in the engine; the YOLO26 E2E graph already ends in
-fp32 because the class column forces a type promotion).
+The reproduction and parity claims throughout this README are load-bearing, so each one has an
+executable check behind it — most live in the 168-test suite. Checks that compare against the
+official implementation run at dev time only (requirements-dev.txt; the runtime never imports
+ultralytics).
 
-Measured on this machine (RTX 5090; E2E engines; inference stage only; best-case `min` of ~180
-samples per config — the GPUs were shared with two training runs throughout):
-
-| Model | b1 fp32 | b1 fp16 | b8 fp32 | b8 fp16 |
-|---|---|---|---|---|
-| YOLO26n @640 | 1.40 ms | 1.43 ms | 0.252 ms/img | **0.141 ms/img** |
-| flash-yolo @640 | 1.40 ms | 1.43 ms | 0.213 ms/img | **0.137 ms/img** |
-
-- **Batch 1 is launch-bound**: these models run at a few percent of fp32 peak utilization, so
-  per-kernel overhead dominates the 1.4 ms and fp16 buys nothing (−2%, within noise). At b1, prefer
-  the fp32 engine — the exactly verifiable chain (`pt → onnx → engine`, engine output verified to
-  <2e-3 vs PyTorch).
-- **fp16 pays off with batch**: at batch 8 it is +44% (YOLO26n) / +36% (flash-yolo) per image.
-  (Batch-8 numbers come from a raw probe — `scripts/export.py` ships fixed batch 1; batch>1 engines
-  are built from a batched export and run outside `TRTEngine`'s batch-1 contract.)
-- **No measurable accuracy cost**: COCO val2017 first 500 images, pycocotools, fp32 vs fp16 engine
-  on identical weights — YOLO26n 0.4432 → 0.4434 mAP@[.5:.95] (0.5994 → 0.6001 mAP@50); flash-yolo
-  (S2 screening weights) 0.3218 → 0.3223 (0.4553 → 0.4558). Every delta sits inside subset noise.
-- The fp16 E2E graph decodes box coordinates in half precision (~0.5 px quantization at 640 px);
-  the raw/NMS path decodes in fp32 outside the graph. On real images detection counts and class ids
-  stay identical (max box delta 0.84 px at 640).
-- fp16 engine vs the PyTorch half model is bit-identical on raw outputs (both round fp16-exact
-  products accumulated in fp32 — the accumulation-order noise is far below half's ulp).
+- **Bit-identical reproduction** — the official checkpoint loads with zero key mapping
+  (`strict=True`, which only succeeds when the module tree matches exactly) and the inference
+  output is bit-for-bit identical to the official model on the same input. The "Official" rows in
+  [Results](#results) are that model re-run through this pipeline — identical numbers.
+- **Training internals match** — same weights, same real batch, this implementation vs the
+  official one: total loss within <1%, gradient norm within <2%.
+- **Augmentation is pixel-exact** — mosaic canvas, affine output and the resampled labels were
+  verified against the official pipeline with 0 pixel / 0 label difference.
+- **Every runtime agrees** — pt ↔ onnx: raw output < 5e-4, E2E detections < 1e-3; a TensorRT fp32
+  engine is within 2e-3 of PyTorch; an fp16 engine is bit-identical to the PyTorch half model on
+  raw outputs.
+- **Both data formats agree** — the COCO-json and YOLO-txt loaders produce identical boxes on the
+  same images (0 difference), and identical training-side statistics.
 
 ## Project Structure
 
 ```
 assets/    demo images (bus.jpg / zidane.jpg, provenance in assets/README.md)
 config/    inference/eval defaults (inference.py) + model structures (models/yolo26.yaml,
-           models/yolov3-tiny.yaml)
+           models/yolov3-tiny.yaml, models/flash-yolo.yaml + screening variants)
            + dataset descriptors (datasets/<name>.yaml + spec.py loader; local/ = gitignored
            machine paths) + training config (train.yaml + TrainConfig in train_config.py
-           + recipes/: yolo26-coco-ft, yolo26-o365-pt)
+           + recipes/: yolo26-coco-ft, yolo26-o365-pt, yolov3-tiny-darknet)
 data/      COCO / YOLO readers (coco.py · yolo.py · build.py factory · scan.py shared scan types)
            + training pipeline (loader.py: augment entry, collate, worker contracts)
 eval/      COCO evaluation (pycocotools wrapper)
@@ -289,7 +362,7 @@ tests/     168 tests (+5 env-gated): weight alignment / export parity / metric c
            components + yolov3-tiny model, loss and I/O (darknet converter, anchors, engine, export)
 train/     training: TAL+STAL assigner / dual-head ProgLoss / MuSGD / EMA / trainer / FastMetrics
            (+ per-run artifacts: periodic checkpoints, gradient diag CSV, augment samples, meta.json)
-utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualization / IoU /
+utils/     anchors & decode / postprocessing (NMS) / pt·onnx·TensorRT engines / visualization / IoU /
            logger (dual console+file) / progress bar / paths (runs/ increment)
 ```
 
