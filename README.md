@@ -60,8 +60,11 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/bus
 python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/
 
 # 4. Export pt -> onnx (E2E fused graph, single output (B,300,6); --raw for the raw head output;
-#    --dynamic for dynamic batch, default fixed batch=1)
+#    --dynamic for dynamic batch, default fixed batch=1; --trt stitches on a TensorRT engine,
+#    --fp16 switches it to the half-precision deployment build — see "TensorRT Deployment")
 python scripts/export.py --weights weights/yolo26n.safetensors --out weights/yolo26n.onnx
+python scripts/export.py --weights weights/yolo26n.safetensors --trt          # + fp32 engine
+python scripts/export.py --weights weights/yolo26n.safetensors --trt --fp16   # + fp16 engine
 
 # 5. COCO evaluation (both paths verified against official numbers; --data is a dataset descriptor,
 #    --split picks a role in it, default val)
@@ -229,6 +232,41 @@ full-length run; the neck-channel route (S3) trades −18% GFLOPs for −1.9 poi
 blocks with LiteBlock fails (−3.2 vs S3 at equal GFLOPs). All five runs were still improving at
 epoch 20.
 
+## TensorRT Deployment
+
+`scripts/export.py --trt` chains safetensors → onnx → a serialized TensorRT engine (bound to the
+build machine's GPU + TensorRT version). `--trt --fp16` additionally exports the half-precision
+graph (`model.half()` → `<name>.fp16.onnx`, same flags) and builds `<name>.fp16.engine` from it —
+TensorRT 11 removed the `FP16` builder flag, so precision is controlled by the graph's tensor types
+(strongly-typed network), and an fp32 graph handed to an fp16 build is rejected instead of silently
+producing an fp32 engine. The fp32 and fp16 artifacts coexist, and engine outputs are normalized
+back to fp32 (raw / YOLOv3-tiny graphs decode in the engine; the YOLO26 E2E graph already ends in
+fp32 because the class column forces a type promotion).
+
+Measured on this machine (RTX 5090; E2E engines; inference stage only; best-case `min` of ~180
+samples per config — the GPUs were shared with two training runs throughout):
+
+| Model | b1 fp32 | b1 fp16 | b8 fp32 | b8 fp16 |
+|---|---|---|---|---|
+| YOLO26n @640 | 1.40 ms | 1.43 ms | 0.252 ms/img | **0.141 ms/img** |
+| flash-yolo @640 | 1.40 ms | 1.43 ms | 0.213 ms/img | **0.137 ms/img** |
+
+- **Batch 1 is launch-bound**: these models run at a few percent of fp32 peak utilization, so
+  per-kernel overhead dominates the 1.4 ms and fp16 buys nothing (−2%, within noise). At b1, prefer
+  the fp32 engine — the exactly verifiable chain (`pt → onnx → engine`, engine output verified to
+  <2e-3 vs PyTorch).
+- **fp16 pays off with batch**: at batch 8 it is +44% (YOLO26n) / +36% (flash-yolo) per image.
+  (Batch-8 numbers come from a raw probe — `scripts/export.py` ships fixed batch 1; batch>1 engines
+  are built from a batched export and run outside `TRTEngine`'s batch-1 contract.)
+- **No measurable accuracy cost**: COCO val2017 first 500 images, pycocotools, fp32 vs fp16 engine
+  on identical weights — YOLO26n 0.4432 → 0.4434 mAP@[.5:.95] (0.5994 → 0.6001 mAP@50); flash-yolo
+  (S2 screening weights) 0.3218 → 0.3223 (0.4553 → 0.4558). Every delta sits inside subset noise.
+- The fp16 E2E graph decodes box coordinates in half precision (~0.5 px quantization at 640 px);
+  the raw/NMS path decodes in fp32 outside the graph. On real images detection counts and class ids
+  stay identical (max box delta 0.84 px at 640).
+- fp16 engine vs the PyTorch half model is bit-identical on raw outputs (both round fp16-exact
+  products accumulated in fp32 — the accumulation-order noise is far below half's ulp).
+
 ## Project Structure
 
 ```
@@ -247,8 +285,8 @@ model/     model implementation (yaml factory build.py + arch registry / dual De
 runs/      runtime results (gitignored)
 scripts/   download_weights / convert_weights / compute_anchors / make_coco_subset / infer /
            export / eval / train / bench_io / compare_official
-tests/     147 tests: weight alignment / export parity / metric correctness / training components
-           + yolov3-tiny model, loss and I/O (darknet converter, anchors, engine, export)
+tests/     168 tests (+5 env-gated): weight alignment / export parity / metric correctness / training
+           components + yolov3-tiny model, loss and I/O (darknet converter, anchors, engine, export)
 train/     training: TAL+STAL assigner / dual-head ProgLoss / MuSGD / EMA / trainer / FastMetrics
            (+ per-run artifacts: periodic checkpoints, gradient diag CSV, augment samples, meta.json)
 utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualization / IoU /
@@ -258,7 +296,7 @@ utils/     anchors & decode / postprocessing (NMS) / pt·onnx engines / visualiz
 ## Tests
 
 ```bash
-pytest tests/    # 152 tests: weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + yolov3-tiny (model, loss, darknet converter, anchors, engines, export) + weights metadata
+pytest tests/    # 168 tests (+5 env-gated): weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + yolov3-tiny (model, loss, darknet converter, anchors, engines, export) + weights metadata + TensorRT fp32/fp16 engines
 ```
 
 `tests/test_weight_alignment.py` compares against the official .pt as a dev-time reference — install requirements-dev.txt to run it.
