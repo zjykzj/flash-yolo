@@ -198,10 +198,11 @@ Evaluate any run with `python scripts/eval.py --weights runs/train/<name>/weight
 
 Flash-YOLO is this repo's own lightweight architecture — YOLOv3-tiny's cheap spatial downsampling
 (PoolConv: max-pool + 1×1 conv, in place of every stride-2 3×3 convolution except the RGB entry)
-combined with YOLO26's CSP capacity allocation; the Detect/E2E head, loss and training pipeline are
-YOLO26's unchanged, so every variant below is single-variable against a from-scratch YOLO26n
-control. At 640 it is **3.79 GFLOPs / 1.97M params (−31% vs YOLO26n)** while keeping all three
-detection levels (P3/P4/P5) — `--model flash-yolo`, structure in `config/models/flash-yolo.yaml`.
+combined with YOLO26's CSP capacity allocation, plus a depthwise-3×3 stem (the round-1 screening
+winner); the Detect/E2E head, loss and training pipeline are YOLO26's unchanged, so every variant
+below is single-variable against a from-scratch YOLO26n control. At 640 it is **3.80 GFLOPs /
+1.97M params (−31% vs YOLO26n)** while keeping all three detection levels (P3/P4/P5) —
+`--model flash-yolo` (the shipped `config/models/flash-yolo.yaml` is the promoted S2 design).
 
 Round-1 screening (2026-10; five 20-epoch runs, 640 input, batch 32, same recipe/seed; in-training
 FastMetrics numbers, an approximation used for ranking — formal numbers come with the full-length
@@ -216,9 +217,10 @@ run):
 | S4 | S1 + LiteBlock neck | 3.00 | 21.83 | 34.55 |
 
 ```bash
-# the screening runs (~4 h each on one RTX 5090); S2-S4 are --cfg variants of the main structure
+# the screening runs (~4 h each on one RTX 5090); s1-s4 are the --cfg corpus — flash-yolo.yaml is
+# the promoted S2 structure, s1 is the pre-promotion design, both kept for exact reproduction
 python scripts/train.py --data coco --model yolo26 --scale n --name fy-s0-yolo26n --batch 32 --workers 8 --imgsz 640 --epochs 20
-python scripts/train.py --data coco --model flash-yolo --name fy-s1-flash-yolo --batch 32 --workers 8 --imgsz 640 --epochs 20
+python scripts/train.py --data coco --model flash-yolo --cfg config/models/flash-yolo-s1.yaml --name fy-s1-flash-yolo --batch 32 --workers 8 --imgsz 640 --epochs 20
 python scripts/train.py --data coco --model flash-yolo --cfg config/models/flash-yolo-s2.yaml --name fy-s2-dwstem --batch 32 --workers 8 --imgsz 640 --epochs 20
 ```
 

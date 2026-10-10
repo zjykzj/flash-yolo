@@ -42,10 +42,10 @@ def test_gflops_budget_below_yolo26n():
     assert fl("flash-yolo", None) < fl("yolo26", "n") * 0.8
 
 
-@pytest.mark.parametrize("yaml_name", ["flash-yolo.yaml", "flash-yolo-s2.yaml",
+@pytest.mark.parametrize("yaml_name", ["flash-yolo.yaml", "flash-yolo-s1.yaml", "flash-yolo-s2.yaml",
                                        "flash-yolo-s3.yaml", "flash-yolo-s4.yaml"])
 def test_flash_yolo_variant_yamls_build(yaml_name):
-    """config/models/ 下全部 flash-yolo 变体（含三个筛选候选）都能组装 + 前向（yaml 语料回归闸门）"""
+    """config/models/ 下全部 flash-yolo 结构（现役 + s1-s4 筛选语料）都能组装 + 前向（yaml 回归闸门）"""
     model = DetectionModel(cfg_path=ROOT / "config" / "models" / yaml_name, scale="flash", imgsz=320)
     model.eval()
     with torch.no_grad():

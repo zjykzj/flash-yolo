@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **flash-yolo adopts the DW-stem design**: the round-1 20-epoch screening (control = from-scratch
+  YOLO26n) promoted S2 — the depthwise-3×3 stem variant: +0.67 mAP at equal GFLOPs, batch-1 latency
+  unchanged (TRT 1.33 vs 1.32 ms) — into `config/models/flash-yolo.yaml`; the pre-promotion
+  structure is kept as `flash-yolo-s1.yaml`, and s1-s4 together remain the `--cfg` screening corpus.
 - **README training documentation**: a "Training Results" section with the from-scratch command +
   metric table for YOLO26n (100 ep) and YOLOv3-tiny (100 / 300 ep @416, plus the official weights
   through the same pipeline at matched input sizes), and a "Flash-YOLO" section documenting the
