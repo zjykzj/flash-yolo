@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **onnxruntime sessions use a bounded thread pool**: `OnnxEngine` now sets `intra_op_num_threads`
+  to ≤16 and `inter_op_num_threads` to 1 instead of leaving ORT's core-count default — on
+  container hosts that over-report CPU counts (this box: 208 reported vs a 25-core cgroup quota)
+  the default pool oversubscribed and ran the engine 15-20× slow (120-196 ms vs 10-14 ms per 640²
+  image, batch 1). Inference numbers are unchanged; only deployed speed.
 - **flash-yolo adopts the DW-stem design**: the round-1 20-epoch screening (control = from-scratch
   YOLO26n) promoted S2 — the depthwise-3×3 stem variant: +0.67 mAP at equal GFLOPs, batch-1 latency
   unchanged (TRT 1.33 vs 1.32 ms) — into `config/models/flash-yolo.yaml`; the pre-promotion

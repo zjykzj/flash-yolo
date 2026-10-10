@@ -57,6 +57,18 @@ def test_onnx_engine_summary_line():
     print(f"  onnx 摘要行：{line}")
 
 
+def test_onnx_engine_session_thread_cap():
+    """会话线程策略：intra ≤16（容器谎报核数时防线程超订）、inter = 1（配置回归闸门，不需要 onnx 文件）"""
+    import os
+
+    from utils.engines.onnx import _INTRA_OP_THREADS_MAX, OnnxEngine
+
+    so = OnnxEngine._session_options()
+    assert so.intra_op_num_threads == min(_INTRA_OP_THREADS_MAX, os.cpu_count() or _INTRA_OP_THREADS_MAX)
+    assert so.inter_op_num_threads == 1
+    print(f"  onnx 线程策略：intra {so.intra_op_num_threads} · inter {so.inter_op_num_threads}")
+
+
 def test_pt_engine_custom_nc(tmp_path):
     """nc≠80 的权重（自定义数据集训练产物）：引擎按 nc 建头才能 strict 加载
 

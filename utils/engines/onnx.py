@@ -1,5 +1,6 @@
 """ONNX Runtime 后端：OnnxEngine（固定 CPUExecutionProvider；配合 scripts/export.py 的 onnx）"""
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,9 @@ from config.inference import IMGSZ
 from utils.engines.base import BaseEngine
 
 __all__ = ["OnnxEngine"]
+
+# 会话线程上限：ORT 默认按"检测到的 CPU 数"开线程池，容器常谎报核数 → 线程超订（见 _session_options）
+_INTRA_OP_THREADS_MAX = 16
 
 
 class OnnxEngine(BaseEngine):
@@ -23,7 +27,8 @@ class OnnxEngine(BaseEngine):
         self.arch = model
         self.end2end = end2end
         self.onnx_path = onnx_path
-        self.sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+        self._sess_options = self._session_options()
+        self.sess = ort.InferenceSession(onnx_path, self._sess_options, providers=["CPUExecutionProvider"])
         self.input_name = self.sess.get_inputs()[0].name
         shape = self.sess.get_inputs()[0].shape  # (1, 3, H, W)
         graph_imgsz = shape[2] if len(shape) == 4 and isinstance(shape[2], int) else None
@@ -32,6 +37,19 @@ class OnnxEngine(BaseEngine):
                              f"(re-export with --imgsz {imgsz} to use that size)")
         self.imgsz = graph_imgsz or (int(imgsz) if imgsz is not None else IMGSZ)
         self._warmup()
+
+    @staticmethod
+    def _session_options():
+        """会话线程策略：intra 压到 ≤16、inter 单线程
+
+        ORT 默认按"检测到的 CPU 数"开线程池，容器环境常谎报核数（实测本机报 208、cgroup 实际
+        25 核），超订会把单张推理拖慢 15-20×（120-196ms -> 10-12ms）；小模型在 ≤16 线程已收益
+        饱和（8/16/25 线程实测 11.7/10.1/13.6ms）。
+        """
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = min(_INTRA_OP_THREADS_MAX, os.cpu_count() or _INTRA_OP_THREADS_MAX)
+        so.inter_op_num_threads = 1
+        return so
 
     def _warmup(self):
         """预热：跑 3 次后计时才反映稳态性能（dummy 用实际输入尺寸）"""
