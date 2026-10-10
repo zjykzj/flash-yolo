@@ -1,8 +1,8 @@
 # Flash-YOLO
 
-> ⚡ **Real-time speed, end-to-end training.** A complete, independent framework for lightweight detection — train · evaluate · export · infer, every module readable on its own.
+> ⚡ **Flash-YOLO: a super-lightweight architecture, 31% fewer GFLOPs than YOLO26n. Millisecond inference on GPU and CPU — all inside a complete, independent framework: train · evaluate · export · infer, raw dataset in, TensorRT engine out.**
 >
-> No monolithic abstractions, no heavyweight dependencies — core runtime deps: PyTorch + NumPy only.
+> No monolithic abstractions, no heavyweight dependencies — core runtime is just PyTorch + NumPy.
 
 <p align="center">
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.5.0-blue.svg" alt="Version 0.5.0"></a>
