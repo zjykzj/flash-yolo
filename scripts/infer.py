@@ -1,10 +1,10 @@
 """单图 / 目录推理 + 可视化（pt / onnx；YOLO26 / YOLOv3-tiny）
 
 用法:
-    python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/bus.jpg
+    python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/traffic.jpg
     python scripts/infer.py --weights yolo26n.onnx --engine onnx --image assets/     # 目录批量
-    python scripts/infer.py --weights weights/yolo26n.safetensors --image bus.jpg --nms  # o2m+NMS 路径
-    python scripts/infer.py --weights weights/yolov3-tiny.safetensors --image bus.jpg  # v3（档位由架构固定）
+    python scripts/infer.py --weights weights/yolo26n.safetensors --image traffic.jpg --nms  # o2m+NMS 路径
+    python scripts/infer.py --weights weights/yolov3-tiny.safetensors --image traffic.jpg  # v3（档位由架构固定）
 """
 
 import argparse

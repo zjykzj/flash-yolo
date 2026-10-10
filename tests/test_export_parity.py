@@ -18,7 +18,7 @@ SAFE_PATH = ROOT / "weights" / "yolo26n.safetensors"
 ONNX_PATH = ROOT / "weights" / "yolo26n.onnx"
 RAW_ONNX_PATH = ROOT / "weights" / "yolo26n_raw.onnx"
 # 真实测试图片：优先环境变量，其次仓库自带 assets（来源声明见 assets/README.md）
-TEST_IMAGE = os.environ.get("FLASH_YOLO_TEST_IMAGE") or ROOT / "assets" / "bus.jpg"
+TEST_IMAGE = os.environ.get("FLASH_YOLO_TEST_IMAGE") or ROOT / "assets" / "traffic.jpg"
 
 
 def _export(extra_args, out_path):

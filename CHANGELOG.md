@@ -20,11 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **README restructured around the four workflows** (train · evaluate · export · infer): a scannable
-  Highlights intro replaces the opening results table and its footnote block, Quick Start splits into
-  four one-command subsections, Evaluation and Verification get dedicated sections, the reproduction
-  numbers are consolidated in a single Results section, and the TensorRT material now states the
-  tested engine versions (TensorRT 11.4 / onnxruntime 1.30) and its cross-version compatibility story.
+- **README restructured around the four workflows** (train · evaluate · export · infer): it now opens
+  with a flash-yolo-vs-YOLO26n comparison table (mAP / params / GFLOPs / latency, with per-column
+  deltas) and a claim list, Quick Start splits into four one-command subsections, Evaluation and
+  Verification get dedicated sections, the reproduction numbers are consolidated in a single Results
+  section, and the TensorRT material states the tested engine versions (TensorRT 11.4 /
+  onnxruntime 1.30) and its cross-version compatibility story.
+- **Demo assets refreshed**: the README hero images are now COCO val2017 samples
+  (`assets/traffic.jpg` / `assets/baseball.jpg`, image ids recorded in `assets/README.md`) with
+  rendered flash-yolo detections beside them; the previous ultralytics-ecosystem demo images
+  (bus.jpg / zidane.jpg) are removed, and the export-parity test now uses `traffic.jpg` as its
+  real-image fixture.
 
 ## [0.5.0] - 2026-10-10
 

@@ -11,7 +11,21 @@
   <a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-2.13-ee4c2c.svg" alt="PyTorch"></a>
 </p>
 
-## Highlights
+<p align="center">
+  <img src="assets/traffic_det.jpg" width="49%" alt="flash-yolo detections — street traffic">
+  <img src="assets/baseball_det.jpg" width="49%" alt="flash-yolo detections — baseball">
+  <br>
+  <em>Detections by flash-yolo — COCO val2017 samples, 640 input</em>
+</p>
+
+| Model | mAP@[.5:.95] | mAP@50 | Params | GFLOPs @640 | ORT-CPU b1 (ms) | TRT b1 fp32 (ms) | TRT b8 fp32 (ms/img) | TRT b8 fp16 (ms/img) |
+|---|---|---|---|---|---|---|---|---|
+| YOLO26n · official weights | 40.27 | 55.80 | 2.57M | 5.48 | —³ | 1.38 | 0.252 | 0.141 |
+| YOLO26n · this repo, 100 ep | 36.22 | 51.32 | 2.57M | 5.48 | —³ | 1.38 | 0.252 | 0.141 |
+| flash-yolo · this repo, 100 ep | —¹ | —¹ | 1.97M | 3.80 | —³ | 1.33 | 0.213 | 0.130 |
+| **Δ (flash-yolo vs YOLO26n)** | — | — | **−0.60M (−23%)** | **−1.68 (−31%)** | **—** | **−0.05 (−4%)** | **−0.039 (−15%)** | **−0.011 (−8%)** |
+
+¹ flash-yolo's 100-epoch run is in progress — its COCO numbers land on completion (structure and latency are architecture facts, already final). ² COCO val2017 · pycocotools · E2E (NMS-free) at 640; speed: TensorRT on one RTX 5090, inference stage, best-case min across repeated runs on a shared box (two trainings ran throughout) — b1 fp16 is ~1.20 ms for both models (the b1 column above is the fp32 chain). Δ compares against the budget-matched from-scratch YOLO26n — for structure/latency both YOLO26n rows are identical. Details: [Results](#results) · [Export & Deployment](#export--deployment). ³ ORT-CPU (Intel Xeon Platinum 8470Q, 25-core container quota) is pending a quiet re-measurement — under the current training load the CPU delta is not measurable reliably.
 
 - **Reproduces YOLO26n bit-identically** — the official weights load with zero key mapping
   (260 layers · 2,572,280 params) and the inference output is bit-for-bit identical. COCO val2017
@@ -22,8 +36,9 @@
 - **A second architecture, end to end** — **YOLOv3-tiny**, darknet-faithful, selected with
   `--model yolov3-tiny` across train / eval / infer / export; the official darknet weights verified
   through the same pipeline (**17.16** mAP@[.5:.95] @640).
-- **Its own lightweight model** — **flash-yolo**: 3.80 GFLOPs / 1.97M params @640 (**−31% / −23%**
-  vs YOLO26n) keeping all three detection levels, from a screened design space — see [Flash-YOLO](#flash-yolo).
+- **Its own lightweight model** — **flash-yolo**: a single-variable screened design that keeps
+  YOLO26's three detection levels (P3/P4/P5) — scorecard in the table above, design story in
+  [Flash-YOLO](#flash-yolo).
 - **Three runtimes, one contract** — PyTorch / ONNX Runtime (CPU) / TensorRT (GPU, fp32 **and**
   fp16) all answer the same `predict()`; `scripts/export.py` chains safetensors → onnx → serialized
   engine in one command (see [Export & Deployment](#export--deployment)).
@@ -71,7 +86,7 @@ python scripts/export.py --weights weights/yolo26n.safetensors --trt --fp16
 ```bash
 # E2E NMS-free by default; --nms for the o2m path, --engine onnx|trt to switch runtimes;
 # --image takes a file or a directory
-python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/bus.jpg
+python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/traffic.jpg
 python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/
 ```
 
@@ -204,20 +219,20 @@ half precision (`model.half()` → `<name>.fp16.onnx`, same flags) and builds th
 a strongly-typed network. The fp32 and fp16 artifacts coexist, and an fp32 graph handed to an fp16
 build is rejected instead of silently producing an fp32 engine.
 
-Measured on this machine (RTX 5090; E2E engines; inference stage only; best-case `min` of ~180
-samples per config — the GPUs were shared with two training runs throughout):
+Measured on this machine (RTX 5090; E2E engines; inference stage only; best-case `min` across
+repeated runs — the GPU was shared with two training runs throughout):
 
 | Model | b1 fp32 | b1 fp16 | b8 fp32 | b8 fp16 |
 |---|---|---|---|---|
-| YOLO26n @640 | 1.40 ms | 1.43 ms | 0.252 ms/img | **0.141 ms/img** |
-| flash-yolo @640 | 1.40 ms | 1.43 ms | 0.213 ms/img | **0.137 ms/img** |
+| YOLO26n @640 | 1.38 ms | 1.20 ms | 0.252 ms/img | **0.141 ms/img** |
+| flash-yolo @640 | 1.33 ms | 1.20 ms | 0.213 ms/img | **0.130 ms/img** |
 
-- **Batch 1 is launch-bound** — these models run at a few percent of fp32 peak utilization, so
-  per-kernel overhead dominates and fp16 buys nothing (−2%, within noise). At b1 prefer the fp32
-  engine: it is the exactly verifiable chain (`pt → onnx → engine`, engine output < 2e-3 vs PyTorch).
-- **fp16 pays off with batch** — +44% (YOLO26n) / +36% (flash-yolo) per image at batch 8. (Batch-8
-  numbers come from a raw probe — `scripts/export.py` ships fixed batch 1; batch>1 engines are built
-  from a batched export and run outside `TRTEngine`'s batch-1 contract.)
+- **Batch 1 sits near the overhead floor** — fp16 still trims ~10-13% (1.20 ms vs ~1.35 ms), but
+  the two architectures tie there; the fp32 chain remains the exactly verifiable one
+  (`pt → onnx → engine`, engine output < 2e-3 vs PyTorch).
+- **fp16 pays off with batch** — per-image latency drops 44% (YOLO26n) / 39% (flash-yolo) at batch 8.
+  (Batch-8 numbers come from a raw probe — `scripts/export.py` ships fixed batch 1; batch>1 engines
+  are built from a batched export and run outside `TRTEngine`'s batch-1 contract.)
 - **No measurable accuracy cost** — COCO val2017 first 500 images, fp32 vs fp16 engine on identical
   weights: YOLO26n 0.4432 → 0.4434 mAP@[.5:.95] (0.5994 → 0.6001 mAP@50); flash-yolo (S2 screening
   weights) 0.3218 → 0.3223 (0.4553 → 0.4558). Every delta sits inside subset noise. The fp16 E2E
@@ -343,7 +358,7 @@ ultralytics).
 ## Project Structure
 
 ```
-assets/    demo images (bus.jpg / zidane.jpg, provenance in assets/README.md)
+assets/    demo images (traffic.jpg / baseball.jpg + rendered detections; provenance in assets/README.md)
 config/    inference/eval defaults (inference.py) + model structures (models/yolo26.yaml,
            models/yolov3-tiny.yaml, models/flash-yolo.yaml + screening variants)
            + dataset descriptors (datasets/<name>.yaml + spec.py loader; local/ = gitignored
