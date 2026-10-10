@@ -171,6 +171,62 @@ python scripts/train.py --data /path/to/coco.yaml --name yolo26n-from-scratch --
 # -> runs/train/train-yolo26n-from-scratch/weights/best.safetensors (evaluate with scripts/eval.py)
 ```
 
+## Training Results
+
+From-scratch reproducibility runs of the built-in baseline recipe (COCO train2017, one RTX 5090,
+official pycocotools numbers on COCO val2017 — mAP@[.5:.95] / mAP@50):
+
+| Model | Input | Epochs | E2E (NMS-free) | NMS (o2m) | Train command |
+|---|---|---|---|---|---|
+| YOLO26n | 640 | 100 | 36.22 / 51.32 | 37.15 / 52.67 | `python scripts/train.py --data coco --name yolo26n-from-scratch --batch 64 --workers 16` |
+| YOLOv3-tiny | 416 | 100 | — | 12.70 / 24.84 | same command with `--model yolov3-tiny --imgsz 416 --epochs 100` |
+| YOLOv3-tiny | 416 | 300 | — | **14.23 / 27.50** | `python scripts/train.py --data coco --model yolov3-tiny --name v3-coco-e300 --batch 64 --workers 16 --imgsz 416 --epochs 300` |
+
+Evaluate any run with `python scripts/eval.py --weights runs/train/<name>/weights/best.safetensors
+--data coco` (add `--nms` for the o2m path on YOLO26; YOLOv3-tiny has a single decode + NMS path).
+
+- YOLOv3-tiny trains at 416 because that is its GFLOPs-parity point with YOLO26n@640 (5.56 vs
+  5.48 GFLOPs). The official darknet weights through this same pipeline measure 16.94 / 34.37 at
+  416 — the from-scratch gap is training-side (budget alone: 100 → 300 epochs moves 12.70 → 14.23;
+  the remainder is recipe terms such as multi-scale training and the darknet step-LR schedule),
+  not implementation. Both sides train on the same COCO train2017 images (darknet's released
+  `coco.data` uses `trainvalno5k` — the 2014 train+val set minus the 5k val images).
+- Reference points at matched input sizes, official YOLO26n weights through this pipeline:
+  34.31 / 48.61 at 416 and 37.49 / 52.59 at 512 (vs 40.27 / 55.80 at 640).
+
+## Flash-YOLO
+
+Flash-YOLO is this repo's own lightweight architecture — YOLOv3-tiny's cheap spatial downsampling
+(PoolConv: max-pool + 1×1 conv, in place of every stride-2 3×3 convolution except the RGB entry)
+combined with YOLO26's CSP capacity allocation; the Detect/E2E head, loss and training pipeline are
+YOLO26's unchanged, so every variant below is single-variable against a from-scratch YOLO26n
+control. At 640 it is **3.79 GFLOPs / 1.97M params (−31% vs YOLO26n)** while keeping all three
+detection levels (P3/P4/P5) — `--model flash-yolo`, structure in `config/models/flash-yolo.yaml`.
+
+Round-1 screening (2026-10; five 20-epoch runs, 640 input, batch 32, same recipe/seed; in-training
+FastMetrics numbers, an approximation used for ranking — formal numbers come with the full-length
+run):
+
+| Run | Design | GFLOPs | mAP@[.5:.95] | mAP@50 |
+|---|---|---|---|---|
+| S0 | YOLO26n (control) | 5.48 | 29.22 | 42.45 |
+| S1 | flash-yolo | 3.79 | 26.25 | 38.92 |
+| **S2** | S1 + DW stem | 3.80 | **26.92** | 39.67 |
+| S3 | S1 + neck ×0.75 | 3.09 | 25.00 | 37.66 |
+| S4 | S1 + LiteBlock neck | 3.00 | 21.83 | 34.55 |
+
+```bash
+# the screening runs (~4 h each on one RTX 5090); S2-S4 are --cfg variants of the main structure
+python scripts/train.py --data coco --model yolo26 --scale n --name fy-s0-yolo26n --batch 32 --workers 8 --imgsz 640 --epochs 20
+python scripts/train.py --data coco --model flash-yolo --name fy-s1-flash-yolo --batch 32 --workers 8 --imgsz 640 --epochs 20
+python scripts/train.py --data coco --model flash-yolo --cfg config/models/flash-yolo-s2.yaml --name fy-s2-dwstem --batch 32 --workers 8 --imgsz 640 --epochs 20
+```
+
+Findings: the DW stem wins at equal GFLOPs (+0.67 over S1) and is the design taken into the
+full-length run; the neck-channel route (S3) trades −18% GFLOPs for −1.9 points; replacing neck
+blocks with LiteBlock fails (−3.2 vs S3 at equal GFLOPs). All five runs were still improving at
+epoch 20.
+
 ## Project Structure
 
 ```

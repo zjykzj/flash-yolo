@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   yolov3-tiny@416 0.40 ms — TRT narrows the eager-to-deployment gap for every model (yolo26n
   5.97 → 1.52 ms). A parity test pins the fp32 engine's raw outputs to PyTorch within 2e-3.
 
+### Changed
+
+- **README training documentation**: a "Training Results" section with the from-scratch command +
+  metric table for YOLO26n (100 ep) and YOLOv3-tiny (100 / 300 ep @416, plus the official weights
+  through the same pipeline at matched input sizes), and a "Flash-YOLO" section documenting the
+  design premise and the round-1 20-epoch screening table.
+
 ### Fixed
 
 - **TensorRT batch-dim strip**: `TRTEngine._forward` now strips the batch dimension from the
