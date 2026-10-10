@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-10
+
 ### Added
 
 - **Multi-scale training + step LR schedule (with a `yolov3-tiny-darknet` recipe)**: `multi_scale: r`
