@@ -23,6 +23,10 @@ def _trt_torch_dtype(trt, engine, name):
 def build_trt_engine(onnx_path, engine_path, fp16=False, workspace_gb=1):
     """onnx -> TensorRT 序列化 engine（scripts/export.py --trt 的底层实现）
 
+    fp16=True 走 strongly-typed 网络：TRT 11 起精度由网络张量类型决定（BuilderFlag.FP16 已移除、
+    也没有 precision-constraint 类标志），所以 fp16 引擎必须喂**半精度 onnx**（scripts/export.py
+    --fp16 会先导出 <stem>.fp16.onnx 再调这里）。喂 fp32 的 onnx 会直接报错，不静默降级。
+
     tensorrt 是可选依赖：懒加载，未安装时报 ImportError（调用方转成用户可读的提示）。
     """
     try:
@@ -33,24 +37,27 @@ def build_trt_engine(onnx_path, engine_path, fp16=False, workspace_gb=1):
             "(pip install tensorrt-cu13, see https://docs.nvidia.com/deeplearning/tensorrt/)") from e
     trt_logger = trt.Logger(trt.Logger.WARNING)
     builder = trt.Builder(trt_logger)
-    try:  # TRT 10 及更早需要显式 EXPLICIT_BATCH 标志；TRT 11 移除该标志（已是唯一模式）
-        flags = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
-    except AttributeError:
-        flags = 0
+    if fp16:
+        strongly_typed = getattr(trt.NetworkDefinitionCreationFlag, "STRONGLY_TYPED", None)
+        if strongly_typed is None:
+            raise RuntimeError("fp16 requires strongly-typed network support (TensorRT >= 8.6)")
+        flags = 1 << int(strongly_typed)
+    else:
+        try:  # TRT 10 及更早需要显式 EXPLICIT_BATCH 标志；TRT 11 移除该标志（已是唯一模式）
+            flags = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
+        except AttributeError:
+            flags = 0
     network = builder.create_network(flags)
     parser = trt.OnnxParser(network, trt_logger)
     if not parser.parse_from_file(str(onnx_path)):
         errors = "; ".join(str(parser.get_error(i)) for i in range(parser.num_errors))
         raise RuntimeError(f"TensorRT failed to parse {onnx_path}: {errors}")
+    if fp16 and network.get_input(0).dtype != trt.DataType.HALF:
+        raise ValueError(f"fp16 engine build requires a half-precision onnx "
+                         f"(got input dtype {network.get_input(0).dtype}) — export it with "
+                         f"scripts/export.py --fp16, or drop fp16=True")
     config = builder.create_builder_config()
     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace_gb << 30)
-    if fp16:
-        fp16_flag = getattr(trt.BuilderFlag, "FP16", None)
-        if fp16_flag is None:  # TRT 11+ 移除 FP16 标志（精度由 strongly-typed 网络控制）
-            raise RuntimeError("--fp16 is not supported by this TensorRT version (>= 11 removed the FP16 "
-                               "builder flag; precision is controlled by strongly-typed networks) — "
-                               "rebuild without --fp16")
-        config.set_flag(fp16_flag)
     serialized = builder.build_serialized_network(network, config)
     if serialized is None:
         raise RuntimeError(f"TensorRT engine build failed for {onnx_path}")
@@ -115,7 +122,10 @@ class TRTEngine(BaseEngine):
             self._in.copy_(img)
             self.ctx.execute_async_v3(self._stream.cuda_stream)
         self._stream.synchronize()
-        return self._out[0].cpu().numpy()  # 剥批：引擎输出 (1, ...)，契约与 PtEngine / OnnxEngine 一致
+        out = self._out[0].cpu().numpy()  # 剥批：引擎输出 (1, ...)，契约与 PtEngine / OnnxEngine 一致
+        # fp16 图里 raw/v3 输出是半精度（E2E 输出因 cls 的 .float() 类型提升保持 fp32）——
+        # 统一转 fp32：下游 numpy 解码在 half 上既慢又无谓
+        return out if out.dtype == np.float32 else out.astype(np.float32)
 
     def _warmup(self):
         """预热：跑 3 次后计时才反映稳态性能（dummy 用实际输入尺寸）"""
@@ -125,6 +135,8 @@ class TRTEngine(BaseEngine):
 
     @property
     def summary_line(self):
-        """模型行的一段：部署口径（engine 文件大小 + I/O 形状；逐层结构见构建它的 onnx）"""
+        """模型行的一段：部署口径（engine 文件大小 + I/O 形状/精度；逐层结构见构建它的 onnx）"""
         mib = Path(self.engine_path).stat().st_size / 2**20
-        return f"TensorRT {mib:.1f} MiB · in {self.in_shape} · out {self.out_shape}"
+        prec = {torch.float32: "fp32", torch.float16: "fp16", torch.bfloat16: "bf16"}.get(
+            self._in.dtype, str(self._in.dtype).removeprefix("torch."))
+        return f"TensorRT {mib:.1f} MiB ({prec}) · in {self.in_shape} · out {self.out_shape}"

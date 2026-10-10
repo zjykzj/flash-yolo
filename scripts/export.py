@@ -13,6 +13,10 @@ yolov3-tiny：单输出解码 (B, NA, 5+nc)——obj×cls 与按类 NMS 在外�
     python scripts/export.py --weights weights/yolo26n.safetensors --trt [--fp16]   # 顺带构建 TensorRT engine
 
 --trt：onnx 导出后继续构建序列化 engine（与构建机 GPU/TRT 版本绑定、不跨机移植；换机需重构建）。
+--fp16：额外导出半精度图 <stem>.fp16.onnx（model.half()）并据此构建 fp16 引擎 <stem>.fp16.engine——
+TRT 11 已移除 FP16 builder flag，精度由 strongly-typed 网络的张量类型决定，所以 fp16 = 半精度 onnx
++ strongly-typed 构建；fp32 与 fp16 两套产物文件名不同、可共存。fp16 是有损的部署取向：先跑
+scripts/eval.py 对比精度再决定是否采用（引擎输出统一转回 fp32，下游契约不变）。
 """
 
 import argparse
@@ -49,7 +53,9 @@ def main():
     parser.add_argument("--opset", type=int, default=18)
     parser.add_argument("--trt", action="store_true",
                         help="also build a TensorRT engine (.engine) from the exported onnx (needs tensorrt + CUDA)")
-    parser.add_argument("--fp16", action="store_true", help="build the TRT engine with fp16 precision (requires --trt)")
+    parser.add_argument("--fp16", action="store_true",
+                        help="fp16 deployment: also export a half-precision onnx and build the engine from it "
+                             "(requires --trt)")
     args = parser.parse_args()
 
     arch, scale = resolve_arch_scale(args.weights, args.model, args.scale)
@@ -99,10 +105,27 @@ def main():
     if args.trt:
         from utils.engines import build_trt_engine  # 懒加载：非 trt 路径不引入 engine 依赖
 
-        engine_path = Path(out_path).with_suffix(".engine")
+        engine_src = Path(out_path)
+        if args.fp16:
+            # fp16 引擎 = 半精度 onnx + strongly-typed 构建（TRT 11 无 FP16 flag）；独立落盘、
+            # 与 fp32 产物共存（<stem>.fp16.onnx -> <stem>.fp16.engine）
+            engine_src = Path(out_path).with_name(Path(out_path).stem + ".fp16.onnx")
+            with torch.no_grad():
+                torch.onnx.export(
+                    model.half(),
+                    dummy.half(),
+                    str(engine_src),
+                    input_names=["images"],
+                    output_names=["output0"],
+                    opset_version=args.opset,
+                    dynamo=False,
+                )
+            logger.info(f"exported fp16 onnx -> {engine_src}")
+
+        engine_path = engine_src.with_suffix(".engine")
         try:
-            build_trt_engine(out_path, engine_path, fp16=args.fp16)
-        except (ImportError, RuntimeError) as e:
+            build_trt_engine(engine_src, engine_path, fp16=args.fp16)
+        except (ImportError, RuntimeError, ValueError) as e:
             parser.error(str(e))
         mib = Path(engine_path).stat().st_size / 2**20
         logger.info(f"exported TensorRT engine ({'fp16' if args.fp16 else 'fp32'}) -> {engine_path} "

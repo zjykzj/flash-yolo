@@ -21,8 +21,11 @@ def make_anchors(feats, strides, offset=0.5):
     anchors, stride_tensor = [], []
     for feat, stride in zip(feats, strides):
         h, w = feat.shape[2:]
-        sx = torch.arange(w, dtype=feat.dtype, device=feat.device) + offset
-        sy = torch.arange(h, dtype=feat.dtype, device=feat.device) + offset
+        # 先在 fp32 建格再 cast 到 feat.dtype：half 的 arange 会被 TorchScript ONNX 导出器拒绝
+        # （"tensor does not have a device"），挡住 model.half() -> fp16 onnx 的整条路。
+        # 格点值（≤639.5）在 fp16 可精确表示，fp32 路径数值不变。
+        sx = (torch.arange(w, dtype=torch.float32, device=feat.device) + offset).to(feat.dtype)
+        sy = (torch.arange(h, dtype=torch.float32, device=feat.device) + offset).to(feat.dtype)
         sy, sx = torch.meshgrid(sy, sx, indexing="ij")
         anchors.append(torch.stack((sx, sy), -1).reshape(-1, 2))
         stride_tensor.append(feat.new_full((h * w, 1), stride))

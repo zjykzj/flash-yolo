@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **TensorRT fp16 export (`scripts/export.py --trt --fp16`)**: fp16 deployment engines are built the
+  TensorRT 11 way — a half-precision ONNX (`model.half()`, written as `<stem>.fp16.onnx`) parsed into
+  a strongly-typed network, since TRT 11 removed the `FP16` builder flag and has no precision-constraint
+  flags left. The fp32 and fp16 artifacts coexist (`<stem>.fp16.engine`), an fp32 graph handed to an
+  fp16 build is rejected instead of silently producing an fp32 engine, engine outputs are normalized
+  back to fp32, and `TRTEngine` now reports its precision in the model line. Anchor grids are
+  generated in fp32 and cast (the TorchScript ONNX exporter rejects half-dtype `arange`, which
+  blocked the whole half-export path; fp32 numerics are unchanged).
+
 ## [0.5.0] - 2026-10-10
 
 ### Added

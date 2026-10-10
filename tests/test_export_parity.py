@@ -39,6 +39,21 @@ def _build_pt(end2end):
     return model
 
 
+def test_make_anchors_half_dtype_is_export_safe():
+    """make_anchors 在 half feats 下返回 half 锚点、且与 fp32 网格逐值相等（fp32 建格再 cast 的回归闸门）。
+
+    动机：half dtype 的 torch.arange 会被 TorchScript ONNX 导出器拒绝（"tensor does not have a
+    device"），挡住 model.half() -> fp16 onnx 的整条路；格点值在 fp16 可精确表示，fp32 路径数值不变。
+    """
+    from utils.anchors import make_anchors
+
+    feats16 = [torch.zeros(1, 4, s, s, dtype=torch.float16) for s in (40, 20, 10)]
+    anchors16, strides16 = make_anchors(feats16, [8, 16, 32], 0.5)
+    assert anchors16.dtype == torch.float16 and strides16.dtype == torch.float16
+    anchors32, strides32 = make_anchors([f.float() for f in feats16], [8, 16, 32], 0.5)
+    assert torch.equal(anchors16.float(), anchors32) and torch.equal(strides16.float(), strides32)
+
+
 def test_export_parity_raw():
     """raw 图：onnx vs pt 逐元素一致"""
     if not SAFE_PATH.exists():

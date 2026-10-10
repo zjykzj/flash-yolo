@@ -1,4 +1,4 @@
-"""TensorRT engine：构建 / 加载 / 与 PyTorch 数值对拍（fp32 raw 输出）。
+"""TensorRT engine：构建 / 加载 / 与 PyTorch 数值对拍（fp32 raw 输出；fp16 引擎对拍 half 模型）。
 
 需要 tensorrt（可选依赖）与 CUDA——缺任一则整文件跳过。
 engine 构建约 1 分钟（flash-yolo @320）。
@@ -38,3 +38,46 @@ def test_trt_raw_output_matches_pytorch(tmp_path):
     out = eng._forward(x)  # (4+nc, N)：批量维已剥（引擎契约与 Pt/Onnx 一致）
     assert out.shape == ref.shape, (out.shape, ref.shape)
     np.testing.assert_allclose(out, ref, atol=2e-3, rtol=1e-3)
+
+
+def test_trt_fp16_engine_matches_half_pytorch(tmp_path):
+    """fp16 引擎（半精度 onnx + strongly-typed 构建，TRT 11 路线）与 PyTorch half 模型对拍；
+    _forward 输出统一转回 fp32（与 fp32 引擎契约一致）"""
+    torch.manual_seed(0)
+    model = build_model("flash-yolo", None, 320, nc=80)
+    model.model[-1].end2end = False  # raw 输出：避开 E2E top-k 的次序/平局问题
+    model.eval().half()
+    torch.manual_seed(1)
+    x = torch.rand(1, 3, 320, 320)
+    with torch.no_grad():
+        ref = model(x.half())[0].float().numpy()
+
+    onnx_path = tmp_path / "m16.onnx"
+    with torch.no_grad():
+        torch.onnx.export(model, x.half(), str(onnx_path), input_names=["images"], output_names=["output0"],
+                          opset_version=18, dynamo=False)
+    engine_path = tmp_path / "m16.engine"
+    build_trt_engine(onnx_path, engine_path, fp16=True)
+
+    eng = TRTEngine(engine_path, model="flash-yolo", end2end=False, imgsz=320)
+    assert eng._in.dtype == torch.float16, eng._in.dtype
+    out = eng._forward(x)
+    assert out.dtype == np.float32, out.dtype
+    assert out.shape == ref.shape, (out.shape, ref.shape)
+    diff = float(np.abs(out - ref).max())
+    print(f"  fp16: engine vs torch-half 误差 {diff:.2e}")
+    np.testing.assert_allclose(out, ref, atol=1e-2, rtol=1e-3)
+
+
+def test_trt_fp16_build_rejects_fp32_onnx(tmp_path):
+    """fp16 构建要求半精度 onnx：喂 fp32 图直接报错（不静默产出"看着像 fp16"的 fp32 引擎）"""
+    model = build_model("flash-yolo", None, 320, nc=80)
+    model.model[-1].end2end = False
+    model.eval()
+    x = torch.zeros(1, 3, 320, 320)
+    onnx_path = tmp_path / "m32.onnx"
+    with torch.no_grad():
+        torch.onnx.export(model, x, str(onnx_path), input_names=["images"], output_names=["output0"],
+                          opset_version=18, dynamo=False)
+    with pytest.raises(ValueError, match="half-precision"):
+        build_trt_engine(onnx_path, tmp_path / "m32.engine", fp16=True)
