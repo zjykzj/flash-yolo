@@ -159,6 +159,29 @@ def test_train_smoke_v3(tmp_path):
     print(f"  [v3] 冒烟通过: obj {objs[0]:.3f} -> {objs[-1]:.3f} · val_obj {val_obj[0]:.3f} -> {val_obj[-1]:.3f}")
 
 
+def test_train_multiscale_step_lr_smoke(tmp_path):
+    """多尺度（每 batch 换输入尺寸 + 像素 targets 等比缩放）+ step 衰减（darknet 台阶）端到端跑通"""
+    data = _make_mini_coco(tmp_path)
+    cfg = TrainConfig(
+        data=str(data), model="yolov3-tiny", epochs=2, batch=8, nbs=8, imgsz=320, workers=0,
+        val_epochs=1, val_limit=8, limit=0, amp=False,
+        mosaic=0.5, mixup=0.0, copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0,
+        multi_scale=0.25, lr_schedule="step", lr_step_fracs=[0.5, 0.9], lr_step_gamma=0.1,
+    )
+    torch.manual_seed(0)
+    run_dir = tmp_path / "run-ms-step"
+    trainer = Trainer(cfg, device="cpu", run_dir=run_dir)
+    trainer.train()
+
+    rows = list(csv_reader(run_dir / "results.csv"))
+    lrs = [float(r["lr"]) for r in rows]
+    # epochs=2：第 0 轮末批 t=1.0（越过 frac 0.5）→ ×0.1；第 1 轮末批 t=2.0（越过 0.9）→ ×0.01
+    assert abs(lrs[0] - 1e-3) < 1e-6 and abs(lrs[1] - 1e-4) < 1e-6, f"step 台阶未生效: {lrs}"
+    losses = [float(r["loss"]) for r in rows]
+    assert all(np.isfinite(v) for v in losses), f"出现 NaN 损失: {losses}"
+    print(f"  [multi-scale + step-lr] 冒烟通过: lr {lrs} · loss {losses[0]:.3f} -> {losses[-1]:.3f}")
+
+
 def csv_reader(path):
     import csv
 

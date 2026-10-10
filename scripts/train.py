@@ -34,9 +34,9 @@ _INT_FIELDS = ["epochs", "batch", "nbs", "imgsz", "workers", "seed", "close_mosa
                "limit", "ns_iters", "ema_tau", "topk", "topk_o2o", "topk2",
                "stop_after", "save_period", "keep_periodic", "diag_interval", "aug_samples"]
 _FLOAT_FIELDS = ["lr0", "lrf", "momentum", "weight_decay", "muon_w", "sgd_w", "warmup_epochs", "warmup_momentum",
-                 "box_gain", "cls_gain", "dfl_gain", "obj_gain", "tal_alpha", "tal_beta",
+                 "lr_step_gamma", "box_gain", "cls_gain", "dfl_gain", "obj_gain", "tal_alpha", "tal_beta",
                  "prog_alpha_init", "prog_alpha_final", "stal_s_min", "stal_s_ref", "ema_decay",
-                 "mosaic", "mixup", "copy_paste", "aug_scale", "degrees", "shear", "translate",
+                 "multi_scale", "mosaic", "mixup", "copy_paste", "aug_scale", "degrees", "shear", "translate",
                  "fliplr", "flipud", "hsv_h", "hsv_s", "hsv_v", "bgr"]
 _STR_FIELDS = ["copy_paste_mode"]
 
@@ -62,6 +62,8 @@ def main():
     parser.add_argument("--channels-last", dest="channels_last", action=argparse.BooleanOptionalAction, default=None,
                         help="NHWC training memory format (default: yaml)")
     parser.add_argument("--cos-lr", dest="cos_lr", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--lr-schedule", dest="lr_schedule", default=None, choices=["linear", "cosine", "step"],
+                        help="lr decay curve (default: yaml `lr_schedule`, linear; step = darknet-style drops)")
     parser.add_argument("--verbose", action="store_true", help="DEBUG logging (third-party output)")
     # TrainConfig 字段（默认 None -> 不覆盖 yaml）
     for f in _INT_FIELDS:
@@ -95,8 +97,7 @@ def main():
             logger.warning(f"--scale {args.scale} ignored for model {cfg.model!r} "
                            f"(scale is fixed to {ARCHS[cfg.model]['default_scale']!r})")
         cfg.scale = ARCHS[cfg.model]["default_scale"]
-        if cfg.recipe != "default":
-            logger.warning(f"recipe {cfg.recipe!r} is tuned for yolo26 — training {cfg.model} with it is not recommended")
+        # 配方与模型的匹配性告警在 load_train_config 里（配方自带 model 字段则视为面向该架构）
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
 

@@ -5,7 +5,7 @@ import torch.nn as nn
 
 from model.build import DetectionModel
 from config.train_config import TrainConfig
-from train.lr import cosine_lr, linear_lr, set_epoch_lr, warmup_lr
+from train.lr import cosine_lr, linear_lr, set_epoch_lr, step_lr, warmup_lr
 from train.optimizer import MuSGD, _ortho, build_param_groups
 
 
@@ -109,6 +109,11 @@ def test_lr_schedules():
     assert abs(linear_lr(0, 245, 0.0054, 0.0495) - 0.0054) < 1e-12
     assert abs(linear_lr(245, 245, 0.0054, 0.0495) - 0.0054 * 0.0495) < 1e-12
     assert abs(cosine_lr(245, 245, 0.0054, 0.0495) - 0.0054 * 0.0495) < 1e-12
+    # 台阶衰减（darknet steps 口径）：80%/90% 处各 ×0.1，无 lrf 终点因子
+    assert abs(step_lr(0.0, 300, 0.001) - 0.001) < 1e-15
+    assert abs(step_lr(0.79 * 300, 300, 0.001) - 0.001) < 1e-15
+    assert abs(step_lr(0.80 * 300, 300, 0.001) - 0.0001) < 1e-15
+    assert abs(step_lr(0.95 * 300, 300, 0.001) - 0.00001) < 1e-18
     m = nn.Linear(2, 2)
     opt = MuSGD([{"params": m.parameters(), "muon": False, "wd": 0.0, "lr_mult": 3.0}], lr=0.01)
     set_epoch_lr(opt, 0.001)

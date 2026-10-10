@@ -11,7 +11,7 @@
 """
 
 import logging
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 import yaml
@@ -39,6 +39,7 @@ class TrainConfig:
     batch: int = 16  # 物理 batch（开箱即用值；nbs 累积保证梯度语义不变）
     nbs: int = 64
     imgsz: int = 640
+    multi_scale: float = 0.0  # 训练输入尺寸抖动（ultralytics 口径）：每 batch 在 imgsz×(1±r) 内按 32 量化随机；0 = 关
     channels_last: bool = True  # 训练走 NHWC（cuDNN 反向快 ~33%）；推理/导出链路不受影响
     workers: int = 8
     seed: int = 0
@@ -64,6 +65,10 @@ class TrainConfig:
     warmup_epochs: float = 3.0
     warmup_momentum: float = 0.8  # warmup 起始动量（官方默认 0.8，线性爬升到 momentum）
     cos_lr: bool = False
+    lr_schedule: str = "linear"  # linear | cosine | step（step = darknet 台阶：lr_step_fracs 处各 ×gamma；
+                                 # cosine 亦可用 cos_lr=true 触发；step 优先）
+    lr_step_fracs: list = field(default_factory=lambda: [0.8, 0.9])  # step 的降调进度（epoch 进度比例）
+    lr_step_gamma: float = 0.1  # step 每次降调的倍率
     ns_iters: int = 5
 
     # loss
@@ -158,6 +163,11 @@ def load_train_config(path, recipe=None, scale=None) -> TrainConfig:
     merged.update({k: v for k, v in overrides.items() if k in known})
     merged["recipe"] = recipe
     merged["scale"] = scale
+    if recipe != "default" and merged.get("model", "yolo26") != "yolo26" and "model" not in overrides:
+        # 配方未声明 model 视为 yolo26 系配方（coco-ft/o365-pt 均如此）；自带 model 的配方（如
+        # yolov3-tiny-darknet）面向特定架构，不告警
+        logger.warning(f"recipe {recipe!r} does not declare a model — it is a yolo26-tuned recipe; "
+                       f"training {merged['model']!r} with it is not recommended")
     return TrainConfig(**merged)
 
 

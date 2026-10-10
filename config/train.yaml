@@ -17,6 +17,7 @@ batch: 16          # 物理 batch：最小可移植值（对齐 ultralytics defa
                    # （注意 batch 需整除或等于 nbs，否则 accum 取整后 wd 因子 ≠ 1.0）
 nbs: 64            # 名义 batch：accum = max(round(nbs/batch), 1)，任何物理 batch 下 lr 语义不变
 imgsz: 640
+multi_scale: 0.0   # 训练输入尺寸抖动（ultralytics 口径）：每 batch 在 imgsz×(1±r) 内按 32 量化随机；0 = 关
 channels_last: true  # NHWC 训练（cuDNN 反向快 ~33%，实测 bwd 85->57ms）；推理/导出不受影响
 workers: 8          # 数据加载进程数：最小可移植值（对齐 ultralytics default.yaml）；
                     # 按 scripts/bench_io.py 实测值调大，别超过 CPU 预算
@@ -42,7 +43,10 @@ muon_w: 0.528      # Muon 更新权重（MuSGD 算法常量，非配方项，两
 sgd_w: 0.674       # SGD 更新权重（同上）
 warmup_epochs: 3.0
 warmup_momentum: 0.8  # warmup 起始动量（官方默认；线性爬升到 momentum）
-cos_lr: false      # false = 线性衰减
+cos_lr: false      # false = 线性衰减（cosine 的旧开关；lr_schedule 显式给 cosine/step 时以它为准）
+lr_schedule: linear  # linear | cosine | step（step = darknet 台阶：lr_step_fracs 处各 ×gamma）
+lr_step_fracs: [0.8, 0.9]
+lr_step_gamma: 0.1
 ns_iters: 5        # Newton-Schulz 迭代次数
 
 # ---- loss ----

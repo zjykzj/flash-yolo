@@ -5,6 +5,7 @@
 
 import csv
 import logging
+import random
 import sys
 import time
 from dataclasses import asdict
@@ -26,7 +27,7 @@ from model.build import ARCHS, YOLO26_FAMILY, arch_display_name, build_model
 from train.checkpoint import load_resume, save_best_last, save_periodic, save_resume
 from train.ema import ModelEMA
 from train.loss import build_loss
-from train.lr import cosine_lr, linear_lr, set_epoch_lr, warmup_lr, warmup_momentum
+from train.lr import cosine_lr, linear_lr, set_epoch_lr, step_lr, warmup_lr, warmup_momentum
 from train.optimizer import MuSGD, build_param_groups
 from train.validator import VAL_HEADER, format_val_row, validate
 from utils.logger import bold, log_file_only
@@ -292,8 +293,9 @@ class Trainer:
                             extra=f" · limit {self.cfg.val_limit}" if self.cfg.val_limit else "")
         else:
             logger.info("val:   disabled (val_epochs=0)")
+        ms = f" · multi_scale ±{self.cfg.multi_scale} @32px" if self.cfg.multi_scale > 0 else ""
         logger.info(f"imgsz {self.cfg.imgsz} · batch {self.cfg.batch} · nbs {self.cfg.nbs} (accum {self.accumulate}) · "
-                    f"workers {self.cfg.workers} · seed {self.cfg.seed} · AMP {'fp16' if self.cfg.amp else 'off'}")
+                    f"workers {self.cfg.workers} · seed {self.cfg.seed} · AMP {'fp16' if self.cfg.amp else 'off'}{ms}")
 
     def _log_split(self, label, ds, extra=""):
         """扫描行的续行（控制台 + run.log 都有）+ 往 run.log 补一份扫描计数
@@ -319,8 +321,11 @@ class Trainer:
         close_epoch = max(self.cfg.epochs - self.close_mosaic, 0)
         # 只有真被 min(close_mosaic, epochs//5) 缩过才提示缩放来源
         scale_note = f", scaled from {self.cfg.close_mosaic}" if self.close_mosaic != self.cfg.close_mosaic else ""
-        logger.info(f"lr: warmup {self.cfg.warmup_epochs}ep -> {'cosine' if self.cfg.cos_lr else 'linear'} "
-                    f"{self.cfg.lr0} -> {self.cfg.lr0 * self.cfg.lrf:.6f} · "
+        sched = self._sched_name()
+        lr_end = (self.cfg.lr0 * self.cfg.lr_step_gamma ** len(self.cfg.lr_step_fracs)
+                  if sched == "step" else self.cfg.lr0 * self.cfg.lrf)
+        logger.info(f"lr: warmup {self.cfg.warmup_epochs}ep -> {sched} "
+                    f"{self.cfg.lr0} -> {lr_end:.6f} · "
                     f"close_mosaic last {self.close_mosaic} epochs (from epoch {close_epoch}{scale_note})")
         if self.cfg.model in YOLO26_FAMILY:
             logger.info(f"loss: box {self.cfg.box_gain} CIoU · cls {self.cfg.cls_gain} BCE · l1 {self.cfg.dfl_gain} · "
@@ -351,6 +356,31 @@ class Trainer:
         self._write_meta()  # run 元数据（环境/配置/数据规模/命令行）
         logger.info(f"results: {self.run_dir}")
         logger.info(bold(f"Starting training for {self.cfg.epochs} epochs..."))
+
+    # ---- 学习率 / 多尺度 ----
+    def _sched_name(self):
+        """生效的衰减曲线名：step > cosine（显式 lr_schedule）> cos_lr 别名 > linear"""
+        if self.cfg.lr_schedule == "step":
+            return "step"
+        if self.cfg.lr_schedule == "cosine" or self.cfg.cos_lr:
+            return "cosine"
+        return "linear"
+
+    def _sched_lr(self, t):
+        """基础 lr（不含 warmup 外乘）：按生效曲线分派"""
+        name = self._sched_name()
+        if name == "step":
+            return step_lr(t, self.cfg.epochs, self.cfg.lr0, self.cfg.lr_step_fracs, self.cfg.lr_step_gamma)
+        if name == "cosine":
+            return cosine_lr(t, self.cfg.epochs, self.cfg.lr0, self.cfg.lrf)
+        return linear_lr(t, self.cfg.epochs, self.cfg.lr0, self.cfg.lrf)
+
+    def _multi_scale_size(self):
+        """本 batch 的训练输入尺寸：imgsz×(1±r) 内按 32 量化随机（ultralytics preprocess_batch 同式）"""
+        s = self.cfg.imgsz
+        lo = max(32, int(s * (1.0 - self.cfg.multi_scale)))
+        hi = int(s * (1.0 + self.cfg.multi_scale) + 32)
+        return random.randrange(lo, hi) // 32 * 32
 
     # ---- 主循环 ----
     def train(self):
@@ -385,11 +415,7 @@ class Trainer:
 
             for bi, (imgs, targets) in enumerate(dl):
                 t = epoch + bi / max(n_batch - 1, 1)
-                lr_base = warmup_lr(t, self.cfg.warmup_epochs) * (
-                    cosine_lr(t, self.cfg.epochs, self.cfg.lr0, self.cfg.lrf)
-                    if self.cfg.cos_lr
-                    else linear_lr(t, self.cfg.epochs, self.cfg.lr0, self.cfg.lrf)
-                )
+                lr_base = warmup_lr(t, self.cfg.warmup_epochs) * self._sched_lr(t)
                 # warmup 期间动量线性爬升（官方训练循环同口径；之后恒为 cfg.momentum）
                 mom = warmup_momentum(t, self.cfg.warmup_epochs, self.cfg.momentum, self.cfg.warmup_momentum)
                 set_epoch_lr(self.optimizer, lr_base, momentum=mom)
@@ -403,9 +429,20 @@ class Trainer:
                 imgs = imgs.to(self.device, non_blocking=True,
                                memory_format=torch.channels_last if self.cfg.channels_last else torch.preserve_format)
                 targets = targets.to(self.device)
+                # 多尺度：每 batch 在 imgsz×(1±r) 内换输入尺寸；targets 是 letterbox 像素坐标
+                # （loader 口径，两家 loss 共用），画布为正方形 → 坐标随尺寸等比缩放
+                imgsz = self.cfg.imgsz
+                if self.cfg.multi_scale > 0.0:
+                    imgsz = self._multi_scale_size()
+                    if imgsz != self.cfg.imgsz:
+                        sf = imgsz / self.cfg.imgsz
+                        imgs = torch.nn.functional.interpolate(imgs, size=(imgsz, imgsz),
+                                                               mode="bilinear", align_corners=False)
+                        if targets.numel():
+                            targets[:, 2:6] *= sf
                 with torch.autocast(device_type=self.device.type, enabled=self.cfg.amp and self.device.type == "cuda"):
                     preds = self.model(imgs)
-                    loss, items = self.loss_fn(preds, targets, imgs.shape[0], self.cfg.imgsz)
+                    loss, items = self.loss_fn(preds, targets, imgs.shape[0], imgsz)
                 # preds 诊断按 10 步窗口取样：每次 8 个 isfinite+bool 转换（同步）≈ 1.2ms，
                 # NaN 检出延迟 ≤10 步（loss 本身的有限性检查仍每步执行）；两种 head 输出形态走同一枚举
                 preds_bad = ((bi + 1) % 10 == 0 or bi == n_batch - 1) and any(

@@ -1,0 +1,28 @@
+# YOLOv3-tiny darknet-alignment recipe（v3 残差归因实验；2026-10 起草，待跑）
+#
+# 背景：从零 300 轮（内置 default：固定 416、线性衰减）正式 = 14.23 / 27.50（pycocotools val2017）；
+#   官方权重同管线 @416 = 16.94 / 34.37。预算已被排除（100 → 300 轮本身 +1.5 mAP 但收不干净），
+#   剩余配方差异 = ① 多尺度训练（darknet random=1）② 台阶式 LR（steps 400k/450k of 500k，×0.1）。
+#   训练数据差异已考证排除：darknet 发布的 coco.data 用 trainvalno5k ≈ train2017（5k = val2017）；
+#   增强差异（darknet v3 cfg 无 mosaic，本仓库 default 开 1.0）不在本配方内改动。
+#
+# 本配方 = default 基线 + ①②。单变量 A/B 开关：--multi-scale 0（只留 step）/
+#   --lr-schedule linear（只留多尺度）。
+#
+# 多尺度范围说明：darknet random=1 的真实采样是 {320..608}（对 416 基座 −23%/+46%，非对称，
+#   每 10 batch 换一次）；本字段按 ultralytics 口径取对称 ±r、每 batch 随机，r=0.46 使上界对齐
+#   608（下界 224 略低于 320——分布不完全一致，作为近似对齐可接受）。
+#
+# 用法（batch/workers 为机器相关值，命令行给）：
+#   python scripts/train.py --data coco --recipe yolov3-tiny-darknet --name v3-darknet-e300 \
+#       --batch 64 --workers 16
+#   与 v3-coco-e300 逐项同参（416 / 300 ep / seed 0），可逐轮次直接对照。
+
+base:
+  model: yolov3-tiny
+  imgsz: 416
+  epochs: 300
+  multi_scale: 0.46
+  lr_schedule: step
+  lr_step_fracs: [0.8, 0.9]
+  lr_step_gamma: 0.1

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multi-scale training + step LR schedule (with a `yolov3-tiny-darknet` recipe)**: `multi_scale: r`
+  jitters each training batch's input size within imgsz×(1±r), quantized to stride multiples
+  (ultralytics semantics; the pixel-space targets are rescaled with the canvas), and
+  `lr_schedule: step` adds the darknet step decay (`lr_step_fracs` × `lr_step_gamma`, default
+  80% / 90% ×0.1) beside the existing linear/cosine curves (also via CLI: `--multi-scale`,
+  `--lr-schedule`). The `yolov3-tiny-darknet` recipe bundles both for the yolov3-tiny
+  residual-gap experiment, with single-variable toggles (`--multi-scale 0` / `--lr-schedule linear`).
 - **Flash-YOLO — the framework's own lightweight architecture**: a pooled-downsampling redesign
   of the yolo26 meta-architecture (`config/models/flash-yolo.yaml`, plus three screening variants),
   keeping the Detect head, E2E semantics and the full training pipeline. It replaces every stride-2
