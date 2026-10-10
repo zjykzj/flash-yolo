@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   yolov3-tiny@416 0.40 ms — TRT narrows the eager-to-deployment gap for every model (yolo26n
   5.97 → 1.52 ms). A parity test pins the fp32 engine's raw outputs to PyTorch within 2e-3.
 
+### Fixed
+
+- **TensorRT batch-dim strip**: `TRTEngine._forward` now strips the batch dimension from the
+  engine output, honoring the shared engine contract (`PtEngine` / `OnnxEngine` both strip) — the
+  engine had only been exercised through raw `_forward` parity, so `predict_timed` (and with it
+  `eval.py` / `infer.py --engine trt`) crashed on the un-stripped `(1, …)` output with an
+  IndexError; `tests/test_trt.py` now pins the stripped shape.
+
 ## [0.4.0] - 2026-10-09
 
 ### Changed

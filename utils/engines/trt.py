@@ -115,7 +115,7 @@ class TRTEngine(BaseEngine):
             self._in.copy_(img)
             self.ctx.execute_async_v3(self._stream.cuda_stream)
         self._stream.synchronize()
-        return self._out.cpu().numpy()
+        return self._out[0].cpu().numpy()  # 剥批：引擎输出 (1, ...)，契约与 PtEngine / OnnxEngine 一致
 
     def _warmup(self):
         """预热：跑 3 次后计时才反映稳态性能（dummy 用实际输入尺寸）"""

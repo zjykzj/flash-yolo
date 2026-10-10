@@ -25,7 +25,7 @@ def test_trt_raw_output_matches_pytorch(tmp_path):
     model.eval()
     x = torch.zeros(1, 3, 320, 320)
     with torch.no_grad():
-        ref = model(x).numpy()
+        ref = model(x)[0].numpy()  # 剥批：(4+nc, N) 与引擎 _forward 契约一致
 
     onnx_path = tmp_path / "m.onnx"
     with torch.no_grad():
@@ -35,6 +35,6 @@ def test_trt_raw_output_matches_pytorch(tmp_path):
     build_trt_engine(onnx_path, engine_path, fp16=False)
 
     eng = TRTEngine(engine_path, model="flash-yolo", end2end=False, imgsz=320)
-    out = eng._forward(x)  # (1, 4+nc, N)：与 torch 输出同形（批量维保留，对拍不剥批）
+    out = eng._forward(x)  # (4+nc, N)：批量维已剥（引擎契约与 Pt/Onnx 一致）
     assert out.shape == ref.shape, (out.shape, ref.shape)
     np.testing.assert_allclose(out, ref, atol=2e-3, rtol=1e-3)
