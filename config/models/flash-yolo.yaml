@@ -2,7 +2,7 @@
 #
 # 设计命题：v3-tiny 的廉价下采样哲学（PoolConv = maxpool + 1×1）× yolo26 的 CSP 容量分配；
 #          DW stem = depthwise 3×3 空间混合 + 1×1 投影，替掉 P1/P2 段那个无下游消费者的 C3k2。
-#          筛选依据（20 轮同预算，见 README「Flash-YOLO」）：DW stem 版同算力比 1×1 stem 版
+#          筛选依据（20 轮同预算）：DW stem 版同算力比 1×1 stem 版
 #          高 +0.67 mAP，b1 速度持平（TRT 1.33 vs 1.32ms）——所以 stem 用 DW。
 #          头（Detect, E2E）与损失/训练管线完全复用 yolo26。
 # 相对 yolo26n @640：GFLOPs 3.80（−31%，summary 口径）· 参数 1.97M。筛选变体见同目录 s1-s4

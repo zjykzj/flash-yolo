@@ -38,6 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rendered flash-yolo detections beside them; the previous ultralytics-ecosystem demo images
   (bus.jpg / zidane.jpg) are removed, and the export-parity test now uses `traffic.jpg` as its
   real-image fixture.
+- **flash-yolo's full-length results and a YOLO26n alignment table**: the README scorecard now carries
+  the from-scratch flash-yolo numbers — **33.77 / 48.63** mAP@[.5:.95] / mAP@50 on COCO val2017 E2E
+  and **34.72 / 50.16** with NMS, 2.4 points behind its budget-matched YOLO26n control for 31% fewer
+  GFLOPs — and a new section evaluates the official YOLO26n checkpoint with **both** implementations
+  (this repo's and ultralytics') through the identical pipeline, landing on identical numbers
+  (40.27 / 55.80 E2E, 40.89 / 56.87 NMS), P/R included.
+- **README trimmed to the essentials**: the long-form Datasets / Training / Evaluation /
+  Export & Deployment sections and the Docker subsection are removed (that material now lives in the
+  project's local operator notes), and the YOLOv3-tiny chapter is gone from the README — its code,
+  tests and CLI support are unchanged. Quick Start becomes one flash-yolo chain (train → evaluate →
+  export → infer) with expected outputs, and the official-weights download/evaluate recipe moves
+  into the alignment section.
 
 ## [0.5.0] - 2026-10-10
 
