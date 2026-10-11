@@ -1,0 +1,16 @@
+# build context 清理：这些只属于宿主机，不进镜像
+.git
+.claude
+.idea
+.vscode
+.pytest_cache
+__pycache__/
+*.py[cod]
+docs/
+CLAUDE.md
+runs/
+weights/
+logs/
+config/datasets/local/
+*.log
+.DS_Store

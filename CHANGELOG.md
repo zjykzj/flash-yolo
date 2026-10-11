@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back to fp32, and `TRTEngine` now reports its precision in the model line. Anchor grids are
   generated in fp32 and cast (the TorchScript ONNX exporter rejects half-dtype `arange`, which
   blocked the whole half-export path; fp32 numerics are unchanged).
+- **Docker development environment**: `Dockerfile` + `.dockerignore` + `docker/run.sh` +
+  `docker/constraints.txt` mirror the verified working environment (Python 3.12,
+  torch 2.13.0+cu130, CUDA 13.0, TensorRT 11.4.0.106, ultralytics 8.4.173): dependency
+  versions are pinned in the constraints file, the TensorRT 11.4 install takes the direct
+  NVIDIA-index route (the PyPI packages are stubs that can hang), and the full workflow set
+  (train / evaluate / export / infer, ONNX and TensorRT engines, the test suite) runs inside
+  the container with the repository bind-mounted at `/workspace`.
 
 ### Changed
 

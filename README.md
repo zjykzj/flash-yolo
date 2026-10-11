@@ -90,6 +90,23 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/tra
 python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/
 ```
 
+### Docker (optional)
+
+A development image mirrors the verified environment (Python 3.12 · torch 2.13.0+cu130 ·
+CUDA 13.0 · TensorRT 11.4.0.106 · ultralytics 8.4.173); the host needs Docker with the NVIDIA
+container toolkit and a CUDA 13 driver (>= 580):
+
+```bash
+docker build -t flash-yolo:dev .
+docker/run.sh                              # interactive shell inside the container
+docker/run.sh pytest tests/                # or any other command
+DATA_DIR=/path/to/datasets docker/run.sh   # mount a dataset directory at /data
+```
+
+The repository is bind-mounted at `/workspace` — edit on the host, run in the container. All
+four workflows work inside, including `--engine trt`; TensorRT engines are bound to the GPU
+architecture they were built on, so (re)build them in-container (`scripts/export.py --trt`).
+
 ## Datasets
 
 Datasets are described by a small yaml (schema + template: `config/datasets/coco.yaml`):
