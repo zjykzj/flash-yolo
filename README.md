@@ -37,24 +37,7 @@ Intel Xeon Platinum 8470Q (25-core container quota), TensorRT on one RTX 5090:
 | flash-yolo · this repo, 100 ep | 14.5³ | 5.6³ | 1.33 | 1.20 | 0.213 | 0.130 |
 | **Δ (flash-yolo vs YOLO26n)** | **−3.0 (−17%)** | **−7.4 (−57%)** | **−0.05 (−4%)** | **0.00** | **−0.039 (−15%)** | **−0.011 (−8%)** |
 
-¹ flash-yolo trained from scratch for 100 epochs — same recipe, data and budget as the from-scratch YOLO26n row above, so its Δ is like for like. ² The TensorRT rows were measured on a box that also ran two trainings (best-case min, so conservative); b1 fp16 ties at ~1.20 ms for both models — the b1 fp32 chain is the exactly verified one (`pt → onnx → engine`). Δ compares against the budget-matched from-scratch YOLO26n; for structure and latency both YOLO26n rows are identical. Details: [YOLO26n alignment](#yolo26n-alignment-with-the-official-weights). ³ ORT-CPU measured while a training run shared the CPU (16 loader workers on the 25-core quota) — provisional, pending a quiet re-measurement: absolute values are pessimistic and the b1 gap is the least stable of the set; b8 uses a dynamic-batch graph, b1 the fixed-batch export.
-
-- **Reproduces YOLO26n bit-identically** — the official weights load with zero key mapping
-  (260 layers · 2,572,280 params) and the inference output is bit-for-bit identical. COCO val2017
-  through this pipeline: **40.27** mAP@[.5:.95] E2E (NMS-free) / **40.89** with NMS — published: 40.1 / 40.9.
-- **Trains from scratch, and says so** — no official checkpoint was trained on COCO from random
-  weights; this repo's own from-scratch baseline (100 epochs, one RTX 5090) reaches **36.22 / 51.32**
-  — the honest reference point for what a 100-epoch budget buys.
-- **Its own lightweight model** — **flash-yolo**: a single-variable screened design that keeps
-  YOLO26's three detection levels (P3/P4/P5); from scratch in the same 100-epoch budget as its
-  YOLO26n control it reaches **33.77 / 48.63** E2E (**34.72 / 50.16** with NMS) — 2.4 points behind
-  the control for 31% fewer GFLOPs. Scorecard in the table above.
-- **Three runtimes, one contract** — PyTorch / ONNX Runtime (CPU) / TensorRT (GPU, fp32 **and**
-  fp16) all answer the same `predict()`; `scripts/export.py` chains safetensors → onnx → serialized
-  engine in one command.
-- **Small on dependencies, big on verification** — core runtime is PyTorch + NumPy; every module is
-  readable on its own and covered by 168 tests (weight alignment, export parity, loss parity,
-  format equivalence, engine correctness) — see [Project Structure](#project-structure).
+¹ flash-yolo — a single-variable screened YOLO26 variant that keeps all three detection levels (P3/P4/P5) — trained from scratch for 100 epochs, same recipe, data and budget as the from-scratch YOLO26n row above, so its Δ is like for like; with NMS: 34.72 / 50.16. ² The TensorRT rows were measured on a box that also ran two trainings (best-case min, so conservative); b1 fp16 ties at ~1.20 ms for both models — the b1 fp32 chain is the exactly verified one (`pt → onnx → engine`). Δ compares against the budget-matched from-scratch YOLO26n; for structure and latency both YOLO26n rows are identical. Details: [YOLO26n alignment](#yolo26n-alignment-with-the-official-weights). ³ ORT-CPU measured while a training run shared the CPU (16 loader workers on the 25-core quota) — provisional, pending a quiet re-measurement: absolute values are pessimistic and the b1 gap is the least stable of the set; b8 uses a dynamic-batch graph, b1 the fixed-batch export.
 
 ## Quick Start
 
@@ -161,11 +144,11 @@ executable check behind it — most live in the 168-test suite. Checks that comp
 official implementation run at dev time only (requirements-dev.txt; the runtime never imports
 ultralytics).
 
-- **Bit-identical reproduction** — the official checkpoint loads with zero key mapping
-  (`strict=True`, which only succeeds when the module tree matches exactly) and the inference
-  output is bit-for-bit identical to the official model on the same input. The "Official" rows in
-  [YOLO26n alignment](#yolo26n-alignment-with-the-official-weights) are that model re-run through
-  this pipeline — identical numbers.
+- **Bit-identical reproduction** — the official checkpoint (260 layers · 2,572,280 params) loads
+  with zero key mapping (`strict=True`, which only succeeds when the module tree matches exactly)
+  and the inference output is bit-for-bit identical to the official model on the same input. The
+  "Official" rows in [YOLO26n alignment](#yolo26n-alignment-with-the-official-weights) are that
+  model re-run through this pipeline — identical numbers.
 - **Training internals match** — same weights, same real batch, this implementation vs the
   official one: total loss within <1%, gradient norm within <2%.
 - **Augmentation is pixel-exact** — mosaic canvas, affine output and the resampled labels were
