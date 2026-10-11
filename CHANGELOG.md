@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   NVIDIA-index route (the PyPI packages are stubs that can hang), and the full workflow set
   (train / evaluate / export / infer, ONNX and TensorRT engines, the test suite) runs inside
   the container with the repository bind-mounted at `/workspace`.
+- **Operator documentation set under `docs/`** (Chinese): six manual pages — dataset (descriptor
+  schema, COCO/YOLO formats and their guards), train (recipes, parameters, run artifacts, known
+  traps), val (metric semantics, output reading, E2E vs NMS), export (ONNX/TensorRT, fp16 rules and
+  acceptance thresholds), infer (three runtimes, outputs), docker (image, launcher, constraints) —
+  plus per-architecture design & training records (YOLO26 spec/runs, flash-yolo design process,
+  YOLOv3-tiny spec/runs). The private release-prep notes under `docs/bake/` stay untracked.
 
 ### Changed
 
@@ -45,8 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (this repo's and ultralytics') through the identical pipeline, landing on identical numbers
   (40.27 / 55.80 E2E, 40.89 / 56.87 NMS), P/R included.
 - **README trimmed to the essentials**: the long-form Datasets / Training / Evaluation /
-  Export & Deployment sections and the Docker subsection are removed (that material now lives in the
-  project's local operator notes), and the YOLOv3-tiny chapter is gone from the README — its code,
+  Export & Deployment sections and the Docker subsection are removed (that material now lives under
+  `docs/`), and the YOLOv3-tiny chapter is gone from the README — its code,
   tests and CLI support are unchanged. Quick Start becomes one flash-yolo chain (train → evaluate →
   export → infer) with expected outputs, and the official-weights download/evaluate recipe moves
   into the alignment section.

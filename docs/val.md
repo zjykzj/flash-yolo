@@ -1,0 +1,83 @@
+# 评估（Val）
+
+> 入口：`python scripts/eval.py --weights <w> --data <name|.yaml>`。
+> **对外数字只有一个来源就是本脚本**（pycocotools 管线）；训练中打印的 FastMetrics 只用于
+> 趋势与选 best。
+
+## 1. 用法
+
+```bash
+python scripts/eval.py --weights weights/yolo26n.safetensors --data coco                # E2E -> 40.27
+python scripts/eval.py --weights weights/yolo26n.safetensors --data coco --nms          # o2m+NMS -> 40.89
+python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data coco         # 换运行时
+python scripts/eval.py --weights w.safetensors --data coco --imgsz 416                  # 指定输入尺寸
+python scripts/eval.py --weights w.safetensors --data coco --split val --limit 100      # 冒烟子集
+```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--weights` | — | `.safetensors` 或 `.onnx` |
+| `--data` | — | 描述符（见 `dataset.md`） |
+| `--split` | `val` | 角色键（描述符里的 train/val/…） |
+| `--engine` | `pt` | `pt` / `onnx` / `trt` |
+| `--model` / `--scale` | 从权重文件名推断 | 推不出时显式给（`--model yolov3-tiny` 等） |
+| `--nms` | off | 走 o2m + NMS 路径（yolo26 专属；v3 会直接报错） |
+| `--conf` / `--iou` / `--max-det` | 0.001 / 0.7 / 300 | 与官方 val 口径一致 |
+| `--imgsz` | 权重 metadata > 640 | 优先级：CLI > metadata > 640；**onnx 以图内 shape 为准**（显式冲突报错不静默） |
+| `--limit` | 0（全量） | 只评前 N 张（评估器会把 GT 限制到同一子集） |
+| `--summary-only` | off | 只打印 all 行 |
+| `--device` | auto | pt 引擎的设备 |
+
+## 2. 两套指标口径
+
+| 口径 | 实现 | 用途 | 近似点 |
+|---|---|---|---|
+| **正式**（本脚本） | pycocotools | 对外数字、验收 | — |
+| 训练中（`train/metrics.py`） | 纯 numpy FastMetrics | 每轮趋势 + 选 `best.safetensors` | 忽略 crowd、maxDets=100、无面积分组；贪婪匹配 + 101 点插值 |
+
+FastMetrics 与正式口径实测贴合良好（如 300 轮 v3 run：训练中 0.1379 → 正式 14.23），
+但**跨 run 比较/对外引用一律用正式口径**。
+
+## 3. 输出解读
+
+```
+      Class           Images Instances         P         R     mAP50  mAP50-95    AR@100
+      all               5000     36781    0.6220    0.4594    0.4863    0.3377    0.5561
+      person            2693     11004    0.7892    0.6300    0.7221    0.4776    0.6174
+      Size buckets   mAP_small ... · mAP_medium ... · mAP_large ...   (COCO area <32² / 32²-96² / >96²)
+      Thresholds     mAP50 ... · mAP75 ... · mAP50-95 ...   (IoU 0.50 / 0.75 / 0.50:0.95)
+Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 14.5 + other 0.7 → 37.0 img/s
+       model-only inference 7.5 ms/image (133 img/s) at shape (1, 3, 640, 640)
+```
+
+- per-class 表**只列评估范围内有 GT 的类别**（该图集没有的类不出现）；被 pycocotools 标 `-1`
+  的无效组合在聚合时剔除（整类都无效时该项记 0.0000）；
+- `Speed` 行是**评估管线**的分段耗时（含加载与 pycocotools 后处理）；模型纯推理看
+  `model-only` 那行；
+- 结果同时落在 `runs/val/valN/`（含 `run.log`）。
+
+## 4. E2E vs NMS
+
+- **E2E（默认）**：o2o 头、无 NMS，输出 (B,300,6)。官方 40.1 就是这条路径。
+- **NMS**：o2m 头 + 类感知 NMS，通常高 ~0.9 点、略慢（官方 40.9）。
+- yolov3-tiny 只有一条"解码 + obj×cls + NMS"路径，`--nms` / `--raw` 对它直接报错。
+
+## 5. 参考基准（COCO val2017，本管线）
+
+| 权重 | 输入 | E2E | NMS |
+|---|---|---|---|
+| YOLO26n 官方权重 | 640 | 40.27 / 55.80 | 40.89 / 56.87 |
+| YOLO26n 从零 100 轮 | 640 | 36.22 / 51.32 | 37.15 / 52.67 |
+| flash-yolo 从零 100 轮 | 640 | 33.77 / 48.63 | 34.72 / 50.16 |
+| YOLOv3-tiny 官方权重 | 640 | —（单路径） | 17.16 / 35.90 |
+
+（mAP@[.5:.95] / mAP@50。历史与实验细节见 `yolo26-runs.md` / `flash-yolo-spec.md` /
+`yolov3-tiny-runs.md`。）
+
+## 6. 坑
+
+- **`--limit` 必须同时限制 GT**：评估器已按 `params.imgIds` 对齐子集；自己改指标代码时注意，
+  否则未预测的图会把 mAP 稀释。
+- **空结果**：`loadRes([])` 会 IndexError——评估器对空结果短路返回全 0，属预期行为。
+- **crowd**：COCO 侧保留（官方口径）；YOLO 侧无 crowd，两者 val 数字差异只来自这一项。
+- pt 的 `--imgsz` 覆盖 metadata 时会**重新 letterbox**；onnx/trt 输入尺寸由导出图决定。

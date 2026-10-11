@@ -669,8 +669,8 @@ cython_debug/
 runs/
 weights/
 
-### Flash-YOLO: 内部中文文档不入库
-docs/
+### Flash-YOLO: 私有发布资料不入库（bake = 未定稿的 v1.0.0 规划/许可文本，不随仓库发布）
+docs/bake/
 CLAUDE.md
 
 # local dataset descriptors (machine paths; see config/datasets/spec.py)
