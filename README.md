@@ -15,17 +15,29 @@
   <img src="assets/traffic_det.jpg" width="49%" alt="flash-yolo detections — street traffic">
   <img src="assets/baseball_det.jpg" width="49%" alt="flash-yolo detections — baseball">
   <br>
-  <em>Detections by flash-yolo — COCO val2017 samples, 640 input</em>
+  <em>Detections by the 100-epoch flash-yolo checkpoint — COCO val2017 samples, 640 input</em>
 </p>
 
-| Model | mAP@[.5:.95] | mAP@50 | Params | GFLOPs @640 | ORT-CPU b1 (ms) | TRT b1 fp32 (ms) | TRT b8 fp32 (ms/img) | TRT b8 fp16 (ms/img) |
-|---|---|---|---|---|---|---|---|---|
-| YOLO26n · official weights | 40.27 | 55.80 | 2.57M | 5.48 | —³ | 1.38 | 0.252 | 0.141 |
-| YOLO26n · this repo, 100 ep | 36.22 | 51.32 | 2.57M | 5.48 | —³ | 1.38 | 0.252 | 0.141 |
-| flash-yolo · this repo, 100 ep | 33.77 | 48.63 | 1.97M | 3.80 | —³ | 1.33 | 0.213 | 0.130 |
-| **Δ (flash-yolo vs YOLO26n)** | **−2.45 (−7%)** | **−2.69 (−5%)** | **−0.60M (−23%)** | **−1.68 (−31%)** | **—** | **−0.05 (−4%)** | **−0.039 (−15%)** | **−0.011 (−8%)** |
+**Accuracy & size** — COCO val2017, official pycocotools (`scripts/eval.py`), E2E (NMS-free) at 640:
 
-¹ flash-yolo trained from scratch for 100 epochs — same recipe, data and budget as the from-scratch YOLO26n row above, so that Δ is like for like. ² COCO val2017 · pycocotools · E2E (NMS-free) at 640; speed: TensorRT on one RTX 5090, inference stage, best-case min across repeated runs on a shared box (two trainings ran throughout) — b1 fp16 is ~1.20 ms for both models (the b1 column above is the fp32 chain). Δ compares against the budget-matched from-scratch YOLO26n — for structure/latency both YOLO26n rows are identical. Details: [YOLO26n alignment](#yolo26n-alignment-with-the-official-weights). ³ ORT-CPU (Intel Xeon Platinum 8470Q, 25-core container quota) is pending a quiet re-measurement — under the current training load the CPU delta is not measurable reliably.
+| Model | mAP@[.5:.95] | mAP@50 | Params | GFLOPs @640 |
+|---|---|---|---|---|
+| YOLO26n · official weights | 40.27 | 55.80 | 2.57M | 5.48 |
+| YOLO26n · this repo, 100 ep | 36.22 | 51.32 | 2.57M | 5.48 |
+| flash-yolo · this repo, 100 ep¹ | 33.77 | 48.63 | 1.97M | 3.80 |
+| **Δ (flash-yolo vs YOLO26n)** | **−2.45 (−7%)** | **−2.69 (−5%)** | **−0.60M (−23%)** | **−1.68 (−31%)** |
+
+**Latency²** — model-only inference stage, best-case `min` across repeated runs; ONNX Runtime on an
+Intel Xeon Platinum 8470Q (25-core container quota), TensorRT on one RTX 5090:
+
+| Model | ORT-CPU b1 (ms) | ORT-CPU b8 (ms/img) | TRT b1 fp32 (ms) | TRT b1 fp16 (ms) | TRT b8 fp32 (ms/img) | TRT b8 fp16 (ms/img) |
+|---|---|---|---|---|---|---|
+| YOLO26n · official weights | 17.5³ | 13.0³ | 1.38 | 1.20 | 0.252 | 0.141 |
+| YOLO26n · this repo, 100 ep | 17.5³ | 13.0³ | 1.38 | 1.20 | 0.252 | 0.141 |
+| flash-yolo · this repo, 100 ep | 14.5³ | 5.6³ | 1.33 | 1.20 | 0.213 | 0.130 |
+| **Δ (flash-yolo vs YOLO26n)** | **−3.0 (−17%)** | **−7.4 (−57%)** | **−0.05 (−4%)** | **0.00** | **−0.039 (−15%)** | **−0.011 (−8%)** |
+
+¹ flash-yolo trained from scratch for 100 epochs — same recipe, data and budget as the from-scratch YOLO26n row above, so its Δ is like for like. ² The TensorRT rows were measured on a box that also ran two trainings (best-case min, so conservative); b1 fp16 ties at ~1.20 ms for both models — the b1 fp32 chain is the exactly verified one (`pt → onnx → engine`). Δ compares against the budget-matched from-scratch YOLO26n; for structure and latency both YOLO26n rows are identical. Details: [YOLO26n alignment](#yolo26n-alignment-with-the-official-weights). ³ ORT-CPU measured while a training run shared the CPU (16 loader workers on the 25-core quota) — provisional, pending a quiet re-measurement: absolute values are pessimistic and the b1 gap is the least stable of the set; b8 uses a dynamic-batch graph, b1 the fixed-batch export.
 
 - **Reproduces YOLO26n bit-identically** — the official weights load with zero key mapping
   (260 layers · 2,572,280 params) and the inference output is bit-for-bit identical. COCO val2017

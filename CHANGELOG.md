@@ -44,6 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rendered flash-yolo detections beside them; the previous ultralytics-ecosystem demo images
   (bus.jpg / zidane.jpg) are removed, and the export-parity test now uses `traffic.jpg` as its
   real-image fixture.
+- **Scorecard split, CPU latency filled in**: the opening table is now two tables — accuracy & size
+  (mAP / params / GFLOPs) and latency (ONNX Runtime CPU b1/b8 + TensorRT b1/b8, fp32 and fp16) — each
+  with its own Δ row against the budget-matched YOLO26n. The previously pending ORT-CPU column now
+  carries measured b1/b8 numbers for both models (flash-yolo 14.5 ms / 5.6 ms per image vs YOLO26n
+  17.5 / 13.0), marked as provisional: they were taken while a training run shared the CPU, so
+  absolute values are pessimistic and a quiet re-measurement is planned.
+- **Demo renders updated to the final checkpoint**: `assets/traffic_det.jpg` / `baseball_det.jpg`
+  are re-rendered with the 100-epoch from-scratch flash-yolo checkpoint (previously the screening
+  weights), and `assets/README.md` now records the exact render commands.
 - **flash-yolo's full-length results and a YOLO26n alignment table**: the README scorecard now carries
   the from-scratch flash-yolo numbers — **33.77 / 48.63** mAP@[.5:.95] / mAP@50 on COCO val2017 E2E
   and **34.72 / 50.16** with NMS, 2.4 points behind its budget-matched YOLO26n control for 31% fewer

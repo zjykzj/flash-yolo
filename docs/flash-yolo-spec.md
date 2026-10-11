@@ -108,6 +108,13 @@ python scripts/train.py --data coco --model flash-yolo --cfg config/models/flash
 torch-CPU +10.9% · ORT-CPU +45% · CUDA-graph +11% · TensorRT +12.6% · eager ≈ 平
 （eager 下 260 层 Python 发射开销掩盖差异，不是模型劣势）。
 
+**ORT-CPU 复测（2026-10-11，定稿权重 + E2E 融图，b1/b8，README 表口径）**：交替 A/B、best-of-N
+两轮重复 —— b1 **14.5 vs 17.5 ms**、b8 **5.6 vs 13.0 ms/img**（flash-yolo vs yolo26n）。
+两点注意：① 测量时 v3-darknet 训练占着 16 个 loader worker（25 核配额），**绝对值偏悲观、
+b1 差距最不稳**（跨轮次 11–18 ms），表中已按"临时值"标注、待空载复测；② 10-09 那条 "+45%" 是
+空载随机权重口径，今天的受限环境下不可复现 —— 两个口径不要混用。b8 的 2.3× 优势在两轮独立测量里
+稳定（44.3/45.2 vs 103.5/105.7 ms），且方向与 TRT b8 一致。
+
 ## 5. 全长跑与验收（2026-10-11）
 
 100 轮从零训练（batch 64，与 yolo26n 控制同配方/同预算，~15.5 h）：

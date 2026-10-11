@@ -1,8 +1,15 @@
 # Assets
 
 Demo images in this directory are samples from the COCO dataset (val2017), picked for
-demo-friendly scenes; the `*_det.jpg` counterparts are detections rendered by
-`scripts/infer.py` with this repo's flash-yolo model (COCO training weights, 640 input).
+demo-friendly scenes; the `*_det.jpg` counterparts are detections rendered by `scripts/infer.py`
+with the **100-epoch from-scratch flash-yolo checkpoint** (COCO train2017, 33.77 mAP@[.5:.95]);
+640 input, default inference threshold (conf 0.25). Rendered with:
+
+```bash
+python scripts/train.py --data coco --model flash-yolo --name flash-coco-e100 --batch 64 --workers 16
+python scripts/infer.py --weights runs/train/flash-coco-e100/weights/best.safetensors --image assets/traffic.jpg
+python scripts/infer.py --weights runs/train/flash-coco-e100/weights/best.safetensors --image assets/baseball.jpg
+```
 
 - `traffic.jpg` — COCO val2017 `000000336232.jpg` (dense street traffic: bus, cars, motorcycle, people)
 - `traffic_det.jpg` — detections rendered on `traffic.jpg`
