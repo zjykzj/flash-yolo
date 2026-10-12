@@ -3,7 +3,8 @@
 > 用途：一个开箱即用的容器，复刻本仓库已验证的运行环境（含 TensorRT），让 train / eval /
 > export / infer 四条链路在干净机器上直接可跑。
 > 相关文件：根目录 `Dockerfile` + `.dockerignore`，`docker/run.sh`（唯一运行入口），
-> `docker/constraints.txt`（版本快照）。
+> `docker/constraints.txt`（版本快照）；**用法速查（构建 → 运行 → 验收 → 常见坑）见
+> `docker/README.md`**，本文只讲"是什么 / 为什么"。
 
 ## 1. 镜像内容与宿主要求
 
