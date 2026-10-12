@@ -1,5 +1,7 @@
 """MuSGD 验收：NS 正交性 / 玩具收敛 / 参数分组 / AMP 兼容 / 梯度不清理"""
 
+import copy
+
 import torch
 import torch.nn as nn
 
@@ -88,6 +90,39 @@ def test_build_param_groups():
             assert owner_of(p)["lr_mult"] == 3.0, f"{branch} 应 lr×3"
     n_muon = sum(len(g["params"]) for g in groups if g["muon"])
     print(f"  分组正确: {len(groups)} 组, muon 参数 {n_muon}, 可训参数 {n_trainable}")
+
+
+def test_sgd_mode_groups_are_all_sgd():
+    """optimizer=sgd：全参数走 SGD 路径（无 muon 组），分组覆盖不变"""
+    model = DetectionModel(scale="n")
+    groups = build_param_groups(model, TrainConfig(optimizer="sgd"), model.model[-1])
+    assert groups and all(not g["muon"] for g in groups)
+    n_grouped = sum(len(g["params"]) for g in groups)
+    assert n_grouped == sum(1 for p in model.parameters() if p.requires_grad)
+    # 对照：默认口径下 4D 卷积核在 muon 组——两种模式的差异就只在更新规则
+    assert any(g["muon"] for g in build_param_groups(model, TrainConfig(), model.model[-1]))
+    print(f"  optimizer=sgd: {len(groups)} 组全为 SGD 路径（默认口径含 muon 组）")
+
+
+def test_sgd_mode_matches_torch_sgd():
+    """sgd 口径与 torch.optim.SGD 逐步一致（wd 耦合 + heavy-ball / Nesterov 两种动量）"""
+    for nesterov in (True, False):
+        torch.manual_seed(0)
+        ref = nn.Sequential(nn.Linear(8, 16), nn.ReLU(), nn.Linear(16, 4))
+        mine = copy.deepcopy(ref)
+        ours = MuSGD([{"params": mine.parameters(), "muon": False, "wd": 5e-4, "lr_mult": 1.0}],
+                     lr=0.01, momentum=0.9, nesterov=nesterov)
+        theirs = torch.optim.SGD(ref.parameters(), lr=0.01, momentum=0.9, weight_decay=5e-4,
+                                 nesterov=nesterov)
+        x = torch.randn(16, 8)
+        for _ in range(5):
+            for opt, model in ((ours, mine), (theirs, ref)):
+                opt.zero_grad(set_to_none=True)
+                (model(x) ** 2).mean().backward()
+                opt.step()
+        for a, b in zip(mine.parameters(), ref.parameters()):
+            torch.testing.assert_close(a, b, rtol=1e-6, atol=1e-8)
+    print("  sgd 口径与 torch.optim.SGD 一致（nesterov / heavy-ball 双档）")
 
 
 def test_amp_compatibility():

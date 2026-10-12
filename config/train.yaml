@@ -35,6 +35,9 @@ diag_interval: 50  # 每 N 个优化步写一行 diag/train_diag.csv（梯度范
 aug_samples: 8     # 首个 / close_mosaic 后 / 末轮各存一张增强抽样网格图（每张 N 个样本）到 samples/（0 = 关）
 
 # ---- optimizer (MuSGD) ----
+optimizer: musgd   # musgd = Muon+SGD 混合（官方 yolo26 口径）| sgd = 全参数走 SGD 路径
+                   # （darknet 口径复刻：--optimizer sgd --momentum 0.9 --no-nesterov --lr0 0.001）
+nesterov: true     # SGD 分支的 Nesterov 修正；darknet 的更新是 heavy-ball → 复刻时置 false
 lr0: 0.01
 lrf: 0.01
 momentum: 0.937

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Switchable optimizer (`--optimizer sgd`)**: training can now put every parameter on the plain
+  SGD path instead of MuSGD's Muon+SGD mix, with `--[no-]nesterov` selecting the Nesterov correction
+  or darknet's heavy-ball form — the entry point for a darknet-style reproduction
+  (`--optimizer sgd --momentum 0.9 --no-nesterov` with lr 0.001 and step drops). The SGD path is
+  verified step-for-step against `torch.optim.SGD`, and the default (`musgd`) leaves existing runs
+  bit-identical.
 - **TensorRT fp16 export (`scripts/export.py --trt --fp16`)**: fp16 deployment engines are built the
   TensorRT 11 way — a half-precision ONNX (`model.half()`, written as `<stem>.fp16.onnx`) parsed into
   a strongly-typed network, since TRT 11 removed the `FP16` builder flag and has no precision-constraint

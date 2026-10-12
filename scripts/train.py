@@ -62,6 +62,12 @@ def main():
     parser.add_argument("--channels-last", dest="channels_last", action=argparse.BooleanOptionalAction, default=None,
                         help="NHWC training memory format (default: yaml)")
     parser.add_argument("--cos-lr", dest="cos_lr", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--optimizer", default=None, choices=["musgd", "sgd"],
+                        help="parameter update rule (default: yaml `optimizer`, musgd = Muon+SGD mix; "
+                             "sgd = every parameter on the SGD path — darknet-style reproduction)")
+    parser.add_argument("--nesterov", action=argparse.BooleanOptionalAction, default=None,
+                        help="Nesterov correction on the SGD branch (default: yaml `nesterov`, true; "
+                             "darknet's update is heavy-ball → use --no-nesterov to reproduce it)")
     parser.add_argument("--lr-schedule", dest="lr_schedule", default=None, choices=["linear", "cosine", "step"],
                         help="lr decay curve (default: yaml `lr_schedule`, linear; step = darknet-style drops)")
     parser.add_argument("--verbose", action="store_true", help="DEBUG logging (third-party output)")

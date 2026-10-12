@@ -56,6 +56,9 @@ class TrainConfig:
     aug_samples: int = 8  # 首个 / close_mosaic 后 / 末轮各存一张增强抽样网格图（每张 N 个样本）
 
     # optimizer (MuSGD)
+    optimizer: str = "musgd"  # musgd = Muon + SGD 混合（官方 yolo26 口径）| sgd = 全参数走 SGD 路径
+                              # （darknet 口径复刻：配 momentum 0.9 / nesterov false / wd 5e-4 / lr 0.001）
+    nesterov: bool = True  # SGD 分支的 Nesterov 修正；darknet 的更新是 heavy-ball → 复刻口径下置 false
     lr0: float = 0.01
     lrf: float = 0.01
     momentum: float = 0.937
@@ -163,6 +166,8 @@ def load_train_config(path, recipe=None, scale=None) -> TrainConfig:
     merged.update({k: v for k, v in overrides.items() if k in known})
     merged["recipe"] = recipe
     merged["scale"] = scale
+    if merged.get("optimizer", "musgd") not in ("musgd", "sgd"):
+        raise ValueError(f"unknown optimizer {merged['optimizer']!r} (musgd | sgd)")
     if recipe != "default" and merged.get("model", "yolo26") != "yolo26" and "model" not in overrides:
         # 配方未声明 model 视为 yolo26 系配方（coco-ft/o365-pt 均如此）；自带 model 的配方（如
         # yolov3-tiny-darknet）面向特定架构，不告警

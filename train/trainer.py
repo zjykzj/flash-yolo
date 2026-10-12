@@ -108,6 +108,7 @@ class Trainer:
             muon_w=cfg.muon_w,
             sgd_w=cfg.sgd_w,
             ns_iters=cfg.ns_iters,
+            nesterov=cfg.nesterov,
         )
         self.ema = ModelEMA(model, decay=cfg.ema_decay, tau=cfg.ema_tau)
         # AMP（opt-in）：fp16 + GradScaler。从零训练默认关闭——半精度前向在 640² 会
@@ -315,8 +316,12 @@ class Trainer:
         n_muon = sum(len(g["params"]) for g in groups if g.get("muon"))
         n_nodecay = sum(len(g["params"]) for g in groups if not g.get("muon") and g.get("wd", 0.0) == 0.0)
         n_lr3 = sum(len(g["params"]) for g in groups if g.get("lr_mult", 1.0) == 3.0)
-        logger.info(f"optimizer: MuSGD(lr0 {self.cfg.lr0} · momentum {self.cfg.momentum} · wd {self.cfg.weight_decay} · "
-                    f"muon_w {self.cfg.muon_w} · sgd_w {self.cfg.sgd_w} · ns_iters {self.cfg.ns_iters})")
+        if self.cfg.optimizer == "sgd":
+            logger.info(f"optimizer: SGD(lr0 {self.cfg.lr0} · momentum {self.cfg.momentum} · "
+                        f"wd {self.cfg.weight_decay} · nesterov {self.cfg.nesterov}) · Muon off")
+        else:
+            logger.info(f"optimizer: MuSGD(lr0 {self.cfg.lr0} · momentum {self.cfg.momentum} · wd {self.cfg.weight_decay} · "
+                        f"muon_w {self.cfg.muon_w} · sgd_w {self.cfg.sgd_w} · ns_iters {self.cfg.ns_iters})")
         logger.info(f"           groups: muon {n_muon} · no-decay {n_nodecay} · lr×3 {n_lr3}")
         close_epoch = max(self.cfg.epochs - self.close_mosaic, 0)
         # 只有真被 min(close_mosaic, epochs//5) 缩过才提示缩放来源

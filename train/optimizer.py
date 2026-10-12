@@ -1,5 +1,8 @@
 """MuSGD 优化器（论文 Sec 3.3.1）+ 参数分组
 
+`cfg.optimizer == "sgd"` 时全部参数按纯 SGD 路径更新（Muon 分支不参与）——用于 darknet 口径
+复刻（`--optimizer sgd --momentum 0.9 --no-nesterov --lr0 0.001` + 台阶 LR）。
+
 每步两个可加更新（Muon 组）:
     Muon: m <- beta*m + (1-beta)*g; u = beta*m + (1-beta)*g (Nesterov)
           u 重塑 2D -> Frobenius 归一 -> NS 迭代正交化 -> sqrt(max(1, rows/cols)) 缩放
@@ -25,6 +28,9 @@ def build_param_groups(model, cfg, head):
     - 无衰减组:   ndim==1（bias）或 *.bn.weight
     - 其余权重组: 带 decay 的非 Muon 参数（罕见 1D 权重）
     - Detect.cv3 / one2one_cv3 参数 lr_mult=3（分类头微调加速）
+
+    `cfg.optimizer == "sgd"` 时 muon 全关：所有参数走纯 SGD 路径（darknet 口径复刻入口；
+    与 MuSGD 的差别只在更新规则，分组/衰减/lr_mult 契约不变）。
     """
     head_ids = set()
     for branch in ("cv3", "one2one_cv3"):
@@ -38,7 +44,7 @@ def build_param_groups(model, cfg, head):
         if not p.requires_grad:
             continue
         lr_mult = 3.0 if id(p) in head_ids else 1.0
-        muon = p.ndim in (2, 4)
+        muon = p.ndim in (2, 4) and getattr(cfg, "optimizer", "musgd") != "sgd"
         wd = 0.0 if (p.ndim == 1 or name.endswith(".bn.weight")) else cfg.weight_decay
         key = (muon, wd, lr_mult)
         buckets.setdefault(key, []).append(p)
