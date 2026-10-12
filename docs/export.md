@@ -52,22 +52,24 @@ python scripts/export.py --weights weights/yolo26n.safetensors --trt --fp16    #
 - TensorRT 是可选依赖、不进 `requirements.txt`；安装匹配 wheel（本仓库按 **TensorRT 11.4 /
   onnxruntime 1.30** 构建与实测），引擎代码兼容 TRT 10（`EXPLICIT_BATCH`）与 11（标志移除）。
 
-**fp16 实测（RTX 5090，E2E 引擎，推理段，重复取 min——测量时机器上同时跑着训练）**：
+**fp16 实测（RTX 5090，E2E 引擎，推理段，重复取 min；2026-10-12 空载复测，flash-yolo 换成 100 轮定稿权重）**：
 
 | Model | b1 fp32 | b1 fp16 | b8 fp32 | b8 fp16 |
 |---|---|---|---|---|
-| YOLO26n @640 | 1.38 ms | 1.20 ms | 0.252 ms/img | **0.141 ms/img** |
-| flash-yolo @640 | 1.33 ms | 1.20 ms | 0.213 ms/img | **0.130 ms/img** |
+| YOLO26n @640 | 1.38 ms | 1.22 ms | 0.248 ms/img | **0.139 ms/img** |
+| flash-yolo @640 | 1.32 ms | 1.23 ms | 0.213 ms/img | **0.126 ms/img** |
 
 - **b1 贴着启动开销地板**：fp16 只省 ~10-13%，两个架构打平；b1 的可验证口径仍是 fp32 链
   （pt → onnx → engine，引擎输出与 PyTorch < 2e-3）。
-- **fp16 的收益在 batch**：b8 每图延迟 −44%（YOLO26n）/ −39%（flash-yolo）。
+- **fp16 的收益在 batch**：b8 每图延迟 −44%（YOLO26n）/ −41%（flash-yolo）。
   （b8 来自 raw 探针——`scripts/export.py` 出的是固定 batch 1，batch>1 需自行用 `--dynamic`
   导出后构建。）
 - **精度无可测损失**：同权重 fp32 vs fp16 引擎，COCO val2017 前 500 图——YOLO26n
   0.4432 → 0.4434 mAP@[.5:.95]（0.5994 → 0.6001 mAP@50）；flash-yolo（筛选期权重）
   0.3218 → 0.3223（0.4553 → 0.4558）——差值都在子集噪声内。fp16 的 E2E 图在半精度下解码
-  框坐标（640 输入约 0.5 px 量化），真实图片上检测数与类别完全一致（框最大差 0.84 px）。
+  框坐标（640 输入约 0.5 px 量化）。逐框对照要点（100 轮权重，traffic.jpg，19 检）：
+  **按分数排序再逐元素比会误报**——近分框（0.2528 vs 0.2517）在两个精度下会换位，
+  要按 IoU 匹配；匹配后 IoU min 0.990、类别全一致、框最大差 0.30 px。
 
 ## 3. 三个运行时
 

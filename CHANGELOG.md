@@ -46,10 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real-image fixture.
 - **Scorecard split, CPU latency filled in**: the opening table is now two tables — accuracy & size
   (mAP / params / GFLOPs) and latency (ONNX Runtime CPU b1/b8 + TensorRT b1/b8, fp32 and fp16) — each
-  with its own Δ row against the budget-matched YOLO26n. The previously pending ORT-CPU column now
-  carries measured b1/b8 numbers for both models (flash-yolo 14.5 ms / 5.6 ms per image vs YOLO26n
-  17.5 / 13.0), marked as provisional: they were taken while a training run shared the CPU, so
-  absolute values are pessimistic and a quiet re-measurement is planned.
+  with its own Δ row against the budget-matched YOLO26n. Both latency halves were then re-measured on
+  an idle machine: ORT-CPU b1/b8 = **13.2 ms / 6.09 ms per image** for flash-yolo vs **14.8 / 8.27**
+  for YOLO26n (b1 is per-run-overhead-bound — the two models are effectively tied there; b8 lands at
+  the 1.44× GFLOP ratio), TensorRT b1 = 1.32 / 1.23 ms fp32 / fp16 and b8 = 0.213 / 0.126 ms per
+  image, with the flash-yolo engines rebuilt from the 100-epoch checkpoint (the earlier TensorRT rows
+  used screening weights).
 - **Demo renders updated to the final checkpoint**: `assets/traffic_det.jpg` / `baseball_det.jpg`
   are re-rendered with the 100-epoch from-scratch flash-yolo checkpoint (previously the screening
   weights), and `assets/README.md` now records the exact render commands.

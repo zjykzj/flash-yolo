@@ -27,17 +27,19 @@
 | flash-yolo · this repo, 100 ep¹ | 33.77 | 48.63 | 1.97M | 3.80 |
 | **Δ (flash-yolo vs YOLO26n)** | **−2.45 (−7%)** | **−2.69 (−5%)** | **−0.60M (−23%)** | **−1.68 (−31%)** |
 
-**Latency²** — model-only inference stage, best-case `min` across repeated runs; ONNX Runtime on an
-Intel Xeon Platinum 8470Q (25-core container quota), TensorRT on one RTX 5090:
+**Latency²** — model-only inference stage; ONNX Runtime on an Intel Xeon Platinum 8470Q (25-core
+container quota), TensorRT on one RTX 5090. Measured on an idle machine: ORT-CPU cells are the
+median of the per-session best-case `min` across four 300-sample alternating sessions³; TensorRT
+cells are the best-case `min` over repeated runs².
 
 | Model | ORT-CPU b1 (ms) | ORT-CPU b8 (ms/img) | TRT b1 fp32 (ms) | TRT b1 fp16 (ms) | TRT b8 fp32 (ms/img) | TRT b8 fp16 (ms/img) |
 |---|---|---|---|---|---|---|
-| YOLO26n · official weights | 17.5³ | 13.0³ | 1.38 | 1.20 | 0.252 | 0.141 |
-| YOLO26n · this repo, 100 ep | 17.5³ | 13.0³ | 1.38 | 1.20 | 0.252 | 0.141 |
-| flash-yolo · this repo, 100 ep | 14.5³ | 5.6³ | 1.33 | 1.20 | 0.213 | 0.130 |
-| **Δ (flash-yolo vs YOLO26n)** | **−3.0 (−17%)** | **−7.4 (−57%)** | **−0.05 (−4%)** | **0.00** | **−0.039 (−15%)** | **−0.011 (−8%)** |
+| YOLO26n · official weights | 14.8³ | 8.27³ | 1.38 | 1.22 | 0.248 | 0.139 |
+| YOLO26n · this repo, 100 ep | 14.8³ | 8.27³ | 1.38 | 1.22 | 0.248 | 0.139 |
+| flash-yolo · this repo, 100 ep | 13.2³ | 6.09³ | 1.32 | 1.23 | 0.213 | 0.126 |
+| **Δ (flash-yolo vs YOLO26n)** | **−1.6 (−11%)** | **−2.18 (−26%)** | **−0.06 (−4%)** | **+0.01 (~0)** | **−0.035 (−14%)** | **−0.013 (−9%)** |
 
-¹ flash-yolo — a single-variable screened YOLO26 variant that keeps all three detection levels (P3/P4/P5) — trained from scratch for 100 epochs, same recipe, data and budget as the from-scratch YOLO26n row above, so its Δ is like for like; with NMS: 34.72 / 50.16. ² The TensorRT rows were measured on a box that also ran two trainings (best-case min, so conservative); b1 fp16 ties at ~1.20 ms for both models — the b1 fp32 chain is the exactly verified one (`pt → onnx → engine`). Δ compares against the budget-matched from-scratch YOLO26n; for structure and latency both YOLO26n rows are identical. Details: [YOLO26n alignment](#yolo26n-alignment-with-the-official-weights). ³ ORT-CPU measured while a training run shared the CPU (16 loader workers on the 25-core quota) — provisional, pending a quiet re-measurement: absolute values are pessimistic and the b1 gap is the least stable of the set; b8 uses a dynamic-batch graph, b1 the fixed-batch export.
+¹ flash-yolo — a single-variable screened YOLO26 variant that keeps all three detection levels (P3/P4/P5) — trained from scratch for 100 epochs, same recipe, data and budget as the from-scratch YOLO26n row above, so its Δ is like for like; with NMS: 34.72 / 50.16. ² TensorRT rows: engines built from the checkpoints in the table (`runs/export/<model>.{engine,fp16.engine}`), best-case `min` over 180 timed runs (b1) and 30 single-shot + 100 pipelined runs (b8); b1 fp16 ties at ~1.2 ms for both models — the b1 chain that is exactly verified is fp32 (`pt → onnx → engine`). Δ compares against the budget-matched from-scratch YOLO26n; for structure and latency both YOLO26n rows are identical. Details: [YOLO26n alignment](#yolo26n-alignment-with-the-official-weights). ³ ORT-CPU rows: idle container on a shared host (host load ≈ 40 during the session) — each cell is the per-session best-case `min` of 300 alternating A/B samples (`runs/artifacts/bench/ort_bench3.py`), b1 on the fixed-batch export and b8 on the dynamic-batch graph. Neighbour load moves absolute values by ±20% between sessions (b1 gap ranged 1–26%, b8 gap 22–43%), and b1 is per-run-overhead-bound — the two models are effectively tied there; the b8 column tracks the 1.44× GFLOP ratio and is the one that separates the architectures.
 
 ## Quick Start
 
