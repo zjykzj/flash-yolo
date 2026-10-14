@@ -85,6 +85,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   export → infer) with expected outputs, and the official-weights download/evaluate recipe moves
   into the alignment section.
 
+### Removed
+
+- **`yolov3-tiny-darknet` recipe retired**: the darknet-alignment recipe (multi-scale + step LR)
+  is deleted after its 300-epoch run and the follow-up single-variable probes closed the
+  investigation — the budget story was corrected, official SGD numbers are not reproducible under
+  this pipeline's unconditional grad-norm clip, and every remaining knob (LR shape/value,
+  multi-scale, optimizer, batch steps) probed flat. The recommended yolov3-tiny configuration is
+  now **`--model yolov3-tiny-silu --obj-iou-target` over the default recipe**: at 100 epochs it
+  lands **15.23 / 28.58** on COCO val2017 @416 (pycocotools) vs 12.70 / 24.84 for the plain default
+  — already above the default's 300-epoch result (14.23 / 27.50). Full records in
+  `docs/yolov3-tiny-runs.md` §3.1 / §4.4 / §4.5.
+
 ## [0.5.0] - 2026-10-10
 
 ### Added

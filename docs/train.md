@@ -30,12 +30,13 @@ python scripts/train.py --data coco --model yolov3-tiny-silu --name v3s --imgsz 
 | *（不传）* | 从零 / 自有数据微调 | — | 100 |
 | `yolo26-coco-ft` | 官方 COCO 阶段（微调） | **需 O365 预训练权重初始化** | 245/70/80/60/40 |
 | `yolo26-o365-pt` | 官方 Objects365 预训练 | 需 Objects365 数据集（未在本仓库验证） | 150 |
-| `yolov3-tiny-darknet` | darknet 对齐（多尺度 + 台阶 LR） | v3 用 | 300 |
 
 ```bash
 python scripts/train.py --data coco --recipe yolo26-coco-ft --weights yolo26n-objv1-150.safetensors
-python scripts/train.py --data coco --model yolov3-tiny --recipe yolov3-tiny-darknet --name v3-dk
 ```
+
+> v3 没有专用配方：**推荐配置 = default + 两个开关**（`--model yolov3-tiny-silu --obj-iou-target`），
+> 依据与数字见 `yolov3-tiny-runs.md` §4.5；旧的 `yolov3-tiny-darknet` 配方已定案退役（§4.4）。
 
 > **从零训练只有 `default` 一档。** `yolo26-coco-ft` 的 lr0 是基线的一半、衰减更陡，是
 > 进化搜索针对"已收敛起点"调的——从零跑它是把模型按在慢速档上（实测同轮次相对低 ~43%）。

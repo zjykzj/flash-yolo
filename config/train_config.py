@@ -173,8 +173,8 @@ def load_train_config(path, recipe=None, scale=None) -> TrainConfig:
     if merged.get("optimizer", "musgd") not in ("musgd", "sgd"):
         raise ValueError(f"unknown optimizer {merged['optimizer']!r} (musgd | sgd)")
     if recipe != "default" and merged.get("model", "yolo26") != "yolo26" and "model" not in overrides:
-        # 配方未声明 model 视为 yolo26 系配方（coco-ft/o365-pt 均如此）；自带 model 的配方（如
-        # yolov3-tiny-darknet）面向特定架构，不告警
+        # 配方未声明 model 视为 yolo26 系配方（coco-ft/o365-pt 均如此）；自带 model 的配方
+        # 面向特定架构，不告警
         logger.warning(f"recipe {recipe!r} does not declare a model — it is a yolo26-tuned recipe; "
                        f"training {merged['model']!r} with it is not recommended")
     return TrainConfig(**merged)
