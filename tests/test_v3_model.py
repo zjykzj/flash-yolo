@@ -109,3 +109,28 @@ def test_strict_roundtrip(tmp_path):
     for (n1, p1), (n2, p2) in zip(model.state_dict().items(), fresh.state_dict().items()):
         assert n1 == n2 and torch.equal(p1, p2), f"参数不一致: {n1}"
     print(f"  safetensors 往返一致（{len(model.state_dict())} 个张量）")
+
+
+def test_silu_variant_activation_swap():
+    """yolov3-tiny-silu：纯算子替换（LeakyReLU -> SiLU）——键集/参数量/前向形状与原版一致"""
+    import torch.nn as nn
+
+    from model.weights import arch_from_weights
+
+    pure = build_model("yolov3-tiny", imgsz=416, nc=80)
+    silu = build_model("yolov3-tiny-silu", imgsz=416, nc=80)
+    # 激活无参数：两版 state_dict 键集与参数量逐项一致（仅函数变换不同）
+    assert set(silu.state_dict()) == set(pure.state_dict())
+    assert sum(p.numel() for p in silu.parameters()) == sum(p.numel() for p in pure.parameters())
+    acts_silu = {type(m) for m in silu.modules() if isinstance(m, (nn.SiLU, nn.LeakyReLU))}
+    acts_pure = {type(m) for m in pure.modules() if isinstance(m, (nn.SiLU, nn.LeakyReLU))}
+    assert acts_silu == {nn.SiLU}, acts_silu
+    assert acts_pure == {nn.LeakyReLU}, acts_pure
+    silu.eval()
+    with torch.no_grad():
+        out = silu(torch.randn(1, 3, 416, 416))
+    assert out.shape == (1, 2535, 85)
+    # 文件名推断：长名优先，防 "yolov3-tiny" 前缀误吸
+    assert arch_from_weights("yolov3-tiny-silu.safetensors") == "yolov3-tiny-silu"
+    assert arch_from_weights("yolov3-tiny.safetensors") == "yolov3-tiny"
+    print("  SiLU 变体正确：键集/参数量与原版一致、激活 LeakyReLU -> SiLU、文件名可推断")

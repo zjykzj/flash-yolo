@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   acceptance thresholds), infer (three runtimes, outputs), docker (image, launcher, constraints) —
   plus per-architecture design & training records (YOLO26 spec/runs, flash-yolo design process,
   YOLOv3-tiny spec/runs). The private release-prep notes under `docs/bake/` stay untracked.
+- **YOLOv3-tiny SiLU operator-swap variant (`--model yolov3-tiny-silu`)**: a registered architecture
+  that is line-for-line the darknet topology with a single change — LeakyReLU(0.1) → SiLU. Same
+  state_dict keys, same 8,852,366 parameters, same 5.6 GFLOPs @416 (activations are parameter-free).
+  The darknet-pure `yolov3-tiny` stays untouched for official `.weights` conversion and numeric
+  parity; the arch field in weights metadata (and longest-name-first filename inference) keeps the
+  two variants apart through train / eval / infer / export.
 
 ### Changed
 

@@ -9,6 +9,11 @@
 - **结构基准是 darknet，不是 ultralytics**。ultralytics 8.4.x 里的 "v3"（资产只有
   yolov3-tinyu.pt）是**无锚 DFL 重写**：SiLU 激活、reg_max=16、`Detect` 连 `anchors` 形参都没有。
   它既不能作为结构来源，也不能作为数值对齐对象。
+- **算子替换版（2026-10-13 新增）**：`yolov3-tiny-silu`（`config/models/yolov3-tiny-silu.yaml`）
+  ——与本文原版**逐行同构**，唯一差异 = LeakyReLU(0.1) → SiLU（激活无参数：两版 state_dict
+  键集、参数量 8,852,366、@416 GFLOPs 均逐位一致）。官方 `.weights` 只配原版使用；两版由
+  权重 metadata 的 `arch` 字段与文件名（`_ARCH_RE` 长名优先）区分。训练侧另有 IoU-aware objectness
+  开关 `--obj-iou-target`（见第 6 节）。
 - 本实现的验收对象 = 官方 darknet `.weights`（经 `scripts/convert_weights.py` 严格加载后
   与 cv2.dnn / 官方发布的 AP 对得上），见第 9 节。
 - 与 yolo26 共享的只有**训练管线**（trainer/EMA/优化器/增强/数据加载/引擎）；模型、头、

@@ -17,6 +17,8 @@ python scripts/train.py --data coco --resume runs/train/my-run/resume.pt
 
 # 换架构（yolov3-tiny 结构固定，不要传 --scale）
 python scripts/train.py --data coco --model yolov3-tiny --name v3 --imgsz 416
+# 算子替换版（LeakyReLU→SiLU；键集/参数量/GFLOPs 与原版一致）
+python scripts/train.py --data coco --model yolov3-tiny-silu --name v3s --imgsz 416
 ```
 
 ## 2. 配方（recipe）
@@ -46,7 +48,7 @@ python scripts/train.py --data coco --model yolov3-tiny --recipe yolov3-tiny-dar
 | `--data` | —（必填） | 描述符（见 `dataset.md`） |
 | `--name` | 空 → `runs/train/train` | run 目录：`--name foo` → `runs/train/train-foo`；目录已存在自动加序号 |
 | `--recipe` | 内置 default | 配方名（`config/recipes/<name>.yaml`）或 `.yaml` 路径 |
-| `--model` | `yolo26` | `yolo26` / `flash-yolo` / `yolov3-tiny` |
+| `--model` | `yolo26` | `yolo26` / `flash-yolo` / `yolov3-tiny` / `yolov3-tiny-silu`（算子替换版） |
 | `--scale` | `n` | yolo26 档位 n/s/m/l/x；其他架构固定 |
 | `--cfg` | — | 模型 yaml 覆盖（自定义结构 / 筛选变体） |
 | `--epochs` | 100 | 总轮数（配方的调度也按它算） |

@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 # 官方档位命名：yolo26n/s/m/l/x（scripts/download_weights.py 与 scripts/export.py 都沿用）
 _SCALE_RE = re.compile(r"yolo26([nsmlx])($|[-_.])", re.I)
-# 架构命名：yolov3-tiny（官方 darknet 权重命名）/ flash-yolo（本项目自有架构）
-_ARCH_RE = re.compile(r"(yolov3-tiny|flash-yolo)($|[-_.])", re.I)
+# 架构命名：yolov3-tiny（官方 darknet 权重命名）/ yolov3-tiny-silu（算子替换版）/
+# flash-yolo（本项目自有架构）。长名在前，否则 "yolov3-tiny-silu" 会被 "yolov3-tiny" 前缀误吸
+_ARCH_RE = re.compile(r"(yolov3-tiny-silu|yolov3-tiny|flash-yolo)($|[-_.])", re.I)
 
 _META_STR_KEYS = ("arch", "scale")      # header 直读字符串
 _META_INT_KEYS = ("nc", "imgsz")        # int() 还原

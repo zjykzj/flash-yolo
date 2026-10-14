@@ -1,0 +1,47 @@
+# YOLOv3-tiny（SiLU 版）：darknet 官方 cfg 骨架 + 纯算子替换 LeakyReLU(0.1) → SiLU
+# 与 config/models/yolov3-tiny.yaml 逐行同构（层序/通道/锚点/步长完全一致），唯一差异：
+# 全部 LeakyConv → Conv（Conv2d+BN+SiLU；BN eps=0.001 / momentum=0.03 两版相同，激活无参数）。
+# 依据：现代 YOLO（v5/7/8/11/26）全系 SiLU；参考 zjykzj/YOLOv3（darknet 拓扑 + SiLU + --yolov3loss
+# 在 COCO 上超官方 darknet 的实绩）。不追求 darknet 纯血——官方 .weights 只配原版 yolov3-tiny 使用；
+# 两版 state_dict 键集完全一致（激活无参数），权重 metadata 的 arch 字段区分。
+#
+# 行语法：[from, repeats, module, args]
+# 两个转写要点（与原版相同）：
+#   ① 保尺寸池化（darknet [maxpool] size=2 stride=1 的隐式 padding）= ZeroPad2d(右下 pad 1) + MaxPool2d(2,1)；
+#   ② 两颗 1×1→255 输出卷积折进 V3Detect（同 yolo26 的 Detect 持有 cv2/cv3 的惯例）。
+
+nc: 80
+# anchors 照官方原值（darknet 固定像素单位，**不随 imgsz 缩放**），与原版一致
+anchors:
+  - [[23, 27], [37, 58], [81, 82]]       # P4/16
+  - [[81, 82], [135, 169], [344, 319]]   # P5/32
+strides: [16, 32]
+
+scales:
+  # [depth, width, max_channels]——v3-tiny 无缩放（width_multiple=1.0）
+  tiny: [1.0, 1.0, 1024]
+
+backbone:
+  - [-1, 1, Conv, [16, 3, 1]]             # 0  416
+  - [-1, 1, MaxPool2d, [2, 2]]            # 1  208
+  - [-1, 1, Conv, [32, 3, 1]]             # 2  208
+  - [-1, 1, MaxPool2d, [2, 2]]            # 3  104
+  - [-1, 1, Conv, [64, 3, 1]]             # 4  104
+  - [-1, 1, MaxPool2d, [2, 2]]            # 5  52
+  - [-1, 1, Conv, [128, 3, 1]]            # 6  52
+  - [-1, 1, MaxPool2d, [2, 2]]            # 7  26
+  - [-1, 1, Conv, [256, 3, 1]]            # 8  26 ← P4 融合来源
+  - [-1, 1, MaxPool2d, [2, 2]]            # 9  13
+  - [-1, 1, Conv, [512, 3, 1]]            # 10 13
+  - [-1, 1, ZeroPad2d, [[0, 1, 0, 1]]]    # 11 13（右下各补 1 行/列）
+  - [-1, 1, MaxPool2d, [2, 1]]            # 12 13
+
+head:
+  - [-1, 1, Conv, [1024, 3, 1]]           # 13 13
+  - [-1, 1, Conv, [256, 1, 1]]            # 14 13
+  - [-1, 1, Conv, [512, 3, 1]]            # 15 P5/32 头输入（512ch）
+  - [-2, 1, Conv, [128, 1, 1]]            # 16 darknet route -4（parse 期归一化为绝对 14）
+  - [-1, 1, Upsample, [None, 2, "nearest"]]  # 17 26
+  - [[17, 8], 1, Concat, [1]]             # 18 128+256=384，26×26
+  - [-1, 1, Conv, [256, 3, 1]]            # 19 P4/16 头输入（256ch）
+  - [[19, 15], 1, V3Detect, [nc]]         # 20 双尺度检测（含两颗 1×1→255 卷积）

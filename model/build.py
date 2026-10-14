@@ -17,7 +17,7 @@ from model.head_v3 import V3Detect
 
 __all__ = ["DetectionModel", "build_model", "build_yolo26", "build_yolov3_tiny",
            "arch_display_name", "ARCHS", "YOLO26_FAMILY", "YOLO26_CONFIG_PATH", "V3_CONFIG_PATH",
-           "FLASH_CONFIG_PATH"]
+           "V3_SILU_CONFIG_PATH", "FLASH_CONFIG_PATH"]
 
 
 class Concat(nn.Module):
@@ -54,12 +54,15 @@ CHANNEL_PRESERVING = {"Upsample", "MaxPool2d", "ZeroPad2d"}
 
 YOLO26_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolo26.yaml"
 V3_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolov3-tiny.yaml"
+# v3-tiny 算子替换版（LeakyReLU -> SiLU，其余逐行同构；见该 yaml 头部注释）
+V3_SILU_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolov3-tiny-silu.yaml"
 FLASH_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "flash-yolo.yaml"
 
 # 架构注册表：name -> yaml 路径 + 默认档位 + 展示名模板（新增架构在此登记）
 ARCHS = {
     "yolo26": {"cfg": YOLO26_CONFIG_PATH, "default_scale": "n", "display": "YOLO26{scale}"},
     "yolov3-tiny": {"cfg": V3_CONFIG_PATH, "default_scale": "tiny", "display": "YOLOv3-tiny"},
+    "yolov3-tiny-silu": {"cfg": V3_SILU_CONFIG_PATH, "default_scale": "tiny", "display": "YOLOv3-tiny-SiLU"},
     "flash-yolo": {"cfg": FLASH_CONFIG_PATH, "default_scale": "flash", "display": "Flash-YOLO"},
 }
 
