@@ -12,9 +12,10 @@ import torch
 
 from data.augment import augment, letterbox_train
 
-__all__ = ["TrainMixin", "SharedCounter", "collate_fn", "worker_init_fn"]
+__all__ = ["TrainMixin", "SharedCounter", "collate_fn", "worker_init_fn", "seed_main_rng"]
 
 _worker_rng = None  # worker 进程内全局 RNG（worker_init_fn 播种，多进程下各 worker 独立）
+_main_rng = None    # workers=0 时主进程的增强 RNG（Trainer 每 epoch 经 seed_main_rng 播种）
 
 # OpenCV 线程数必须在**导入时**（= 任何 cv2 并行运算与第一次 fork 之前）由父进程设定，子进程只继承：
 # OpenCV 的 pthreads 线程池非 fork 安全 —— 父进程只要跑过一次 cv2 运算（本地 = 验证集 imread +
@@ -64,6 +65,18 @@ class TrainMixin:
         return self._corrupt.value
 
 
+def seed_main_rng(seed):
+    """给主进程增强 RNG 播种（workers=0 时由 Trainer 每 epoch 调用）
+
+    与 worker 侧同构：种子只由 (cfg.seed, epoch) 决定、不依赖历史消费量，所以"从头跑"与
+    "resume 接上跑"在同一 epoch 拿到同一条增强流。修复前主进程走无参 np.random.default_rng()
+    ——每次调用都从 OS 熵重新播种一个全新 Generator，workers=0 的增强完全不可复现
+    （实测同 seed 两跑 3 epoch 后权重 max|Δ| 0.59）。
+    """
+    global _main_rng
+    _main_rng = np.random.default_rng(seed)
+
+
 def worker_init_fn(worker_id):
     """每 worker 独立播种 RNG（抽样流由 DataLoader 的 seed+epoch generator 保证可复现）
 
@@ -82,9 +95,16 @@ def worker_init_fn(worker_id):
 
 
 def _rng():
-    """主进程用默认 RNG；worker 进程用 worker_init_fn 播种的 RNG"""
-    global _worker_rng
-    return _worker_rng if _worker_rng is not None else np.random.default_rng()
+    """增强随机源：worker 用 worker_init_fn 播种的 RNG；主进程（workers=0）用 seed_main_rng 的 RNG
+
+    未经播种（如测试里直接构造数据集迭代）时退回固定种子——任何路径都不以 OS 熵为来源。
+    """
+    global _main_rng
+    if _worker_rng is not None:
+        return _worker_rng
+    if _main_rng is None:
+        _main_rng = np.random.default_rng(0)
+    return _main_rng
 
 
 def collate_fn(batch):

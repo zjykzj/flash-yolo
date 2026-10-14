@@ -79,3 +79,19 @@ def test_best_last_weights(tmp_path):
     missing, unexpected = load_weights(fresh, tmp_path / "weights" / "best.safetensors", strict=True)
     assert not missing and not unexpected
     print("  best/last 落盘与 strict 回载正确（metadata 随盘）")
+
+
+def test_capture_rng_covers_stdlib_random():
+    """resume 快照恢复 stdlib random 流（_multi_scale_size 每 batch 抽输入尺寸在用）"""
+    import random as _random
+
+    from train.checkpoint import capture_rng
+
+    _random.seed(11)
+    [_random.random() for _ in range(5)]
+    snap = capture_rng()
+    assert {"torch", "numpy", "random"} <= set(snap), snap.keys()
+    expect = [_random.random() for _ in range(3)]
+    _random.setstate(snap["random"])  # 模拟 resume 恢复
+    assert [_random.random() for _ in range(3)] == expect, "stdlib random 状态未随快照恢复"
+    print("  capture_rng 覆盖 stdlib random（恢复后流一致）")

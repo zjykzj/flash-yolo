@@ -107,6 +107,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   — already above the default's 300-epoch result (14.23 / 27.50). Full records in
   `docs/yolov3-tiny-runs.md` §3.1 / §4.4 / §4.5.
 
+### Fixed
+
+- **Single-process training was never reproducible (`workers=0`)**: the main-process augmentation
+  RNG fell back to an unseeded `np.random.default_rng()` — a fresh OS-entropy-seeded generator per
+  call — so the same seed produced different weights every run (measured max|Δ| 0.59 after 3
+  epochs). The main-process stream is now seeded per epoch from `seed + epoch`, mirroring the worker
+  path, and the stdlib `random` module is seeded and checkpointed too (the `multi_scale` input-size
+  draw used it unseeded). With a fixed seed, single-process runs are now bit-identical and a resumed
+  run matches an uninterrupted one.
+
 ## [0.5.0] - 2026-10-10
 
 ### Added

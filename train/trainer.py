@@ -19,7 +19,7 @@ from config import __version__
 from config.datasets import load_dataset
 from config.train_config import TrainConfig
 from data.build import build_eval_dataset, build_train_dataset
-from data.loader import collate_fn, worker_init_fn
+from data.loader import collate_fn, seed_main_rng, worker_init_fn
 from data.scan import scan_summary
 from model.summary import summary_lines
 from model.weights import encode_anchors, load_weights, provenance_meta
@@ -65,6 +65,7 @@ class Trainer:
 
         torch.manual_seed(cfg.seed)
         np.random.seed(cfg.seed)
+        random.seed(cfg.seed)  # stdlib RNG：_multi_scale_size 在用（multi_scale>0 时每 batch 抽尺寸）
         torch.backends.cudnn.benchmark = True  # 训练不追求逐位可复现（resume 口径见 checkpoint）
 
         self.run_dir = Path(run_dir)
@@ -167,6 +168,8 @@ class Trainer:
     # ---- 数据 ----
     def _dataloader(self, epoch):
         generator = torch.Generator().manual_seed(self.cfg.seed + epoch)  # 每 epoch 可复现抽样流
+        if self.cfg.workers == 0:  # workers=0：增强在主进程跑，与 worker 侧同构地每 epoch 重播 RNG
+            seed_main_rng(self.cfg.seed + epoch)
         return DataLoader(
             self.dataset,
             batch_size=self.cfg.batch,

@@ -5,6 +5,7 @@
 - best/last.safetensors：EMA 权重交付物（纯张量，可审计）
 """
 
+import random
 from dataclasses import asdict
 
 import numpy as np
@@ -16,8 +17,8 @@ __all__ = ["save_resume", "load_resume", "save_best_last", "save_periodic", "cap
 
 
 def capture_rng():
-    """当前 torch/cuda/numpy 随机状态（resume 可复现的关键）"""
-    out = {"torch": torch.get_rng_state(), "numpy": np.random.get_state()}
+    """当前 torch/cuda/numpy/random 随机状态（resume 可复现的关键）"""
+    out = {"torch": torch.get_rng_state(), "numpy": np.random.get_state(), "random": random.getstate()}
     if torch.cuda.is_available():
         out["cuda"] = torch.cuda.get_rng_state_all()
     return out
@@ -57,6 +58,8 @@ def load_resume(path, model, ema, optimizer, scaler=None):
         torch.cuda.set_rng_state_all(rng["cuda"])
     if "numpy" in rng:
         np.random.set_state(rng["numpy"])
+    if "random" in rng:
+        random.setstate(rng["random"])
     return ckpt["epoch"], ckpt["best_fitness"], ckpt["cfg"], ckpt.get("run_dir")
 
 

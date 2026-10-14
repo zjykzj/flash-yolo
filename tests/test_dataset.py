@@ -144,6 +144,29 @@ def test_collate(tmp_path):
     print("  collate 形状与 batch_idx 正确")
 
 
+def test_main_process_augmentation_reproducible(tmp_path):
+    """workers=0 的增强必须可复现：同种子两次取同一样本逐位相同，换种子则不同
+
+    回归闸门：修复前主进程走无参 np.random.default_rng()（每次调用都从 OS 熵重播），
+    workers=0 下每个样本的增强都随机 —— 同 seed 两跑 3 epoch 权重 max|Δ| 0.59。
+    """
+    from data.loader import seed_main_rng
+
+    data_dir = _make_fixture(tmp_path)
+    cfg = TrainConfig(mosaic=1.0, mixup=0.0, copy_paste=0.0)  # 走到 mosaic/仿射/HSV 全路径
+    ds = build_train_dataset(cfg, _descriptor(data_dir, tmp_path), "train")
+
+    seed_main_rng(1234)
+    img_a, labels_a = ds[0]
+    seed_main_rng(1234)
+    img_b, labels_b = ds[0]
+    assert np.array_equal(img_a, img_b) and np.array_equal(labels_a, labels_b), "同种子增强不一致"
+    seed_main_rng(4321)
+    img_c, _ = ds[0]
+    assert not np.array_equal(img_a, img_c), "换种子后增强仍相同 —— 种子未生效"
+    print("  主进程（workers=0）增强可复现：同种子逐位相同、换种子不同")
+
+
 def test_scan_summary_line():
     """`└` 续行排版：训练与评估共用同一函数（两处漂移会让两套日志对不上）"""
     ds = SimpleNamespace(n_instances=849949, n_categories=80, n_crowd_excluded=10052,
