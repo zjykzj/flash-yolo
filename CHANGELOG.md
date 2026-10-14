@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Weight provenance in safetensors metadata (`version` / `repo` / `commit` / `describe`)**: every
+  training checkpoint and converter output now records which flash-yolo code produced it, so a
+  delivered weights file can be traced back without the surrounding run directory.
+  `config.__repo__` joins `__version__` as a project-identity constant, the commit is read
+  best-effort from the local checkout, and `describe` carries the raw `git describe` output
+  (`v0.5.0-17-g984d198-dirty`) — the declared version is the release line while the commit is the
+  exact coordinate, and the two are not meant to match, so the describe string makes that gap
+  explicit. Both git-derived keys (`commit`, `describe`) are omitted when unavailable (as inside the
+  Docker image, where `.git` is excluded) rather than written as empty strings. Existing files
+  without the keys load unchanged and the tensors are untouched.
 - **Switchable optimizer (`--optimizer sgd`)**: training can now put every parameter on the plain
   SGD path instead of MuSGD's Muon+SGD mix, with `--[no-]nesterov` selecting the Nesterov correction
   or darknet's heavy-ball form — the entry point for a darknet-style reproduction

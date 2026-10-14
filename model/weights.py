@@ -2,7 +2,8 @@
 
 metadata（可选）：随权重一起走的模型参数，写在 safetensors header 的 metadata 字段（纯 JSON
 字符串，不碰张量）——训练保存的 best/last/epochN 与官方权重转换产物会带
-`{arch, scale, nc, imgsz[, names, anchors]}`；旧权重 / `.onnx` / `.pt` 没有则安全降级为空 dict。
+`{arch, scale, nc, imgsz[, names, anchors]}` + 出处 `{version, repo[, commit, describe]}`；旧权重 /
+`.onnx` / `.pt` 没有则安全降级为空 dict。
 读取侧三级回退：CLI 显式 > metadata > 文件名/默认值（metadata 永远是可选的）。
 """
 
@@ -18,7 +19,7 @@ from safetensors.torch import load_file, save_file
 from config.inference import IMGSZ
 
 __all__ = ["load_weights", "save_weights", "scale_from_weights", "arch_from_weights", "resolve_arch_scale",
-           "resolve_imgsz", "load_meta", "encode_meta", "encode_anchors", "apply_meta"]
+           "resolve_imgsz", "load_meta", "encode_meta", "encode_anchors", "apply_meta", "provenance_meta"]
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +29,30 @@ _SCALE_RE = re.compile(r"yolo26([nsmlx])($|[-_.])", re.I)
 # flash-yolo（本项目自有架构）。长名在前，否则 "yolov3-tiny-silu" 会被 "yolov3-tiny" 前缀误吸
 _ARCH_RE = re.compile(r"(yolov3-tiny-silu|yolov3-tiny|flash-yolo)($|[-_.])", re.I)
 
-_META_STR_KEYS = ("arch", "scale")      # header 直读字符串
+_META_STR_KEYS = ("arch", "scale", "version", "repo", "commit", "describe")  # header 直读字符串
 _META_INT_KEYS = ("nc", "imgsz")        # int() 还原
 _META_JSON_KEYS = ("names", "anchors")  # JSON 解码（写入侧统一 json.dumps）
+
+
+def provenance_meta():
+    """权重出处：version / repo（项目身份常量）+ commit / describe（best-effort 读本地仓库）
+
+    回答"这份权重是哪版代码产的"——trainer 保存与两个转换器都写。version 是**声明版本（发布线）**、
+    commit 是**精确坐标**，两者不要求对应（版本号只在发布时 bump，两次发布之间的提交都顶着旧版本
+    号）；describe（`v0.5.0-17-g984d198-dirty`）把这段落差显式写出来，人读到即知"不是 tag 那次提交"。
+    读不到 commit/describe 时**不写对应键**：与转换器"读不到就不写"的既有约定一致，缺键 = 未知，
+    不用空串冒充有值（Docker 镜像里 `.git` 被 .dockerignore 排除，正是这条路径）。
+    """
+    from config import __repo__, __version__
+    from utils.paths import git_commit, git_describe
+
+    meta = {"version": __version__, "repo": __repo__}
+    commit, describe = git_commit(), git_describe()
+    if commit:
+        meta["commit"] = commit
+    if describe:
+        meta["describe"] = describe
+    return meta
 
 
 def encode_meta(metadata):

@@ -8,8 +8,9 @@
   无需转置；float32 小端。头部为 4 或 5 个 int32（版本 + seen），按文件长度自动判别，
   要求文件恰好用尽（多/少字节都报错）。
 
-转换产物为纯权重字典 + 可选 metadata（safetensors header：arch/scale/nc[, names, anchors]——
-随权重走的模型参数，只加 JSON 头不碰张量），运行时（engine/tests）零 ultralytics/darknet 依赖。
+转换产物为纯权重字典 + 可选 metadata（safetensors header：arch/scale/nc[, names, anchors] +
+出处 version/repo[/commit/describe]——随权重走的模型参数，只加 JSON 头不碰张量），运行时
+（engine/tests）零 ultralytics/darknet 依赖。
 
 用法:
     python scripts/convert_weights.py --src yolo26n.pt --dst weights/yolo26n.safetensors
@@ -27,7 +28,7 @@ import torch
 from safetensors.torch import save_file
 
 from model.build import build_model
-from model.weights import encode_anchors, encode_meta, scale_from_weights
+from model.weights import encode_anchors, encode_meta, provenance_meta, scale_from_weights
 from utils.logger import get_logger, log_params, setup_logging
 
 setup_logging()
@@ -48,7 +49,7 @@ def _convert_pt(src, dst):
         model = ckpt["model"]  # 当前格式：ckpt["model"] 直接是完整模型对象
     sd = model.float().state_dict()
 
-    meta = {"arch": "yolo26"}
+    meta = {"arch": "yolo26", **provenance_meta()}  # 出处：version/repo[/commit/describe]
     if scale_from_weights(src):
         meta["scale"] = scale_from_weights(src)
     names = getattr(model, "names", None)
@@ -129,6 +130,7 @@ def _convert_darknet(src, dst, nc=80):
     save_file(sd, dst, metadata=encode_meta({
         "arch": "yolov3-tiny", "scale": "tiny", "nc": nc,
         "anchors": encode_anchors(model.model[-1].anchors),
+        **provenance_meta(),  # 出处：version/repo[/commit/describe]
     }))
     return sd
 

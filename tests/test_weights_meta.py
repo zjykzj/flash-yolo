@@ -8,7 +8,8 @@ import torch
 import torch.nn as nn
 
 from model.build import build_yolo26, build_yolov3_tiny
-from model.weights import apply_meta, load_meta, resolve_arch_scale, resolve_imgsz, save_weights
+from model.weights import (apply_meta, load_meta, provenance_meta, resolve_arch_scale, resolve_imgsz,
+                           save_weights)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -62,6 +63,36 @@ def test_apply_meta_anchors():
     with pytest.raises(ValueError, match="anchors shape"):
         apply_meta(model, {"anchors": [[[1, 1]]]})
     print("  v3 anchors metadata 应用/跳过/报错正确")
+
+
+def test_provenance_meta(tmp_path):
+    """出处：version/repo 常驻；commit/describe best-effort（非仓库不写键，而不是写空串）"""
+    from config import __repo__, __version__
+    from utils.paths import git_commit, git_describe
+
+    meta = provenance_meta()
+    assert meta["version"] == __version__ and meta["repo"] == __repo__
+    assert set(meta) <= {"version", "repo", "commit", "describe"}
+    assert git_commit(tmp_path) is None and git_describe(tmp_path) is None  # 非 git 目录：None（不写键）
+    if commit := git_commit():   # 仓库内：完整 40 位 sha，与 meta.json 的 git.commit 同源
+        assert meta["commit"] == commit and len(commit) == 40
+    else:                        # 无 git / 无 .git（镜像内）：键缺席
+        assert "commit" not in meta
+    if describe := git_describe():      # describe 原始输出：tag-距离-g短sha[-dirty]，人读的落差说明
+        assert meta["describe"] == describe and describe
+        if "-g" in describe:            # tag 之后：尾段是 HEAD 的缩写 sha（-dirty 后缀先摘掉）
+            assert commit.startswith(describe.rsplit("-g", 1)[1].removesuffix("-dirty")), describe
+        else:                           # 正好在 tag 上（无 tag 时 --always 退化成短 sha）
+            assert describe.startswith("v") or commit.startswith(describe), describe
+    else:
+        assert "describe" not in meta
+
+    save_weights(nn.Linear(1, 1), tmp_path / "prov.safetensors", metadata={**meta, "arch": "yolo26"})
+    got = load_meta(tmp_path / "prov.safetensors")
+    assert got["repo"] == __repo__ and got["version"] == __version__  # 读取侧白名单常驻
+    assert got.get("commit") == meta.get("commit")                   # 缺则两边都没有
+    assert got.get("describe") == meta.get("describe")
+    print(f"  出处写入/还原正确（commit={'有' if 'commit' in meta else '无'}，describe={meta.get('describe')}）")
 
 
 def test_engine_reads_weights_meta(tmp_path):

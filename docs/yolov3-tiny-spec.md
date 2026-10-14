@@ -143,7 +143,8 @@ wh = anchor · exp(t)               # tw/th 取原始 logits，先 clamp(±8) �
 - **映射以输入通道数对号**：512ch → P5 头 / 256ch → P4 头（配合层序硬编码表，
   `_darknet_specs`，改 yaml 需同步此表）。
 - 非文件张量（`num_batches_tracked`）取零初值 —— 推理不受影响。
-- **metadata**：`arch/scale/nc/anchors`（锚点取自构建好的模型 = yaml 官方原值，随权重走）；
+- **metadata**：`arch/scale/nc/anchors`（锚点取自构建好的模型 = yaml 官方原值，随权重走）+
+  出处 `version/repo[/commit/describe]`；
   **names 不写**（.weights 文件里没有类别名信息，不如实写"未知"）。
 - 实测对账：官方文件 **35,434,956 B = 8,858,734 floats + 20 B 头**，严格加载通过。
 

@@ -22,7 +22,7 @@ from data.build import build_eval_dataset, build_train_dataset
 from data.loader import collate_fn, worker_init_fn
 from data.scan import scan_summary
 from model.summary import summary_lines
-from model.weights import encode_anchors, load_weights
+from model.weights import encode_anchors, load_weights, provenance_meta
 from model.build import ARCHS, YOLO26_FAMILY, arch_display_name, build_model
 from train.checkpoint import load_resume, save_best_last, save_periodic, save_resume
 from train.ema import ModelEMA
@@ -94,6 +94,7 @@ class Trainer:
         self.weights_meta = {
             "arch": cfg.model, "scale": cfg.scale, "nc": self.spec.nc, "imgsz": cfg.imgsz,
             "names": [self.spec.names[i] for i in range(self.spec.nc)],
+            **provenance_meta(),  # 出处：version/repo[/commit/describe]（哪版代码产的这份权重）
         }
         if hasattr(self.head, "anchors"):  # v3：固化模型实际使用的锚点（自定义重聚类后换 yaml 也能复现）
             self.weights_meta["anchors"] = encode_anchors(self.head.anchors)

@@ -91,7 +91,12 @@ python scripts/train.py --data coco --recipe yolo26-coco-ft --weights yolo26n-ob
 
 **权重 metadata**：每个 checkpoint 的 safetensors header 带一份可选 JSON（`arch` / `scale` /
 `nc` / `imgsz` / `names`，含锚模型另有 `anchors`），所以 eval / infer / export 可以直接从文件
-读模型配置（CLI 显式覆盖 > metadata > 文件名/默认）。只写 header，不碰张量。
+读模型配置（CLI 显式覆盖 > metadata > 文件名/默认）。另带出处 `version` / `repo` / `commit` /
+`describe`（哪版代码产的这份权重）：`version` 是**声明版本（发布线）**、`commit` 是**精确坐标**，
+两者不要求对应（版本号只在发布时 bump，两次发布之间的提交都顶着旧版本号）；`describe` 是
+`git describe` 的原始输出（如 `v0.5.0-17-g984d198-dirty` = "v0.5.0 之后 17 个提交、落在 984d198、
+工作区脏"），把这段落差显式写出来。`commit` / `describe` 是 best-effort——读不到就不写该键
+（如镜像内 `.git` 被 `.dockerignore` 排除）。只写 header，不碰张量。
 
 ## 5. 先把 I/O 调对（`scripts/bench_io.py`）
 

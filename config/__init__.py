@@ -7,8 +7,10 @@
     train.yaml            训练超参基线 + recipes/<name>.yaml 命名配方（base + 按 scale 分档增量）
     train_config.py       训练配置机制：TrainConfig + 合并优先序（yaml -> 配方 -> CLI）
 
-__version__ 为版本号单一事实源（`from config import __version__`）；其余一律显式子模块导入，
-不做包级再导出。
+__version__ / __repo__ 为项目身份的单一事实源（`from config import __version__, __repo__`）——版本号
+另用于 README badge / CHANGELOG，两者都作为出处信息写进权重 metadata（model/weights.py::
+provenance_meta）；其余一律显式子模块导入，不做包级再导出。
 """
 
 __version__ = "0.5.0"
+__repo__ = "https://github.com/zjykzj/flash-yolo.git"

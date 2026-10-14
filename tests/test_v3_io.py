@@ -80,9 +80,12 @@ def test_darknet_converter_roundtrip(tmp_path, header_ints):
             _, b, w = ref[id(module)]
             assert torch.equal(sd[f"{prefix}.weight"], w)
             assert torch.equal(sd[f"{prefix}.bias"], b)
-    meta = load_meta(dst)  # 转换产物自带 metadata：架构/档位/类别数 + 官方锚点
+    meta = load_meta(dst)  # 转换产物自带 metadata：架构/档位/类别数 + 官方锚点 + 出处
     assert meta["arch"] == "yolov3-tiny" and meta["scale"] == "tiny" and meta["nc"] == 80
     assert meta["anchors"] == [[[23, 27], [37, 58], [81, 82]], [[81, 82], [135, 169], [344, 319]]]
+    from config import __repo__, __version__
+
+    assert meta["repo"] == __repo__ and meta["version"] == __version__
     print(f"  darknet 转换往返一致（{header_ints} int 头，{len(specs)} 个块；metadata 含锚点）")
 
 

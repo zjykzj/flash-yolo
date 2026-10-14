@@ -98,10 +98,12 @@ def test_train_smoke(tmp_path, fmt):
     assert (run_dir / "weights" / "best.safetensors").exists()
     assert (run_dir / "resume.pt").exists()
     assert (run_dir / "results.csv").exists()
-    # 权重 metadata 随盘：训练配置（imgsz/nc/names）在交付物里可被读取侧还原
+    # 权重 metadata 随盘：训练配置（imgsz/nc/names）+ 出处（version/repo[/commit]）可被读取侧还原
+    from config import __repo__, __version__
     from model.weights import load_meta
     wm = load_meta(run_dir / "weights" / "best.safetensors")
     assert wm["imgsz"] == 320 and wm["nc"] == 2 and wm["names"] == ["cls0", "cls1"], wm
+    assert wm["version"] == __version__ and wm["repo"] == __repo__, wm
     rows = list(csv_reader(run_dir / "results.csv"))
     assert len(rows) >= 3, f"results.csv 行数不足: {len(rows)}"
     losses = [float(r["loss"]) for r in rows]
