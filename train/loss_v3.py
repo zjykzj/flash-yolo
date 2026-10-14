@@ -4,6 +4,10 @@
 为唯一正样本；非正样本槽位中「预测解码框与任一 GT 的 IoU ≥ ignore_thresh(0.7)」者 obj 置
 忽略（不罚），其余为负样本（obj 目标 0）。cls 独热 BCE 与 CIoU 仅正样本。
 
+可选 IoU-aware objectness（cfg.obj_iou_target，参考 zjykzj/YOLOv3）：正样本 obj 目标改为
+「预测框与责任 GT 的 IoU」（detach 常量）且正样本权重 ×5——obj 头学"预测框有多准"，
+推理时 score=obj×cls 自带定位质量排序；默认关闭（行为与 darknet 硬目标逐位一致）。
+
 归一化沿用仓库口径：逐图均值（obj 按非忽略槽位数、cls/box 按正样本数），总损失
 = Σ_级 Σ_图 (box_gain·box + obj_gain·obj + cls_gain·cls)——与 trainer 的 /batch 及
 nbs/accum 梯度口径衔接。接口与 ComputeLoss 同构（item_keys / __call__），无 ProgLoss
@@ -35,6 +39,7 @@ class ComputeLossV3:
         self.no = head.nc + 5
         self.na = getattr(head, "na", 3)
         self.obj_gain = getattr(cfg, "obj_gain", 1.0)
+        self.obj_iou_target = getattr(cfg, "obj_iou_target", False)  # IoU-aware objectness（正样本目标=IoU、权重 ×5）
         self.strides = torch.as_tensor(head.stride, device=device, dtype=torch.float32)   # (nl,)
         self.anchors = torch.as_tensor(head.anchors, device=device, dtype=torch.float32)  # (nl, na, 2) 像素
 
@@ -120,7 +125,15 @@ class ComputeLossV3:
             pos, ignore, t_box, t_cls = self._level_targets(lvl, pb.detach(), h, w, gt, gt_mask)
 
             valid = ~ignore
-            l_obj = (F.binary_cross_entropy_with_logits(obj, pos.float(), reduction="none") * valid
+            if self.obj_iou_target:
+                # IoU-aware objectness（zjykzj/YOLOv3 口径）：正样本目标 = 预测框与责任 GT 的 IoU
+                # （detach 当常量），正样本权重 5×（其 obj_scale 5 : noobj 1）；负样本目标 0
+                t_obj = pos * bbox_iou_torch(pb.detach(), t_box, ciou=False)
+                w_obj = valid * torch.where(pos, 5.0, 1.0)
+            else:
+                t_obj = pos.float()
+                w_obj = valid.float()
+            l_obj = (F.binary_cross_entropy_with_logits(obj, t_obj, reduction="none") * w_obj
                      ).sum(-1) / valid.sum(-1).clamp_min(1)
             n_pos = pos.sum(-1).clamp_min(1)
             l_cls = (F.binary_cross_entropy_with_logits(cls, t_cls, reduction="none").sum(-1) * pos

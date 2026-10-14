@@ -80,6 +80,9 @@ class TrainConfig:
     cls_gain: float = 0.5
     dfl_gain: float = 1.5
     obj_gain: float = 1.0  # v3 系 objectness 权重（yolo26 双头无独立 obj 项，不使用）
+    obj_iou_target: bool = False  # v3 系 IoU-aware objectness（参考 zjykzj/YOLOv3，--yolov3loss）：
+                                  # 正样本 obj 目标 = IoU(预测框, 责任 GT)（常量）且权重 ×5；
+                                  # false = darknet 硬目标 0/1（默认，行为不变）
     tal_alpha: float = 0.5
     tal_beta: float = 6.0
     topk: int = 10

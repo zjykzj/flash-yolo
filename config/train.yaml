@@ -57,6 +57,8 @@ box_gain: 7.5      # CIoU
 cls_gain: 0.5      # BCE（软目标）
 dfl_gain: 1.5      # box-L1（复用 dfl 槽位，reg_max=1 无 DFL）
 obj_gain: 1.0      # v3 系 objectness 权重（yolo26 双头无独立 obj 项，不使用）
+obj_iou_target: false  # v3 系 IoU-aware objectness（参考 zjykzj/YOLOv3）：正样本 obj 目标 = IoU(预测框, 责任 GT)、
+                       # 正样本权重 ×5；false = darknet 硬目标 0/1（默认不变）
 tal_alpha: 0.5
 tal_beta: 6.0
 topk: 10           # o2m TAL top-k

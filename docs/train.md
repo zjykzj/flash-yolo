@@ -63,6 +63,7 @@ python scripts/train.py --data coco --model yolov3-tiny --recipe yolov3-tiny-dar
 | `--amp` / `--no-amp` | false | fp16+GradScaler；**从零训练会 NaN，仅微调用** |
 | `--optimizer` | `musgd` | `musgd` = Muon+SGD 混合（官方 yolo26 口径）；`sgd` = 全参数走 SGD 路径（darknet 口径复刻：配 `--momentum 0.9 --no-nesterov --lr0 0.001` + 台阶 LR） |
 | `--nesterov` / `--no-nesterov` | true | SGD 分支的 Nesterov 修正；darknet 的更新是 heavy-ball，复刻时用 `--no-nesterov` |
+| `--obj-iou-target` | false | v3 系 IoU-aware objectness（参考 zjykzj/YOLOv3）：正样本 obj 目标 = IoU(预测框, 责任 GT)、权重 ×5；false = darknet 硬目标 0/1 |
 | `--close-mosaic` | 10 | 最后 N 轮关 mosaic/mixup/copy_paste（自动 `min(N, epochs//5)`） |
 | `--multi-scale` | 0.0 | 输入尺寸抖动 ±r（ultralytics 口径，按 32 量化） |
 | `--channels-last` | true | NHWC 训练（cuDNN 反向快 ~33%）；推理/导出不受影响 |

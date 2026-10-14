@@ -70,6 +70,9 @@ def main():
                              "darknet's update is heavy-ball → use --no-nesterov to reproduce it)")
     parser.add_argument("--lr-schedule", dest="lr_schedule", default=None, choices=["linear", "cosine", "step"],
                         help="lr decay curve (default: yaml `lr_schedule`, linear; step = darknet-style drops)")
+    parser.add_argument("--obj-iou-target", dest="obj_iou_target", action=argparse.BooleanOptionalAction, default=None,
+                        help="v3 IoU-aware objectness: positive obj target = IoU(pred, matched GT) with 5x "
+                             "positive weight (default: yaml `obj_iou_target`, false = darknet hard 0/1)")
     parser.add_argument("--verbose", action="store_true", help="DEBUG logging (third-party output)")
     # TrainConfig 字段（默认 None -> 不覆盖 yaml）
     for f in _INT_FIELDS:

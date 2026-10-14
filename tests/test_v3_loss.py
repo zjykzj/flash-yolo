@@ -1,4 +1,4 @@
-"""YOLOv3-tiny 损失验收：分派 / 匹配（形状 IoU + 责任格 + 忽略区）/ 数值口径 / 空批 / 梯度"""
+"""YOLOv3-tiny 损失验收：分派 / 匹配（形状 IoU + 责任格 + 忽略区）/ 数值口径 / 空批 / 梯度 / IoU-aware objectness"""
 
 from types import SimpleNamespace
 
@@ -32,6 +32,8 @@ def test_build_loss_dispatch():
 
     fn = build_loss("yolov3-tiny", TrainConfig(), _fake_head(2), torch.device("cpu"))
     assert isinstance(fn, ComputeLossV3)
+    fn_silu = build_loss("yolov3-tiny-silu", TrainConfig(), _fake_head(2), torch.device("cpu"))
+    assert isinstance(fn_silu, ComputeLossV3)
     assert fn.item_keys == ("box", "obj", "cls")
     assert not hasattr(fn, "set_alpha")
     y26 = build_loss("yolo26", TrainConfig(), SimpleNamespace(nc=80, stride=[8, 16, 32]), torch.device("cpu"))
@@ -123,3 +125,33 @@ def test_gradient_reaches_backbone():
     assert head.m[0].weight.grad is not None, "头卷积应有梯度"
     assert all(torch.isfinite(p.grad).all() for p in head.parameters() if p.grad is not None)
     print(f"  梯度流正确: total={total.item():.3f}, items={items}")
+
+
+def test_obj_iou_target_soft():
+    """IoU-aware objectness（obj_iou_target）：正样本目标 = IoU(pred,gt) 且权重 ×5（闭式校验）
+
+    raw 全 0 → obj logits = 0 → BCE(0, t) = ln2 对任意目标成立（与 IoU 具体值无关），
+    不变量可精确手算：level0（2×2 网格、12 槽、1 正 11 负、无忽略）= (5+11)·ln2/12 = 4·ln2/3；
+    level1（1×1、1 正 2 负）= (5+1+1)·ln2/3 = 7·ln2/3；
+    items = 两级均值 = 11·ln2/6。box/cls 两模式逐位一致，total 差 = 5·ln2/3。
+    """
+    import math
+
+    hard = _loss_fn()
+    soft = ComputeLossV3(TrainConfig(obj_iou_target=True), _fake_head(2), torch.device("cpu"))
+    preds = [_raw(1, h=2, w=2), _raw(1, h=1, w=1)]
+    targets = torch.tensor([[0, 0, 10, 10, 33, 37]], dtype=torch.float32)  # 23×27，中心 (21.5, 23.5)
+    t_h, it_h = hard(preds, targets, 1, imgsz=32)
+    t_s, it_s = soft(preds, targets, 1, imgsz=32)
+    ln2 = math.log(2.0)
+    assert abs(it_h["obj"] - ln2) < 1e-6, it_h["obj"]
+    assert abs(it_s["obj"] - 11 * ln2 / 6) < 1e-6, it_s["obj"]
+    assert it_s["box"] == it_h["box"] and it_s["cls"] == it_h["cls"]
+    assert abs((t_s - t_h).item() - 5 * ln2 / 3) < 1e-6, (t_s.item(), t_h.item())
+
+    # 空 GT：无正样本 → 目标/权重两模式相同（退化一致）
+    empty = torch.zeros(0, 6)
+    t_eh, it_eh = hard(preds, empty, 1, imgsz=32)
+    t_es, it_es = soft(preds, empty, 1, imgsz=32)
+    assert it_es == it_eh and abs((t_es - t_eh).item()) < 1e-9
+    print(f"  IoU-aware objectness 正确: obj {it_s['obj']:.6f}（硬 {it_h['obj']:.6f}，期望 11·ln2/6={11 * ln2 / 6:.6f}）")

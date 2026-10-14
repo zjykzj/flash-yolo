@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The darknet-pure `yolov3-tiny` stays untouched for official `.weights` conversion and numeric
   parity; the arch field in weights metadata (and longest-name-first filename inference) keeps the
   two variants apart through train / eval / infer / export.
+- **IoU-aware objectness for YOLOv3-tiny (`--obj-iou-target`)**: optional v3 loss mode where the
+  positive objectness target becomes the IoU between the predicted box and its responsible GT
+  (detached constant) with a 5× positive weight (ported from the approach in zjykzj/YOLOv3) — the
+  objectness head then regresses localization quality, so inference scores (obj × cls) carry a
+  ranking prior. Default off; the darknet hard 0/1 targets stay bit-identical.
 
 ### Changed
 
