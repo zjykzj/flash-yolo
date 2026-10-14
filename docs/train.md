@@ -58,6 +58,7 @@ python scripts/train.py --data coco --recipe yolo26-coco-ft --weights yolo26n-ob
 | `--imgsz` | 640 | 训练输入（v3 常用 416）。batch 需整除 nbs（否则 wd 因子 ≠ 1.0） |
 | `--workers` | 8 | 加载进程数；机器相关 |
 | `--seed` | 0 | 全局种子（数据/增强/初始化） |
+| `--deterministic` / `--no-deterministic` | true | 逐位可复现的 kernel 开关（关 cuDNN autotune + 确定性算法）；代价实测在噪声内，见 §5 |
 | `--weights` | — | 初始化权重（微调） |
 | `--resume` | — | `resume.pt` 或 run 目录（恢复优化器/EMA/轮次） |
 | `--device` | auto | `cuda:0` / `cpu` |
@@ -98,7 +99,36 @@ python scripts/train.py --data coco --recipe yolo26-coco-ft --weights yolo26n-ob
 工作区脏"），把这段落差显式写出来。`commit` / `describe` 是 best-effort——读不到就不写该键
 （如镜像内 `.git` 被 `.dockerignore` 排除）。只写 header，不碰张量。
 
-## 5. 先把 I/O 调对（`scripts/bench_io.py`）
+## 5. 复现性口径
+
+三层，按"要求多严"递增——**只有训练有随机性**（权重初始化 + 数据增强），评估/导出/推理全程无随机源，
+它们的复现靠的是数值验收阈值（见 `val.md` / `export.md`），不是这套。
+
+| 层 | 含义 | 今天的保证 |
+|---|---|---|
+| **稳定** | 任何配置下不发散不 NaN | fp32 默认（从零训练不开 AMP）+ 梯度裁剪 max_norm=10；历史三次发散路径都已定位并默认关闭 |
+| **可复现（逐位）** | 同代码 commit + 同 seed + 同硬件/驱动 + 同 workers/batch → **权重逐位相同** | 默认达成（`deterministic: true`）；`FLASH_YOLO_REPRO=1 pytest tests/test_train_repro.py` 是闸门 |
+| **可复现（统计）** | 跨硬件/驱动/GPU 型号 → 曲线与指标在噪声内一致 | 未量化（换机复现本就到不了逐位：kernel 不同）；A/B 比较仍用同机 + `--stop-after` 逐轮对齐 |
+
+**逐位复现需要同时成立的四件事**（缺一即退化到统计口径）：
+
+1. `deterministic: true`（默认）——kernel 侧：关 cuDNN autotune、确定性算法（`warn_only`，遇无确定性
+   实现的算子只告警不炸）、固定 CUBLAS 工作区。**实测代价在噪声内**：yolo26n@640 b16 channels_last
+   纯算力口径 ~3-5%（57.4 → 60 ms/step），端到端（真实加载器）不可辨——管线本来就是数据瓶颈。
+   `--no-deterministic` = 纯速度优先，同 seed 两跑有末位差异。
+2. **`workers` 与 `batch` 是复现条件的一部分**（机器相关值，故不写进默认配置）：增强流的种子按
+   (seed, epoch, worker_id) 派生，改 worker 数会重排"哪张图落到哪个 worker"。换机器时按
+   `scripts/bench_io.py` 重选，然后把它当实验参数固定下来。
+3. **RNG 流域每 epoch 重播**（不依赖历史消费量）：worker 内由 `worker_init_fn` 播种、主进程
+   （`workers=0`）由 `seed_main_rng(seed + epoch)` 播种；stdlib `random`（multi_scale 抽尺寸）也随之播种。
+   **新增随机性时不要裸调全局 `np.random`/`random`**——会同时打破第 4 条。
+4. **resume 逐位等价**：`resume.pt` 存了 torch/cuda/numpy/random 四套 RNG 状态 + `ema.steps`，且抽样流
+   按 epoch 重建——实测"1 轮后续训"与"一次跑完"逐位相同。
+
+**配合权重 metadata 用**：交付物里带 `commit` / `describe`，正是为了让人拿到文件就能定位"哪版代码 +
+什么设置"。完整复现命令 = 描述符 + `--seed` + `--workers`/`--batch` + 权重 metadata 里的 commit。
+
+## 6. 先把 I/O 调对（`scripts/bench_io.py`）
 
 `--batch` / `--workers` 是机器相关值，仓库**刻意不写进默认配置**。用基准脚本决定：
 
@@ -112,7 +142,7 @@ python scripts/bench_io.py --data coco --loader-only
 - worker 里的 cv2/torch 线程数由框架统一管理（`data/loader.py` 导入时设定）——
   **不要在 worker 里调 `cv2.setNumThreads`**（OpenCV 线程池非 fork 安全，会整体卡死）。
 
-## 6. 常见坑
+## 7. 常见坑
 
 1. **`--amp` 从零训练必炸**（fp16 在 640² 从零 + BN eps=0.001 的组合下第 1 轮内 NaN）。默认
    fp32；微调可以试 `--amp`。

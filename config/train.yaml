@@ -22,6 +22,9 @@ channels_last: true  # NHWC 训练（cuDNN 反向快 ~33%，实测 bwd 85->57ms�
 workers: 8          # 数据加载进程数：最小可移植值（对齐 ultralytics default.yaml）；
                     # 按 scripts/bench_io.py 实测值调大，别超过 CPU 预算
 seed: 0
+deterministic: true  # 逐位可复现：benchmark=False + cudnn.deterministic + use_deterministic_algorithms
+                     # （代价实测在噪声内：纯算力口径 ~3-5%、端到端不可辨，见 docs/train.md 复现口径；
+                     # --no-deterministic = 纯速度优先，同 seed 两跑会有末位差异）
 close_mosaic: 10   # 最后 N epoch 关闭 mosaic/mixup/copy_paste（trainer 按 min(N, epochs//5) 缩放）
 val_epochs: 1      # 0 = 全程不验证（小数据集冒烟用）
 val_limit: 0       # 0 = 全量 val2017

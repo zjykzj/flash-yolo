@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bit-reproducible training by default (`--deterministic`, on by default)**: training runs with
+  cuDNN autotune off and deterministic algorithms enabled (CUBLAS workspace pinned; `warn_only` so an
+  operator without a deterministic implementation warns instead of killing the run), so the same seed
+  on the same machine now produces byte-identical weights. The measured cost is noise-level (3-5% on
+  isolated compute, indistinguishable end-to-end where the loader is the bottleneck);
+  `--no-deterministic` restores the throughput-first behavior. A gated suite
+  (`FLASH_YOLO_REPRO=1 pytest tests/test_train_repro.py`) holds same-seed runs on CPU/GPU and resume
+  equivalence, and `docs/train.md` §5 states the full contract.
 - **Weight provenance in safetensors metadata (`version` / `repo` / `commit` / `describe`)**: every
   training checkpoint and converter output now records which flash-yolo code produced it, so a
   delivered weights file can be traced back without the surrounding run directory.

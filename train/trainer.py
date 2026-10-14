@@ -5,6 +5,7 @@
 
 import csv
 import logging
+import os
 import random
 import sys
 import time
@@ -49,6 +50,27 @@ def _pred_tensors(preds):
             yield f"level{lvl}", t
 
 
+def set_deterministic(enabled):
+    """kernel 侧复现开关（每次构造 Trainer 都显式设置，不留上一个进程状态的尾巴）
+
+    开（默认）：关 cuDNN autotune + 确定性算法 —— `warn_only=True` 表示遇到没有确定性实现的算子
+    只告警不中断训练；CUBLAS 工作区固定（cuBLAS 句柄创建前生效）；不再给新分配张量填 NaN（torch≥2.2）。
+    关（--no-deterministic）：逐项还原默认值（benchmark=True，速度优先，同 seed 两跑有末位差异）。
+    实测代价（yolo26n@640 b16 channels_last）：纯算力口径 ~3-5%、端到端在噪声内 —— 见 docs/train.md §5。
+    """
+    torch.backends.cudnn.benchmark = not enabled
+    if enabled:
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+        torch.backends.cudnn.deterministic = True
+        torch.use_deterministic_algorithms(True, warn_only=True)
+        torch.utils.deterministic.fill_uninitialized_memory = False
+    else:
+        os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
+        torch.backends.cudnn.deterministic = False
+        torch.use_deterministic_algorithms(False)
+        torch.utils.deterministic.fill_uninitialized_memory = True
+
+
 class Trainer:
     """检测训练器（架构由 cfg.model 选择；--weights 初始化微调 / --resume 断点续训）"""
 
@@ -66,7 +88,7 @@ class Trainer:
         torch.manual_seed(cfg.seed)
         np.random.seed(cfg.seed)
         random.seed(cfg.seed)  # stdlib RNG：_multi_scale_size 在用（multi_scale>0 时每 batch 抽尺寸）
-        torch.backends.cudnn.benchmark = True  # 训练不追求逐位可复现（resume 口径见 checkpoint）
+        set_deterministic(cfg.deterministic)  # kernel 侧开关：逐位复现（默认开）vs 纯速度优先
 
         self.run_dir = Path(run_dir)
         self.best_fitness = -1.0  # 首次验证必存 best（mAP 为 0 时也落盘）
@@ -300,7 +322,8 @@ class Trainer:
             logger.info("val:   disabled (val_epochs=0)")
         ms = f" · multi_scale ±{self.cfg.multi_scale} @32px" if self.cfg.multi_scale > 0 else ""
         logger.info(f"imgsz {self.cfg.imgsz} · batch {self.cfg.batch} · nbs {self.cfg.nbs} (accum {self.accumulate}) · "
-                    f"workers {self.cfg.workers} · seed {self.cfg.seed} · AMP {'fp16' if self.cfg.amp else 'off'}{ms}")
+                    f"workers {self.cfg.workers} · seed {self.cfg.seed} · AMP {'fp16' if self.cfg.amp else 'off'}"
+                    f"{' · deterministic' if self.cfg.deterministic else ''}{ms}")
 
     def _log_split(self, label, ds, extra=""):
         """扫描行的续行（控制台 + run.log 都有）+ 往 run.log 补一份扫描计数

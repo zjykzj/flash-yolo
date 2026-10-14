@@ -44,6 +44,8 @@ class TrainConfig:
     channels_last: bool = True  # 训练走 NHWC（cuDNN 反向快 ~33%）；推理/导出链路不受影响
     workers: int = 8
     seed: int = 0
+    deterministic: bool = True  # 逐位可复现：关 cudnn autotune + 确定性算法（代价实测在噪声内，
+                                # 见 docs/train.md 复现口径）；关掉 = 纯速度优先
     close_mosaic: int = 10
     val_epochs: int = 1
     val_limit: int = 0

@@ -62,6 +62,10 @@ def main():
     parser.add_argument("--channels-last", dest="channels_last", action=argparse.BooleanOptionalAction, default=None,
                         help="NHWC training memory format (default: yaml)")
     parser.add_argument("--cos-lr", dest="cos_lr", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--deterministic", action=argparse.BooleanOptionalAction, default=None,
+                        help="bit-reproducible kernels: cudnn autotune off + deterministic algorithms "
+                             "(default: yaml `deterministic`, true; measured cost is noise-level — "
+                             "--no-deterministic trades reproducibility for speed)")
     parser.add_argument("--optimizer", default=None, choices=["musgd", "sgd"],
                         help="parameter update rule (default: yaml `optimizer`, musgd = Muon+SGD mix; "
                              "sgd = every parameter on the SGD path — darknet-style reproduction)")

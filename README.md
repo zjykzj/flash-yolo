@@ -179,7 +179,7 @@ model/     model implementation (yaml factory build.py + arch registry / dual De
 runs/      runtime results (gitignored)
 scripts/   download_weights / convert_weights / compute_anchors / make_coco_subset / infer /
            export / eval / train / bench_io / compare_official
-tests/     175 tests (+5 env-gated): weight alignment / export parity / metric correctness / training
+tests/     175 tests + 8 env-gated (FLASH_YOLO_SMOKE / FLASH_YOLO_REPRO): weight alignment / export parity / metric correctness / training
            components
 train/     training: TAL+STAL assigner / dual-head ProgLoss / MuSGD / EMA / trainer / FastMetrics
            (+ per-run artifacts: periodic checkpoints, gradient diag CSV, augment samples, meta.json)
@@ -190,7 +190,7 @@ utils/     anchors & decode / postprocessing (NMS) / pt·onnx·TensorRT engines 
 ## Tests
 
 ```bash
-pytest tests/    # 175 tests (+5 env-gated): weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + weights metadata + TensorRT fp32/fp16 engines
+pytest tests/    # 175 tests + 8 env-gated (FLASH_YOLO_SMOKE / FLASH_YOLO_REPRO): weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + weights metadata + TensorRT fp32/fp16 engines
 ```
 
 `tests/test_weight_alignment.py` compares against the official .pt as a dev-time reference — install requirements-dev.txt to run it.
