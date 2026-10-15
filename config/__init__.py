@@ -12,5 +12,5 @@ __version__ / __repo__ 为项目身份的单一事实源（`from config import _
 provenance_meta）；其余一律显式子模块导入，不做包级再导出。
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __repo__ = "https://github.com/zjykzj/flash-yolo.git"
