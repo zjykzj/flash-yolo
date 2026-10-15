@@ -126,6 +126,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path, and the stdlib `random` module is seeded and checkpointed too (the `multi_scale` input-size
   draw used it unseeded). With a fixed seed, single-process runs are now bit-identical and a resumed
   run matches an uninterrupted one.
+- **YOLOv3-tiny fp16 export**: the v3 decode grid was built with a half-dtype `torch.arange`, which
+  the TorchScript ONNX exporter rejects ("tensor does not have a device") — the whole v3
+  `--trt --fp16` path failed. The grid is now built in fp32 and cast (same treatment as
+  `make_anchors`; grid values ≤639.5 are fp16-exact and fp32 numerics are unchanged), gated by
+  `tests/test_v3_io.py::test_v3_half_export_is_export_safe`.
 
 ## [0.5.0] - 2026-10-10
 

@@ -29,8 +29,11 @@ def decode_level(raw, anchors, stride, no, na=3):
     r = raw.reshape(b, na, no, h, w).permute(0, 1, 3, 4, 2)  # (B, na, H, W, no)
     tx, ty = r[..., 0].sigmoid(), r[..., 1].sigmoid()
     tw, th = r[..., 2].clamp(-8.0, 8.0), r[..., 3].clamp(-8.0, 8.0)
-    gx = torch.arange(w, device=raw.device, dtype=raw.dtype).view(1, 1, 1, w)
-    gy = torch.arange(h, device=raw.device, dtype=raw.dtype).view(1, 1, h, 1)
+    # 网格 fp32 建再 cast（同 utils/anchors.make_anchors）：TorchScript ONNX 导出器拒绝
+    # half-dtype 的 arange（"tensor does not have a device"），会挡住 v3 的整条 fp16 导出路。
+    # 格点值 ≤639.5，fp16 可精确表示；fp32 路径逐位不变。
+    gx = torch.arange(w, device=raw.device, dtype=torch.float32).view(1, 1, 1, w).to(raw.dtype)
+    gy = torch.arange(h, device=raw.device, dtype=torch.float32).view(1, 1, h, 1).to(raw.dtype)
     cx = (tx + gx) * stride
     cy = (ty + gy) * stride
     bw = anchors[:, 0].view(1, na, 1, 1) * tw.exp()

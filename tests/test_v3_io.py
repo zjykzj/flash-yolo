@@ -163,3 +163,21 @@ def test_onnx_engine_imgsz_from_graph(tmp_path):
     with pytest.raises(ValueError, match="fixed at 416"):
         OnnxEngine(str(onnx_path), model="yolov3-tiny", imgsz=640)
     print("  onnx 图内尺寸读取/冲突守卫正确（416 导出免参数消费）")
+
+
+def test_v3_half_export_is_export_safe(tmp_path):
+    """v3 half 模型的 TorchScript ONNX 导出安全——decode_level 网格 fp32 建再 cast 的回归闸门。
+
+    动机：half dtype 的 torch.arange 会被 TorchScript ONNX 导出器拒绝（"tensor does not have a
+    device"），曾挡住 v3 的整条 fp16 导出路（needs `scripts/export.py --trt --fp16`）；
+    修法与 yolo26 侧的 make_anchors 相同（姊妹闸门 tests/test_export_parity.py::
+    test_make_anchors_half_dtype_is_export_safe）。格点值 ≤639.5，fp16 可精确表示，fp32 路径不变。
+    """
+    model = build_model("yolov3-tiny", imgsz=320, nc=2).eval().half()
+    x = torch.randn(1, 3, 320, 320).half()
+    out = tmp_path / "v3_half.onnx"
+    with torch.no_grad():
+        torch.onnx.export(model, x, str(out), input_names=["images"], output_names=["output0"],
+                          opset_version=18, dynamo=False)
+    assert out.exists() and out.stat().st_size > 0
+    print(f"  v3 half 导出安全（{out.stat().st_size / 2**20:.1f} MiB）")
