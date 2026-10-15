@@ -169,9 +169,9 @@ wh = anchor · exp(t)               # tw/th 取原始 logits，先 clamp(±8) �
 - **架构注册**：`model/build.py::ARCHS`（`build_yolov3_tiny`）；损失由 `build_loss` 按架构分派；
   Trainer 按 `cfg.model` 分派（非 yolo26 → yaml 默认档）。
 - **训练配方**：默认吃内置 `default`；**推荐配置 = `--model yolov3-tiny-silu` +
-  `--obj-iou-target`（+ default 核）**，100 轮正式 15.23 / 28.58（见 runs 文档 §4.5）。
-  darknet 对齐配方（旧 `yolov3-tiny-darknet.yaml`）已经探针定案、随实验完成退役删除
-  （见 runs 文档 §4.4）。
+  `--obj-iou-target`（+ default 核）**——300 轮正式 **16.52 / 30.44**（与官方权重 mAP50-95
+  仅差 0.42；100 轮 15.23 / 28.58），见 runs 文档 §4.5。darknet 对齐配方（旧
+  `yolov3-tiny-darknet.yaml`）已经探针定案、随实验完成退役删除（见 runs 文档 §4.4）。
 - **测试**（`pytest tests/`）：`test_v3_model.py`（结构/参数/前向形状/解码数值/锚点 imgsz
   不变性/未知档位拒绝/strict 往返）、`test_v3_loss.py`（分派/匹配/空 GT/批量口径/梯度回流）、
   `test_v3_io.py`（档位推断/darknet 转换往返与长度守卫/PtEngine/export 对拍/onnx imgsz）,

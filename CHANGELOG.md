@@ -112,9 +112,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   investigation — the budget story was corrected, official SGD numbers are not reproducible under
   this pipeline's unconditional grad-norm clip, and every remaining knob (LR shape/value,
   multi-scale, optimizer, batch steps) probed flat. The recommended yolov3-tiny configuration is
-  now **`--model yolov3-tiny-silu --obj-iou-target` over the default recipe**: at 100 epochs it
-  lands **15.23 / 28.58** on COCO val2017 @416 (pycocotools) vs 12.70 / 24.84 for the plain default
-  — already above the default's 300-epoch result (14.23 / 27.50). Full records in
+  now **`--model yolov3-tiny-silu --obj-iou-target` over the default recipe**: at 300 epochs it
+  lands **16.52 / 30.44** on COCO val2017 @416 (pycocotools) vs 14.23 / 27.50 for the plain default
+  — 0.42 mAP50-95 short of the official darknet weights through the same pipeline. Full records in
   `docs/yolov3-tiny-runs.md` §3.1 / §4.4 / §4.5.
 
 ### Fixed
