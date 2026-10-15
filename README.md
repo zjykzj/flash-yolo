@@ -28,18 +28,22 @@
 | **Δ (flash-yolo vs YOLO26n)** | **−2.45 (−7%)** | **−2.69 (−5%)** | **−0.60M (−23%)** | **−1.68 (−31%)** |
 
 **Latency²** — model-only inference stage; ONNX Runtime on an Intel Xeon Platinum 8470Q (25-core
-container quota), TensorRT on one RTX 5090. Measured on an idle machine: ORT-CPU cells are the
-median of the per-session best-case `min` across four 300-sample alternating sessions³; TensorRT
-cells are the best-case `min` over repeated runs².
+container quota), TensorRT on one RTX 5090. Measured from the released checkpoints on an idle
+machine (host load ≈13): ORT-CPU cells are the best-case `min` of 300 samples per model³;
+TensorRT cells are the best-case `min` over repeated runs².
 
 | Model | ORT-CPU b1 (ms) | ORT-CPU b8 (ms/img) | TRT b1 fp32 (ms) | TRT b1 fp16 (ms) | TRT b8 fp32 (ms/img) | TRT b8 fp16 (ms/img) |
 |---|---|---|---|---|---|---|
-| YOLO26n · official weights | 14.8³ | 8.27³ | 1.38 | 1.22 | 0.248 | 0.139 |
-| YOLO26n · this repo, 100 ep | 14.8³ | 8.27³ | 1.38 | 1.22 | 0.248 | 0.139 |
-| flash-yolo · this repo, 100 ep | 13.2³ | 6.09³ | 1.32 | 1.23 | 0.213 | 0.126 |
-| **Δ (flash-yolo vs YOLO26n)** | **−1.6 (−11%)** | **−2.18 (−26%)** | **−0.06 (−4%)** | **+0.01 (~0)** | **−0.035 (−14%)** | **−0.013 (−9%)** |
+| YOLO26n · official weights | 14.6³ | 6.86³ | 1.37 | 1.28 | 0.245 | 0.135 |
+| YOLO26n · this repo, 100 ep | 14.6³ | 6.86³ | 1.37 | 1.28 | 0.245 | 0.135 |
+| flash-yolo · this repo, 100 ep | 13.2³ | 5.84³ | 1.31 | 1.27 | 0.210 | 0.123 |
+| **Δ (flash-yolo vs YOLO26n)** | **−1.4 (−9%)** | **−1.02 (−15%)** | **−0.06 (−4%)** | **−0.01 (−1%)** | **−0.035 (−14%)** | **−0.012 (−9%)** |
 
-¹ flash-yolo — a single-variable screened YOLO26 variant that keeps all three detection levels (P3/P4/P5) — trained from scratch for 100 epochs, same recipe, data and budget as the from-scratch YOLO26n row above, so its Δ is like for like; with NMS: 34.72 / 50.16. ² TensorRT rows: engines built from the checkpoints in the table (`runs/export/<model>.{engine,fp16.engine}`), best-case `min` over 180 timed runs (b1) and 30 single-shot + 100 pipelined runs (b8); b1 fp16 ties at ~1.2 ms for both models — the b1 chain that is exactly verified is fp32 (`pt → onnx → engine`). Δ compares against the budget-matched from-scratch YOLO26n; for structure and latency both YOLO26n rows are identical. Details: [YOLO26n alignment](#yolo26n-alignment-with-the-official-weights). ³ ORT-CPU rows: idle container on a shared host (host load ≈ 40 during the session) — each cell is the per-session best-case `min` of 300 alternating A/B samples (`runs/artifacts/bench/ort_bench3.py`), b1 on the fixed-batch export and b8 on the dynamic-batch graph. Neighbour load moves absolute values by ±20% between sessions (b1 gap ranged 1–26%, b8 gap 22–43%), and b1 is per-run-overhead-bound — the two models are effectively tied there; the b8 column tracks the 1.44× GFLOP ratio and is the one that separates the architectures.
+¹ flash-yolo — a single-variable screened YOLO26 variant that keeps all three detection levels (P3/P4/P5) — trained from scratch for 100 epochs, same recipe, data and budget as the from-scratch YOLO26n row above, so its Δ is like for like; with NMS: 34.72 / 50.16. ² TensorRT rows: engines built from the released checkpoints (`runs/release-weights/<model>.{engine,fp16.engine}`; full profile in [docs/weights.md](docs/weights.md)), best-case `min` over 180 timed runs (b1) and 30 single-shot + 100 pipelined runs (b8); b1 fp16 ties at ~1.3 ms for both models — the b1 chain that is exactly verified is fp32 (`pt → onnx → engine`). Δ compares against the budget-matched from-scratch YOLO26n; for structure and latency both YOLO26n rows are identical. Details: [YOLO26n alignment](#yolo26n-alignment-with-the-official-weights). ³ ORT-CPU rows: idle container on a shared host (host load ≈ 13 during the session) — each cell is the best-case `min` of 300 samples per model (`runs/artifacts/bench/release_bench_ort.py`), b1 on the fixed-batch export and b8 on the dynamic-batch graph. Neighbour load moves absolute values between sessions (earlier sessions at load ≈ 40 read b8 8.27 / 6.09), and b1 is per-run-overhead-bound; the b8 column tracks the 1.44× GFLOP ratio and is the one that separates the architectures.
+
+**Trained weights** — the from-scratch checkpoints behind the "this repo" rows above are attached to
+[Releases](https://github.com/zjykzj/flash-yolo/releases) as safetensors; the full accuracy/latency
+profile of every published checkpoint lives in [docs/weights.md](docs/weights.md).
 
 ## Quick Start
 
@@ -142,15 +146,19 @@ python scripts/eval.py --weights runs/train/yolo26n-from-scratch/weights/best.sa
 ## Verification
 
 The reproduction and parity claims throughout this README are load-bearing, so each one has an
-executable check behind it — most live in the 168-test suite. Checks that compare against the
-official implementation run at dev time only (requirements-dev.txt; the runtime never imports
-ultralytics).
+executable check behind it — most live in the 184-test suite (176 tests + 8 env-gated). Checks that
+compare against the official implementation run at dev time only (requirements-dev.txt; the runtime
+never imports ultralytics).
 
 - **Bit-identical reproduction** — the official checkpoint (260 layers · 2,572,280 params) loads
   with zero key mapping (`strict=True`, which only succeeds when the module tree matches exactly)
   and the inference output is bit-for-bit identical to the official model on the same input. The
   "Official" rows in [YOLO26n alignment](#yolo26n-alignment-with-the-official-weights) are that
   model re-run through this pipeline — identical numbers.
+- **Training is bit-reproducible** — the default `--deterministic` (cuDNN autotune off,
+  deterministic kernels, per-epoch augmentation RNG replay) makes the same seed produce
+  bit-identical weights on the same machine, and a resumed run bit-identical to an uninterrupted
+  one; `FLASH_YOLO_REPRO=1` gates the CPU/GPU two-run + resume-equivalence checks (0 bit difference).
 - **Training internals match** — same weights, same real batch, this implementation vs the
   official one: total loss within <1%, gradient norm within <2%.
 - **Augmentation is pixel-exact** — mosaic canvas, affine output and the resampled labels were
@@ -179,7 +187,7 @@ model/     model implementation (yaml factory build.py + arch registry / dual De
 runs/      runtime results (gitignored)
 scripts/   download_weights / convert_weights / compute_anchors / make_coco_subset / infer /
            export / eval / train / bench_io / compare_official
-tests/     175 tests + 8 env-gated (FLASH_YOLO_SMOKE / FLASH_YOLO_REPRO): weight alignment / export parity / metric correctness / training
+tests/     176 tests + 8 env-gated (FLASH_YOLO_SMOKE / FLASH_YOLO_REPRO): weight alignment / export parity / metric correctness / training
            components
 train/     training: TAL+STAL assigner / dual-head ProgLoss / MuSGD / EMA / trainer / FastMetrics
            (+ per-run artifacts: periodic checkpoints, gradient diag CSV, augment samples, meta.json)
@@ -190,7 +198,7 @@ utils/     anchors & decode / postprocessing (NMS) / pt·onnx·TensorRT engines 
 ## Tests
 
 ```bash
-pytest tests/    # 175 tests + 8 env-gated (FLASH_YOLO_SMOKE / FLASH_YOLO_REPRO): weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + weights metadata + TensorRT fp32/fp16 engines
+pytest tests/    # 176 tests + 8 env-gated (FLASH_YOLO_SMOKE / FLASH_YOLO_REPRO): weight alignment / export parity / metric correctness / training components (assigner, loss, MuSGD, EMA, checkpoint, augment geometry, config, FastMetrics) + coco/yolo format equivalence + weights metadata + TensorRT fp32/fp16 engines
 ```
 
 `tests/test_weight_alignment.py` compares against the official .pt as a dev-time reference — install requirements-dev.txt to run it.
@@ -200,3 +208,4 @@ pytest tests/    # 175 tests + 8 env-gated (FLASH_YOLO_SMOKE / FLASH_YOLO_REPRO)
 The code is licensed under **Apache-2.0** — see [LICENSE](LICENSE) for details.
 
 - **Pretrained weights**: the official YOLO26 weights (AGPL-3.0) are not distributed here — download them via `scripts/download_weights.py` for personal use
+- **Trained weights**: this repo's from-scratch checkpoints (flash-yolo 100 ep, YOLO26n 100 ep) are published as safetensors on the [Releases](https://github.com/zjykzj/flash-yolo/releases) page

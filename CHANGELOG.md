@@ -104,6 +104,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests and CLI support are unchanged. Quick Start becomes one flash-yolo chain (train → evaluate →
   export → infer) with expected outputs, and the official-weights download/evaluate recipe moves
   into the alignment section.
+- **Benchmark refresh, and a released-checkpoint profile page**: the README latency rows were
+  re-measured from the released checkpoints (accuracy reproduces exactly; ORT-CPU b8 reads
+  YOLO26n 6.86 / flash-yolo 5.84 ms/img at host load ≈13), and the new `docs/weights.md` profiles
+  every published checkpoint — accuracy, ORT-CPU / TensorRT latency (b1/b8 × fp32/fp16, including
+  the fp16-versus-fp32 b1 picture), the deployment artifacts per checkpoint and their
+  metadata/provenance.
 
 ### Removed
 
