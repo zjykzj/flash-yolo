@@ -9,8 +9,11 @@
 # 若无 -runtime 变体则改用 -devel（工具链等价、体积更大）。
 FROM pytorch/pytorch:2.13.0-cuda13.0-cudnn9-runtime
 
-# 默认走 aliyun 镜像；其他网络环境构建时覆盖：
-#   --build-arg PIP_INDEX_URL=https://pypi.org/simple --build-arg PIP_TRUSTED_HOST=
+# 默认走 aliyun 镜像（http，与 trusted-host 配对）；其他网络环境构建时覆盖：
+#   https 源：--build-arg PIP_INDEX_URL=https://pypi.org/simple   （trusted-host 保持默认即可）
+#   http 源：两个都要给，PIP_TRUSTED_HOST 必须是真实主机名
+# 注意 PIP_TRUSTED_HOST 不能传空值——pip 对空 trusted-host 直接 ValueError，
+# 构建会挂在下面装依赖那步（实测 pip 26.2.1）。
 ARG PIP_INDEX_URL=http://mirrors.aliyun.com/pypi/simple
 ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
 

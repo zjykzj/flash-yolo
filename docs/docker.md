@@ -24,9 +24,13 @@
 ```bash
 docker build -t flash-yolo:dev .
 
-# 非阿里云网络：覆盖 pip 索引
+# 非阿里云网络：https 源只覆盖索引即可（PIP_TRUSTED_HOST 保持默认；
+# 别传空值——pip 对空 trusted-host 直接报错，构建会挂在装依赖那步）
+docker build -t flash-yolo:dev . --build-arg PIP_INDEX_URL=https://pypi.org/simple
+
+# http 自建镜像源：两个都要给，且 PIP_TRUSTED_HOST 必须是真实主机名
 docker build -t flash-yolo:dev . \
-    --build-arg PIP_INDEX_URL=https://pypi.org/simple --build-arg PIP_TRUSTED_HOST=
+    --build-arg PIP_INDEX_URL=http://mirror.example.com/pypi/simple --build-arg PIP_TRUSTED_HOST=mirror.example.com
 ```
 
 ## 3. 运行（`docker/run.sh`）

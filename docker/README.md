@@ -22,9 +22,12 @@ docker info | grep -i nvidia            # 应能看到 nvidia runtime
 
 # 1) 构建（在仓库根目录；耗时主要在依赖与 TensorRT 的下载）
 docker build -t flash-yolo:dev .
-#    非阿里云网络时覆盖 pip 索引：
+#    非阿里云网络：https 源只覆盖索引即可（trusted-host 保持默认；
+#    别传空值——pip 对空 trusted-host 直接报错）
+docker build -t flash-yolo:dev . --build-arg PIP_INDEX_URL=https://pypi.org/simple
+#    http 自建镜像源：两个都要给，且 PIP_TRUSTED_HOST 是真实主机名
 docker build -t flash-yolo:dev . \
-    --build-arg PIP_INDEX_URL=https://pypi.org/simple --build-arg PIP_TRUSTED_HOST=
+    --build-arg PIP_INDEX_URL=http://mirror.example.com/pypi/simple --build-arg PIP_TRUSTED_HOST=mirror.example.com
 
 # 2) 运行（仓库根目录已挂到 /workspace，工作目录就是它）
 docker/run.sh                              # 交互式 shell
