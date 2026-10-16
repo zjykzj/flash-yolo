@@ -107,7 +107,11 @@ class Detect(nn.Module):
         return {"boxes": boxes, "scores": scores}
 
     def _e2e_postprocess(self, y, feats):
-        """E2E 解码：ltrb -> xyxy（像素坐标）-> 两阶段 top-k -> (B, max_det, 6)"""
+        """E2E 解码：ltrb -> xyxy（像素坐标）-> 两阶段 top-k -> (B, max_det, 6 [+ nm 系数])
+
+        分割头（yolo26_seg.py::Segment26）复用本实现：`mask_coefficient` 存在时按**同一次**
+        top-k 选择取回并追加到末维——E2E 选择只有这一份实现。
+        """
         anchors, strides = make_anchors(feats, self.stride, 0.5)
         boxes = dist2bbox(y["boxes"], anchors.unsqueeze(0)) * strides  # (B, 4, N) xyxy
         boxes = boxes.permute(0, 2, 1)                                # (B, N, 4)
@@ -123,7 +127,12 @@ class Detect(nn.Module):
         cls = (idx % self.nc).float().unsqueeze(-1)                  # (B, k, 1)
         anchor_idx = ori_idx.gather(1, idx // self.nc)               # (B, k)
         out_boxes = boxes.gather(1, anchor_idx.unsqueeze(-1).expand(-1, -1, 4))
-        return torch.cat((out_boxes, top_scores.unsqueeze(-1), cls), dim=-1)  # (B, k, 6)
+        out = [out_boxes, top_scores.unsqueeze(-1), cls]
+        if "mask_coefficient" in y:  # 分割头：系数按同一组 anchor 索引取回
+            nm = y["mask_coefficient"].shape[1]
+            coeff = y["mask_coefficient"].permute(0, 2, 1)  # (B, N, nm)
+            out.append(coeff.gather(1, anchor_idx.unsqueeze(-1).expand(-1, -1, nm)))
+        return torch.cat(out, dim=-1)  # (B, k, 6 [+ nm])
 
     def postprocess_val(self, preds, feats):
         """验证输出契约：每图 (M, 6) [x1,y1,x2,y2,conf,cls] numpy（letterbox 像素）

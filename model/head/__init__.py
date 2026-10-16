@@ -16,5 +16,6 @@
 
 from model.head.v3_detect import V3Detect, decode_level
 from model.head.yolo26_detect import Detect
+from model.head.yolo26_seg import Proto26, Segment26
 
-__all__ = ["Detect", "V3Detect", "decode_level"]
+__all__ = ["Detect", "Segment26", "Proto26", "V3Detect", "decode_level"]

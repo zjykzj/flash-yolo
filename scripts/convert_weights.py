@@ -14,6 +14,7 @@
 
 用法:
     python scripts/convert_weights.py --src yolo26n.pt --dst weights/yolo26n.safetensors
+    python scripts/convert_weights.py --src yolo26n-seg.pt --dst weights/yolo26n-seg.safetensors
     python scripts/convert_weights.py --src yolov3-tiny.weights --dst weights/yolov3-tiny.safetensors
 """
 
@@ -28,7 +29,7 @@ import torch
 from safetensors.torch import save_file
 
 from model.build import build_model
-from model.weights import encode_anchors, encode_meta, provenance_meta, scale_from_weights
+from model.weights import arch_from_weights, encode_anchors, encode_meta, provenance_meta, scale_from_weights
 from utils.logger import get_logger, log_params, setup_logging
 
 setup_logging()
@@ -49,7 +50,8 @@ def _convert_pt(src, dst):
         model = ckpt["model"]  # 当前格式：ckpt["model"] 直接是完整模型对象
     sd = model.float().state_dict()
 
-    meta = {"arch": "yolo26", **provenance_meta()}  # 出处：version/repo[/commit/describe]
+    # 架构从文件名推（`yolo26n-seg.pt` -> "yolo26-seg"；认不出按检测口径 "yolo26"）
+    meta = {"arch": arch_from_weights(src) or "yolo26", **provenance_meta()}  # 出处：version/repo[/commit/describe]
     if scale_from_weights(src):
         meta["scale"] = scale_from_weights(src)
     names = getattr(model, "names", None)

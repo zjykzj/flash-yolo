@@ -28,6 +28,10 @@ _SCALE_RE = re.compile(r"yolo26([nsmlx])($|[-_.])", re.I)
 # 架构命名：yolov3-tiny（官方 darknet 权重命名）/ yolov3-tiny-silu（算子替换版）/
 # flash-yolo（本项目自有架构）。长名在前，否则 "yolov3-tiny-silu" 会被 "yolov3-tiny" 前缀误吸
 _ARCH_RE = re.compile(r"(yolov3-tiny-silu|yolov3-tiny|flash-yolo)($|[-_.])", re.I)
+# 任务后缀：yolo26n-seg（官方分割权重命名）。先于档位判定：yolo26 系里带 -seg 归 yolo26-seg
+_TASK_SUFFIX_RE = re.compile(r"yolo26[nsmlx]-(seg)($|[-_.])", re.I)
+# 带档位维度（scale 参与解析）的架构；其余架构档位固定（v3: tiny / flash-yolo: flash）
+_SCALED_ARCHS = ("yolo26", "yolo26-seg")
 
 _META_STR_KEYS = ("arch", "scale", "version", "repo", "commit", "describe")  # header 直读字符串
 _META_INT_KEYS = ("nc", "imgsz")        # int() 还原
@@ -112,8 +116,15 @@ def scale_from_weights(path):
 
 
 def arch_from_weights(path):
-    """从权重文件名推架构：`yolov3-tiny.safetensors` -> "yolov3-tiny"；认不出返回 None"""
-    m = _ARCH_RE.search(Path(path).stem)
+    """从权重文件名推架构：`yolov3-tiny.safetensors` -> "yolov3-tiny"；认不出返回 None
+
+    yolo26 系带任务后缀时归到对应任务架构：`yolo26n-seg.safetensors` -> "yolo26-seg"
+    （先判后缀，再看其它架构名——档位正则不区分任务，只有后缀能区分）。
+    """
+    stem = Path(path).stem
+    if _TASK_SUFFIX_RE.search(stem):
+        return "yolo26-seg"
+    m = _ARCH_RE.search(stem)
     return m.group(1).lower() if m else None
 
 
@@ -121,9 +132,10 @@ def resolve_arch_scale(weights, model=None, scale=None):
     """(arch, scale) 解析：显式参数 > 权重 metadata > 文件名推断；都认不出返回 (None, None)
 
     metadata 由权重生产者写入（训练保存 / 官方转换），比可被随意改名的文件更可信；旧权重没有
-    metadata 时完全退回文件名推断（行为与历史一致）。yolo26 系：`yolo26s.safetensors` ->
-    ("yolo26", "s")（档位仍认不出时 scale=None，调用方报错）；v3 系：`yolov3-tiny.safetensors`
-    -> ("yolov3-tiny", None)（档位由架构固定）。
+    metadata 时完全退回文件名推断（行为与历史一致）。带档位的架构（`_SCALED_ARCHS`，yolo26 与
+    yolo26-seg）：`yolo26s.safetensors` -> ("yolo26", "s")、`yolo26n-seg.safetensors` ->
+    ("yolo26-seg", "n")（档位仍认不出时 scale=None，调用方报错）；v3 系：
+    `yolov3-tiny.safetensors` -> ("yolov3-tiny", None)（档位由架构固定）。
     """
     meta = load_meta(weights)
     if model is None:
@@ -132,9 +144,9 @@ def resolve_arch_scale(weights, model=None, scale=None):
             "yolo26" if (scale or meta.get("scale") or scale_from_weights(weights)) else None)
     if model is None:
         return None, None
-    if model == "yolo26":
+    if model in _SCALED_ARCHS:
         return model, scale or meta.get("scale") or scale_from_weights(weights)
-    return model, None  # 非 yolo26 架构：档位固定（--scale 不适用）
+    return model, None  # 其余架构：档位固定（--scale 不适用）
 
 
 def resolve_imgsz(weights, imgsz=None):
