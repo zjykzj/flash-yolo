@@ -19,7 +19,7 @@ nbs/accum 梯度口径衔接。接口与 ComputeLoss 同构（item_keys / __call
 import torch
 import torch.nn.functional as F
 
-from model.head_v3 import decode_level
+from model.head import decode_level
 from train.assigner import bbox_iou_torch, padded_gt
 
 __all__ = ["ComputeLossV3"]

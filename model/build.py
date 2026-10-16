@@ -12,8 +12,7 @@ import torch.nn as nn
 import yaml
 
 from model.basic import C2PSA, C3k2, Conv, DWConv, LeakyConv, LiteBlock, PoolConv, SPPF
-from model.head import Detect
-from model.head_v3 import V3Detect
+from model.head import Detect, V3Detect
 
 __all__ = ["DetectionModel", "build_model", "build_yolo26", "build_yolov3_tiny",
            "arch_display_name", "ARCHS", "YOLO26_FAMILY", "YOLO26_CONFIG_PATH", "V3_CONFIG_PATH",

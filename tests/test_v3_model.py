@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from model.build import build_model, build_yolov3_tiny
-from model.head_v3 import decode_level
+from model.head import decode_level
 from model.weights import load_weights, save_weights
 
 

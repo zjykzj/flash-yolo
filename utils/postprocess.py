@@ -1,6 +1,6 @@
 """后处理（NMS 路径）：解码 + 按类 NMS（numpy 实现，pt/onnx 引擎共用）
 
-E2E 路径的 top-k 解码已在模型图内完成（model/head.py），此处只负责：
+E2E 路径的 top-k 解码已在模型图内完成（model/head/yolo26_detect.py），此处只负责：
     - NMS 路径：raw (4+nc, N) -> 解码 -> 按类 NMS
     - 坐标还原到原图（两条路径共用）
 """

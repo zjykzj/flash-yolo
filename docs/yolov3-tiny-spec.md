@@ -96,7 +96,7 @@
   `apply_meta` 覆盖 `head.anchors`（形状不符报错）。**训练**用 `--weights` 初始化时
   **不应用** metadata（架构以 yaml 为准）——自定义锚点微调需自带 yaml。
 
-## 5. 解码契约（`model/head_v3.py::decode_level`）
+## 5. 解码契约（`model/head/v3_detect.py::decode_level`）
 
 **head 与 loss 共用的唯一实现**（darknet `get_yolo_box` 口径）：
 
