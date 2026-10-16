@@ -2,6 +2,9 @@
 
 yolo26：默认导出 E2E 融合图，单输出 output0 (B, 300, 6)，解码与两阶段 top-k 全部在图内；
 --raw 导出原始头输出 (B, 4+nc, 8400)，配合 NMS 路径在外部解码（utils/postprocess.py）。
+yolo26-seg：双输出——output0 在检测输出末维追加 nm 个 mask 系数（E2E: (B, 300, 6+nm)；
+raw: (B, 4+nc+nm, 8400)），output1 是原型 (B, nm, H/4, W/4)；掩码在外部由
+utils/postprocess.process_mask 解码（与官方 val 逐像素一致）。
 yolov3-tiny：单输出解码 (B, NA, 5+nc)——obj×cls 与按类 NMS 在外部（utils/postprocess.v3_detections），
 --raw 不适用。
 默认 batch 固定为 1（边缘工具链偏好固定 shape），--dynamic 打开动态 batch。
@@ -28,8 +31,8 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
 import torch
 
-from model.weights import load_weights, resolve_arch_scale, resolve_imgsz
-from model.build import ARCHS, YOLO26_FAMILY, build_model
+from model.weights import arch_has_scale, load_weights, resolve_arch_scale, resolve_imgsz
+from model.build import ARCHS, YOLO26_FAMILY, arch_task, build_model
 from utils.logger import get_logger, log_params, setup_logging
 
 setup_logging()
@@ -61,7 +64,7 @@ def main():
     arch, scale = resolve_arch_scale(args.weights, args.model, args.scale)
     if arch is None:
         parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
-    if arch == "yolo26" and scale is None:
+    if arch_has_scale(arch) and scale is None:
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
     if arch not in YOLO26_FAMILY and args.raw:
         parser.error(f"--raw is only supported for yolo26 (got model={arch!r})")
@@ -86,20 +89,27 @@ def main():
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
     dummy = torch.randn(1, 3, imgsz, imgsz)
+    # 分割头返回 (检测输出, 原型) 二元组 -> 两个输出名；输出名与官方导出一致（output0/output1）
+    out_names = ["output0", "output1"] if arch_task(arch) == "segment" else ["output0"]
     # 默认固定 batch=1（边缘工具链偏好固定 shape）；--dynamic 打开动态 batch
-    dynamic_axes = {"images": {0: "batch"}, "output0": {0: "batch"}} if args.dynamic else None
+    dynamic_axes = {n: {0: "batch"} for n in ["images", *out_names]} if args.dynamic else None
     with torch.no_grad():
         torch.onnx.export(
             model,
             dummy,
             out_path,
             input_names=["images"],
-            output_names=["output0"],
+            output_names=out_names,
             dynamic_axes=dynamic_axes,
             opset_version=args.opset,
             dynamo=False,  # TorchScript 导出器：权重内嵌单文件；dynamo 默认把权重拆到 .onnx.data
         )
-    mode = ("raw NMS path" if args.raw else "E2E fused") if arch in YOLO26_FAMILY else "decoded (v3)"
+    if arch not in YOLO26_FAMILY:
+        mode = "decoded (v3)"
+    elif arch_task(arch) == "segment":
+        mode = ("raw NMS path + prototypes" if args.raw else "E2E fused + prototypes")
+    else:
+        mode = "raw NMS path" if args.raw else "E2E fused"
     logger.info(f"exported ({mode}) -> {out_path}")
 
     if args.trt:
@@ -116,7 +126,7 @@ def main():
                     dummy.half(),
                     str(engine_src),
                     input_names=["images"],
-                    output_names=["output0"],
+                    output_names=out_names,
                     opset_version=args.opset,
                     dynamo=False,
                 )

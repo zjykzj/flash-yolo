@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **YOLO26-seg model structure and official-weight conversion**: the segmentation architecture (Detect plus mask coefficients and multi-scale `Proto26`) joins the registry as `--model yolo26-seg`; the official `yolo26n-seg.pt` converts to a checkpoint that strict-loads and matches official outputs bit-for-bit.
+- **YOLO26-seg inference**: the segmentation head (mask coefficients + multi-scale `Proto26`) joins the registry as `--model yolo26-seg`; official `yolo26n-seg.pt` converts to a checkpoint that reproduces official detections and prototypes bit-for-bit, and `infer.py` decodes masks at original-image resolution (pixel-identical to the official pipeline). Evaluation lands next.
 
 ## [0.6.0] - 2026-10-15
 

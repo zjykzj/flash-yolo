@@ -5,7 +5,7 @@ import logging
 import torch
 
 from config.inference import IMGSZ
-from model.build import build_model
+from model.build import arch_task, build_model
 from model.weights import apply_meta, load_meta, load_weights
 from utils.engines.base import BaseEngine, resolve_device
 
@@ -25,6 +25,7 @@ class PtEngine(BaseEngine):
         self.device = resolve_device(device)
         self.scale = scale
         self.arch = model
+        self.task = arch_task(model)
         self.end2end = end2end
         meta = load_meta(weights)  # 可选 metadata：缺失 = 空 dict
         self.imgsz = int(imgsz) if imgsz is not None else int(meta.get("imgsz") or IMGSZ)
@@ -48,7 +49,11 @@ class PtEngine(BaseEngine):
 
     def _forward(self, img):
         with torch.no_grad():
-            return self.model(img.to(self.device))[0].cpu().numpy()
+            out = self.model(img.to(self.device))
+        if self.task == "segment":  # 分割头返回 (检测输出, 原型)：剥批后一起交给后处理
+            dets, proto = out
+            return dets.cpu().numpy()[0], proto.cpu().numpy()[0]
+        return out[0].cpu().numpy()
 
     @property
     def summary(self):

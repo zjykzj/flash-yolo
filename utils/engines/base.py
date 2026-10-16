@@ -19,7 +19,7 @@ import torch
 from config.inference import CONF_THRES, IMGSZ, IOU_THRES, MAX_DET
 from data.preprocess import preprocess
 from model.build import YOLO26_FAMILY
-from utils.postprocess import decode_raw, non_max_suppression, scale_boxes, v3_detections
+from utils.postprocess import decode_raw, non_max_suppression, process_mask, scale_boxes, v3_detections
 
 __all__ = ["Detections", "BaseEngine", "resolve_device", "device_label"]
 
@@ -42,35 +42,60 @@ def device_label(device):
 
 @dataclass
 class Detections:
-    """检测结果（原图像素坐标）"""
+    """检测结果（原图像素坐标）
+
+    masks 仅分割任务填写：(N, H, W) uint8 二值掩码 @原图分辨率（可视化直用；
+    评估侧逐图编码 RLE 后即弃，不跨图累积）。
+    """
 
     boxes: np.ndarray  # (N, 4) xyxy
     scores: np.ndarray  # (N,)
     class_ids: np.ndarray  # (N,) int
+    masks: np.ndarray | None = None  # (N, H, W) uint8（分割）
 
 
-def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres, arch="yolo26", imgsz=None):
+def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres, arch="yolo26", imgsz=None,
+                   task="detect"):
     """引擎输出 -> Detections（原图坐标）
 
     imgsz：o2m 原始输出的网格形状按它推（[(S//8)², (S//16)², (S//32)²]；640 -> 80/40/20，
     与 utils.postprocess._LEVEL_SHAPES 同口径）；None 时用模块默认（640 形状）。
+
+    task="segment"：out = (检测输出, 原型)，检测部分的解码口径与 detect 完全一致，掩码由
+    系数 × 原型解码到原图分辨率（复用同一次框选择——E2E 的系数在图内已随 top-k 取回，
+    NMS 路径经 extra 透传）。
     """
     h, w = ori_shape
+    proto = None
+    if task == "segment":
+        out, proto = out
+    coeff = None
     if arch not in YOLO26_FAMILY:
         # out: (NA, 5+nc) [x1,y1,x2,y2, obj, cls...]；最终分 = obj×cls，按类 NMS
         det = v3_detections(out, conf_thres or CONF_THRES, iou_thres, MAX_DET)
         boxes, scores, cls = det[:, :4], det[:, 4], det[:, 5].astype(np.int64)
     elif end2end:
-        # out: (300, 6) [x1, y1, x2, y2, conf, cls]，图内 top-k 已完成
+        # out: (300, 6 [+ nm]) [x1, y1, x2, y2, conf, cls, 系数...]，图内 top-k 已完成
         mask = out[:, 4] > (conf_thres if conf_thres is not None else 0.25)
         boxes, scores, cls = out[mask][:, :4], out[mask][:, 4], out[mask][:, 5].astype(np.int64)
+        if task == "segment":
+            coeff = out[mask][:, 6:]
     else:
-        # out: (4+nc, N) 原始输出（N = Σ(S//stride)²，随输入尺寸变）
+        # out: (4+nc [+ nm], N) 原始输出（N = Σ(S//stride)²，随输入尺寸变）
         shapes = [(imgsz // s, imgsz // s) for s in (8, 16, 32)] if imgsz else None
-        boxes, score_map = decode_raw(out, shapes=shapes)
-        boxes, scores, cls = non_max_suppression(boxes, score_map, conf_thres or CONF_THRES, iou_thres, MAX_DET)
+        nm = proto.shape[0] if task == "segment" else 0
+        nc = out.shape[0] - 4 - nm
+        boxes, score_map = decode_raw(out[: 4 + nc], shapes=shapes)
+        if task == "segment":
+            boxes, scores, cls, coeff = non_max_suppression(
+                boxes, score_map, conf_thres or CONF_THRES, iou_thres, MAX_DET, extra=out[4 + nc:].T)
+        else:
+            boxes, scores, cls = non_max_suppression(boxes, score_map, conf_thres or CONF_THRES, iou_thres, MAX_DET)
+    masks = None
+    if task == "segment":
+        masks = process_mask(proto, coeff, boxes, (imgsz or IMGSZ, imgsz or IMGSZ), (h, w), ratio, pad)
     boxes = scale_boxes(boxes, ratio, pad, h, w)
-    return Detections(boxes, scores, cls)
+    return Detections(boxes, scores, cls, masks)
 
 
 class BaseEngine:
@@ -81,6 +106,7 @@ class BaseEngine:
 
     imgsz = IMGSZ  # 子类 __init__ 覆盖
     arch = "yolo26"
+    task = "detect"  # 子类 __init__ 按 arch 覆盖（model.build.arch_task）
     end2end = True
 
     def _forward(self, img):
@@ -99,6 +125,6 @@ class BaseEngine:
         out = self._forward(img)
         t2 = time.perf_counter()
         dets = _to_detections(out, self.end2end, ratio, pad, image_bgr.shape[:2], conf_thres, iou_thres,
-                              arch=self.arch, imgsz=self.imgsz)
+                              arch=self.arch, imgsz=self.imgsz, task=self.task)
         t3 = time.perf_counter()
         return dets, {"preprocess": (t1 - t0) * 1e3, "inference": (t2 - t1) * 1e3, "postprocess": (t3 - t2) * 1e3}

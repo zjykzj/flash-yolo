@@ -7,6 +7,7 @@ import numpy as np
 import onnxruntime as ort
 
 from config.inference import IMGSZ
+from model.build import arch_task
 from utils.engines.base import BaseEngine
 
 __all__ = ["OnnxEngine"]
@@ -25,6 +26,7 @@ class OnnxEngine(BaseEngine):
     def __init__(self, onnx_path, scale="n", end2end=True, model="yolo26", imgsz=None):
         self.scale = scale
         self.arch = model
+        self.task = arch_task(model)
         self.end2end = end2end
         self.onnx_path = onnx_path
         self._sess_options = self._session_options()
@@ -58,7 +60,10 @@ class OnnxEngine(BaseEngine):
             self.sess.run(None, {self.input_name: dummy})
 
     def _forward(self, img):
-        return self.sess.run(None, {self.input_name: img.numpy()})[0][0]
+        outs = self.sess.run(None, {self.input_name: img.numpy()})
+        if self.task == "segment":  # 双输出：output0 检测(+mask 系数)、output1 原型（剥批）
+            return outs[0][0], outs[1][0]
+        return outs[0][0]
 
     @property
     def summary(self):

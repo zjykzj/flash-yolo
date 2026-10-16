@@ -10,7 +10,8 @@ import numpy as np
 from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from utils.iou import box_iou
 
-__all__ = ["decode_raw", "non_max_suppression", "nms_per_image", "v3_detections", "scale_boxes"]
+__all__ = ["decode_raw", "non_max_suppression", "nms_per_image", "v3_detections", "scale_boxes",
+           "process_mask"]
 
 # 三个检测层特征图尺寸（640 输入）：P3/P4/P5
 _LEVEL_SHAPES = [(80, 80), (40, 40), (20, 20)]
@@ -69,7 +70,7 @@ def decode_raw(raw, nc=80, shapes=None, strides=None):
     return dbox.T, scores.T
 
 
-def nms_per_image(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, max_det=MAX_DET):
+def nms_per_image(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, max_det=MAX_DET, extra=None):
     """按类 NMS（单图，xyxy 输入）——类感知贪心 + 早停
 
     候选按分数全局降序逐框处理；跨类用坐标偏移隔离（跨类 IoU 恒 0，等价于逐类独立 NMS），
@@ -83,14 +84,18 @@ def nms_per_image(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, 
     Args:
         boxes: (N, 4) xyxy
         score_map: (N, nc) 概率
+        extra: (N, K) 随框一起被选择的附加行（分割的 mask 系数）；给定时随返回值一起回传
     Returns:
-        (M, 6) [x1, y1, x2, y2, score, cls]（按分降序、≤ max_det；无检出时 (0, 6)）
+        extra 为空：(M, 6) [x1, y1, x2, y2, score, cls]（按分降序、≤ max_det；无检出时 (0, 6)）
+        extra 给定时：(det, extra_kept)——选择只有这一份实现，系数随同一次 NMS 取回
     """
     if max_det <= 0:
-        return np.zeros((0, 6), dtype=np.float32)
+        det = np.zeros((0, 6), dtype=np.float32)
+        return (det, np.zeros((0, extra.shape[1]), dtype=extra.dtype)) if extra is not None else det
     cand, cls = np.nonzero(score_map > conf_thres)
     if cand.size == 0:
-        return np.zeros((0, 6), dtype=np.float32)
+        det = np.zeros((0, 6), dtype=np.float32)
+        return (det, np.zeros((0, extra.shape[1]), dtype=extra.dtype)) if extra is not None else det
     dt = np.result_type(boxes.dtype, score_map.dtype, np.float32)
     scores = score_map[cand, cls]
     order = np.argsort(scores)[::-1]
@@ -98,6 +103,7 @@ def nms_per_image(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, 
     kept_boxes = np.zeros((max_det, 4), dtype=dt)
     kept_scores = np.zeros(max_det, dtype=dt)
     kept_cls = np.zeros(max_det, dtype=np.int64)
+    kept_idx = np.zeros(max_det, dtype=np.int64) if extra is not None else None
     m = 0
     for j in order:
         if m:
@@ -106,24 +112,32 @@ def nms_per_image(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, 
             if box_iou(box, kept).max() > iou_thres:
                 continue
         kept_boxes[m], kept_scores[m], kept_cls[m] = boxes[cand[j]], scores[j], cls[j]
+        if extra is not None:
+            kept_idx[m] = cand[j]
         m += 1
         if m == max_det:
             break
-    return np.concatenate([kept_boxes[:m], kept_scores[:m, None],
-                           kept_cls[:m, None].astype(np.float32)], axis=1)
+    det = np.concatenate([kept_boxes[:m], kept_scores[:m, None],
+                          kept_cls[:m, None].astype(np.float32)], axis=1)
+    return (det, extra[kept_idx[:m]]) if extra is not None else det
 
 
-def non_max_suppression(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, max_det=MAX_DET):
+def non_max_suppression(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, max_det=MAX_DET, extra=None):
     """按类 NMS（与官方 val 口径：conf 0.001 / iou 0.7 / 每图最多 300）
 
     Args:
         boxes: (N, 4) xywh（decode_raw 输出）
         score_map: (N, nc)
+        extra: (N, K) 随框一起被选择的附加行（分割的 mask 系数）
 
     Returns:
-        boxes: (M, 4) xyxy, scores: (M,), class_ids: (M,) int
+        extra 为空：boxes (M, 4) xyxy, scores (M,), class_ids (M,) int
+        extra 给定时：再加一个 extra_kept (M, K)
     """
-    det = nms_per_image(xywh2xyxy(boxes), score_map, conf_thres, iou_thres, max_det)
+    det = nms_per_image(xywh2xyxy(boxes), score_map, conf_thres, iou_thres, max_det, extra)
+    if extra is not None:
+        det, extra_kept = det
+        return det[:, :4], det[:, 4], det[:, 5].astype(np.int64), extra_kept
     return det[:, :4], det[:, 4], det[:, 5].astype(np.int64)
 
 
@@ -154,3 +168,62 @@ def scale_boxes(boxes, ratio, pad, ori_h, ori_w):
     boxes[:, [0, 2]] = boxes[:, [0, 2]].clip(0, ori_w)
     boxes[:, [1, 3]] = boxes[:, [1, 3]].clip(0, ori_h)
     return boxes
+
+
+def process_mask(proto, coeffs, boxes, net_hw, ori_hw, ratio, pad):
+    """原型 + mask 系数 -> 原图分辨率二值掩码（uint8, (N, H, W)）
+
+    与官方两段式口径一致（ultralytics `ops.process_mask(upsample=True)` + validator 侧
+    `ops.scale_masks`）：
+        ① 系数 @ 原型 -> logits，bilinear 上采样到网络输入尺寸（align_corners=False）
+        ② > 0 二值化后按框裁剪（框为 letterbox 空间，与掩码同尺度；先上采样再裁剪——反过来
+           会把双线性边缘留到框外）
+        ③ 裁掉 letterbox 灰边 -> bilinear 重采样到原图尺寸 -> > 0.5 再二值化
+           （官方对二值图再阈值一次以抑制插值灰边；两次阈值顺序不能省）
+    插值走 torch：numpy 手写 bilinear 与 F.interpolate 的取整/边界口径难以逐位一致。
+
+    Args:
+        proto: (nm, mh, mw) 原型（1/4 网络输入分辨率）
+        coeffs: (N, nm) mask 系数（行序与 boxes 一致）
+        boxes: (N, 4) xyxy（letterbox 像素坐标，未还原到原图）
+        net_hw: (h, w) 网络输入尺寸；ori_hw: (h, w) 原图尺寸
+        ratio: letterbox 缩放比；pad: (top, left)（data.preprocess 口径）
+    """
+    import torch
+    import torch.nn.functional as F
+
+    ori_h, ori_w = int(ori_hw[0]), int(ori_hw[1])
+    n = int(coeffs.shape[0])
+    if n == 0:  # 无检出：返回形状正确的空栈（F.interpolate 不接受 N=0）
+        return np.zeros((0, ori_h, ori_w), dtype=np.uint8)
+    nm, mh, mw = proto.shape
+    p = torch.from_numpy(np.ascontiguousarray(proto, dtype=np.float32)).reshape(nm, -1)
+    c = torch.from_numpy(np.ascontiguousarray(coeffs, dtype=np.float32))
+    b = torch.from_numpy(np.ascontiguousarray(boxes, dtype=np.float32))
+    net_h, net_w = int(net_hw[0]), int(net_hw[1])
+
+    masks = (c @ p).reshape(-1, mh, mw)
+    masks = F.interpolate(masks[:, None], size=(net_h, net_w), mode="bilinear", align_corners=False)[:, 0]
+    masks = _crop_mask((masks > 0).to(torch.uint8), b)
+    # 反 letterbox：与 data/preprocess.letterbox 同口径（round(pad - 0.1) 抵消浮点误差）
+    top, left = round(pad[0] - 0.1), round(pad[1] - 0.1)
+    bottom, right = top + round(ori_h * ratio), left + round(ori_w * ratio)
+    content = masks[:, top:bottom, left:right].float()
+    masks = F.interpolate(content[:, None], size=(ori_h, ori_w), mode="bilinear", align_corners=False)[:, 0]
+    return (masks > 0.5).to(torch.uint8).numpy()
+
+
+def _crop_mask(masks, boxes):
+    """框外清零：masks (N, H, W) uint8、boxes (N, 4) xyxy 同尺度
+
+    列/行掩码分开相与（框区域可分离），不物化 (N, H, W) 的布尔网格——官方同款。
+    """
+    import torch
+
+    _, h, w = masks.shape
+    x1, y1, x2, y2 = boxes.unbind(1)  # (N,)
+    col = (torch.arange(w)[None, :] >= x1[:, None]) & (torch.arange(w)[None, :] < x2[:, None])  # (N, W)
+    row = (torch.arange(h)[None, :] >= y1[:, None]) & (torch.arange(h)[None, :] < y2[:, None])  # (N, H)
+    masks *= col[:, None, :].to(masks.dtype)
+    masks *= row[:, :, None].to(masks.dtype)
+    return masks

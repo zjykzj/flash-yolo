@@ -1,4 +1,4 @@
-"""检测结果可视化：画框 + 类别标签"""
+"""结果可视化：画框 + 类别标签（分割结果额外叠加掩码）"""
 
 from pathlib import Path
 
@@ -28,11 +28,11 @@ _COLORS = [
 
 
 def draw_detections(image_bgr, detections, names=None, save_path=None):
-    """在原图上画检测框
+    """在原图上画检测框（Detections.masks 存在时先叠加半透明掩码，再画框与标签）
 
     Args:
         image_bgr: (H, W, 3)
-        detections: Detections（原图坐标）
+        detections: Detections（原图坐标；masks 为 (N, H, W) uint8 @原图分辨率）
         names: dict[int, str] 类别名（默认 config.datasets.load_names()，即 COCO 80 类）
         save_path: 若给定则保存
     """
@@ -41,6 +41,8 @@ def draw_detections(image_bgr, detections, names=None, save_path=None):
 
         names = load_names()
     out = image_bgr.copy()
+    if getattr(detections, "masks", None) is not None:
+        out = _draw_masks(out, detections)
     for box, score, cid in zip(detections.boxes, detections.scores, detections.class_ids):
         color = _COLORS[int(cid) % len(_COLORS)]
         x1, y1, x2, y2 = map(int, box)
@@ -52,6 +54,18 @@ def draw_detections(image_bgr, detections, names=None, save_path=None):
     if save_path:
         cv2.imwrite(save_path, out)
     return out
+
+
+def _draw_masks(image_bgr, detections, alpha=0.5):
+    """按类别色叠加半透明掩码（后画的覆盖先画的——实例重叠时与画框顺序一致）"""
+    out = image_bgr.copy().astype(np.float32)
+    for mask, cid in zip(detections.masks, detections.class_ids):
+        m = mask.astype(bool)
+        if not m.any():
+            continue
+        color = np.array(_COLORS[int(cid) % len(_COLORS)], dtype=np.float32)
+        out[m] = out[m] * (1 - alpha) + color * alpha
+    return out.astype(np.uint8)
 
 
 def draw_target_grid(imgs, targets, save_path, n=8, names=None, scale=1.0):

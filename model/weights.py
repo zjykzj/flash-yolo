@@ -18,8 +18,9 @@ from safetensors.torch import load_file, save_file
 
 from config.inference import IMGSZ
 
-__all__ = ["load_weights", "save_weights", "scale_from_weights", "arch_from_weights", "resolve_arch_scale",
-           "resolve_imgsz", "load_meta", "encode_meta", "encode_anchors", "apply_meta", "provenance_meta"]
+__all__ = ["load_weights", "save_weights", "scale_from_weights", "arch_from_weights", "arch_has_scale",
+           "resolve_arch_scale", "resolve_imgsz", "load_meta", "encode_meta", "encode_anchors", "apply_meta",
+           "provenance_meta"]
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,11 @@ def arch_from_weights(path):
         return "yolo26-seg"
     m = _ARCH_RE.search(stem)
     return m.group(1).lower() if m else None
+
+
+def arch_has_scale(arch):
+    """该架构是否有档位维度（yolo26 / yolo26-seg 有；v3 系与 flash-yolo 档位固定）"""
+    return arch in _SCALED_ARCHS
 
 
 def resolve_arch_scale(weights, model=None, scale=None):

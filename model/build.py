@@ -72,8 +72,8 @@ ARCHS = {
     "flash-yolo": {"cfg": FLASH_CONFIG_PATH, "default_scale": "flash", "display": "Flash-YOLO", "task": "detect"},
 }
 
-# yolo26 系检测头（Detect 双分支 / E2E，含 flash-yolo）：--nms/--raw 门控与解码分派按此判定
-YOLO26_FAMILY = {"yolo26", "flash-yolo"}
+# yolo26 系头（Detect/Segment26 双分支 / E2E，含 flash-yolo 与分割版）：--nms/--raw 门控与解码分派按此判定
+YOLO26_FAMILY = {"yolo26", "yolo26-seg", "flash-yolo"}
 
 
 def arch_display_name(arch, scale):

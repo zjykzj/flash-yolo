@@ -41,7 +41,7 @@ from data.build import build_eval_dataset
 from data.scan import scan_summary
 from eval.coco_evaluator import CocoEvaluator
 from model.build import ARCHS, YOLO26_FAMILY, arch_display_name
-from model.weights import resolve_arch_scale, resolve_imgsz
+from model.weights import arch_has_scale, resolve_arch_scale, resolve_imgsz
 from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_file_only, log_params, redirect_prints, setup_logging
 from utils.paths import increment_path
@@ -102,7 +102,7 @@ def main():
     arch, scale = resolve_arch_scale(args.weights, args.model, args.scale)
     if arch is None:
         parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
-    if arch == "yolo26" and scale is None:
+    if arch_has_scale(arch) and scale is None:
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
     if arch not in YOLO26_FAMILY and args.nms:
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")

@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from config.inference import IMGSZ
+from model.build import arch_task
 from utils.engines.base import BaseEngine
 
 __all__ = ["TRTEngine", "build_trt_engine"]
@@ -85,6 +86,7 @@ class TRTEngine(BaseEngine):
         self._trt = trt
         self.scale = scale
         self.arch = model
+        self.task = arch_task(model)
         self.end2end = end2end
         self.engine_path = engine_path
         runtime = trt.Runtime(trt.Logger(trt.Logger.WARNING))
@@ -96,36 +98,47 @@ class TRTEngine(BaseEngine):
         names = [engine.get_tensor_name(i) for i in range(engine.num_io_tensors)]
         ins = [n for n in names if engine.get_tensor_mode(n) == trt.TensorIOMode.INPUT]
         outs = [n for n in names if engine.get_tensor_mode(n) == trt.TensorIOMode.OUTPUT]
-        if len(ins) != 1 or len(outs) != 1:
-            raise ValueError(f"expected 1 input / 1 output in engine, got {ins} / {outs}")
-        self.input_name, self.output_name = ins[0], outs[0]
+        if len(ins) != 1 or len(outs) not in (1, 2):
+            raise ValueError(f"expected 1 input / 1-2 outputs in engine, got {ins} / {outs}")
+        self.input_name, self.output_names = ins[0], outs
         self.in_shape = tuple(engine.get_tensor_shape(self.input_name))
-        self.out_shape = tuple(engine.get_tensor_shape(self.output_name))
-        if any(d < 0 for d in self.in_shape + self.out_shape):
-            raise ValueError(f"dynamic shapes are not supported (in {self.in_shape}, out {self.out_shape}); "
+        self.out_shapes = [tuple(engine.get_tensor_shape(n)) for n in outs]
+        if any(d < 0 for d in self.in_shape + tuple(d for s in self.out_shapes for d in s)):
+            raise ValueError(f"dynamic shapes are not supported (in {self.in_shape}, out {self.out_shapes}); "
                              f"build the engine from a fixed-shape onnx (no --dynamic)")
+        if self.task == "segment" and len(outs) != 2:
+            raise ValueError(f"segmentation engine needs 2 outputs (detections + prototypes), got {self.out_shapes}")
         graph_imgsz = self.in_shape[2] if len(self.in_shape) == 4 else None
         if imgsz is not None and graph_imgsz is not None and int(imgsz) != graph_imgsz:
             raise ValueError(f"TRT engine is fixed at {graph_imgsz}px — --imgsz {imgsz} conflicts "
                              f"(rebuild the engine for that size)")
         self.imgsz = graph_imgsz or (int(imgsz) if imgsz is not None else IMGSZ)
         self._in = torch.empty(self.in_shape, dtype=_trt_torch_dtype(trt, engine, self.input_name), device="cuda")
-        self._out = torch.empty(self.out_shape, dtype=_trt_torch_dtype(trt, engine, self.output_name), device="cuda")
+        self._outs = [torch.empty(s, dtype=_trt_torch_dtype(trt, engine, n), device="cuda")
+                      for s, n in zip(self.out_shapes, self.output_names)]
         self._stream = torch.cuda.Stream()  # 专用流：TRT 建议非默认流（默认流会在 enqueue 内部加同步）
         self.ctx.set_tensor_address(self.input_name, self._in.data_ptr())
-        self.ctx.set_tensor_address(self.output_name, self._out.data_ptr())
+        for name, buf in zip(self.output_names, self._outs):
+            self.ctx.set_tensor_address(name, buf.data_ptr())
         self._warmup()
 
     def _forward(self, img):
-        """单图前向：H2D 拷贝 -> execute_async_v3（专用流）-> 流同步后读回（阻塞，与 ORT .run 同语义）"""
+        """单图前向：H2D 拷贝 -> execute_async_v3（专用流）-> 流同步后读回（阻塞，与 ORT .run 同语义）
+
+        分割双输出时返回 (检测输出, 原型) 二元组（与 PtEngine / OnnxEngine 同契约）。
+        """
         with torch.cuda.stream(self._stream):
             self._in.copy_(img)
             self.ctx.execute_async_v3(self._stream.cuda_stream)
         self._stream.synchronize()
-        out = self._out[0].cpu().numpy()  # 剥批：引擎输出 (1, ...)，契约与 PtEngine / OnnxEngine 一致
+        # 剥批：引擎输出 (1, ...)，契约与 PtEngine / OnnxEngine 一致
+        outs = [o[0].cpu().numpy() for o in self._outs]
         # fp16 图里 raw/v3 输出是半精度（E2E 输出因 cls 的 .float() 类型提升保持 fp32）——
         # 统一转 fp32：下游 numpy 解码在 half 上既慢又无谓
-        return out if out.dtype == np.float32 else out.astype(np.float32)
+        outs = [o if o.dtype == np.float32 else o.astype(np.float32) for o in outs]
+        if self.task == "segment":
+            return outs[0], outs[1]
+        return outs[0]
 
     def _warmup(self):
         """预热：跑 3 次后计时才反映稳态性能（dummy 用实际输入尺寸）"""
@@ -139,4 +152,5 @@ class TRTEngine(BaseEngine):
         mib = Path(self.engine_path).stat().st_size / 2**20
         prec = {torch.float32: "fp32", torch.float16: "fp16", torch.bfloat16: "bf16"}.get(
             self._in.dtype, str(self._in.dtype).removeprefix("torch."))
-        return f"TensorRT {mib:.1f} MiB ({prec}) · in {self.in_shape} · out {self.out_shape}"
+        outs = " ".join(str(s) for s in self.out_shapes)
+        return f"TensorRT {mib:.1f} MiB ({prec}) · in {self.in_shape} · out {outs}"
