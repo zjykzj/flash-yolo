@@ -29,6 +29,8 @@ python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov
 |---|---|---|
 | yolo26 默认（E2E） | `(B, 300, 6)` = [x1,y1,x2,y2,conf,cls] | 解码 + 两阶段 top-k 在**图内** |
 | yolo26 `--raw` | `(B, 4+nc, N)` | 解码/后处理在外（见 `utils/postprocess.py`） |
+| yolo26-seg | `output0 (B, 300, 6+nm)` + `output1 (B, nm, H/4, W/4)` | 系数接在末维；原型单独一路（同官方导出的 output0/output1 命名） |
+| yolo26-seg `--raw` | `output0 (B, 4+nc+nm, N)` + `output1` 同上 | 掩码由 `process_mask` 解码到原图分辨率 |
 | yolov3-tiny | `(B, NA, 5+nc)` | NA = 3·ΣH·W；obj×cls 与 NMS 在外部 |
 
 > **TorchScript 导出器**：`torch.onnx.export` 在 torch 2.9 起默认走 dynamo 导出器，其

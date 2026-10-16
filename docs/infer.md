@@ -20,6 +20,9 @@ python scripts/infer.py --weights weights/yolo26n.engine --engine trt --image im
 # 非 COCO 数据训练的模型：用描述符带出 nc 与标签名
 python scripts/infer.py --weights runs/train/my-run/weights/best.safetensors \
     --data mydataset --image img.jpg
+
+# 分割权重：自动识别 arch（yolo26-seg），可视化叠加实例掩码
+python scripts/infer.py --weights weights/yolo26n-seg.safetensors --image assets/traffic.jpg
 ```
 
 | 参数 | 默认 | 说明 |
@@ -51,6 +54,9 @@ Labels        -> runs/predict/predict21/labels
   （YOLO 格式：`cls xc yc w h`，归一化到原图）。
 - 模型行：`YOLO26n · 260 layers · 2,572,280 params · E2E (NMS-free) · engine pt`
   （onnx/trt 显示的是部署口径：文件大小 + 输入/输出 shape）。
+- **分割权重**：可视化图额外叠加半透明实例掩码（`Detections.masks`，(N, H, W) uint8 @原图分辨率，
+  由 `process_mask` 解码，与官方 val 管线逐像素一致）。**labels/*.txt 仍是框**（YOLO 格式的
+  多边形标签未实现）——掩码目前只用于可视化与评估。
 
 ## 3. 引擎选择
 

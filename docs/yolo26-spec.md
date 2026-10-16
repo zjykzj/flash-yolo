@@ -147,3 +147,35 @@ C2PSA / PSABlock / Attention）。
 | TensorRT fp32 | ≤ 2e-3 | 通过 |
 
 （发布值与本表 ~0.1 的差是**指标实现噪声**，不是模型差异。）
+
+## 11. 分割版（yolo26-seg）
+
+**结构**：backbone/neck 与检测版**逐行相同**（官方 yaml diff 的唯一一行是最后一行），
+头换成 `Segment26` = `Detect` + 两个分割专属件：
+
+| 件 | 内容 |
+|---|---|
+| `cv4` / `one2one_cv4` | 每级 3×3 conv stack -> `nm=32` mask 系数（`c4 = max(ch[0]//4, 32)`） |
+| `proto`（Proto26） | P4/P5 -> 1×1 投到 P3 通道 -> nearest 上采样 ×2/×4 相加 -> 3×3 -> ConvTranspose2d ×2 -> 3×3 -> 1×1，输出 (B, 32, H/4, W/4) |
+| `proto.semseg` | 训练期辅助语义头，**官方 ckpt 里存在但从未训练**（`train_metrics["val/sem_loss"] == 0.0`）：保留子模块只为 strict load 零映射，前向不计算（推理零成本） |
+
+- `npr`（yaml 256）随 width 缩放：n 档 64（官方 parse_model 同款 `make_divisible(min(npr, max_ch) * width)`）；
+  `nm` 是任务常数不缩放。n 档合计 **3,126,280 参数 / 309 层**（与本工程 summary 逐位一致）。
+- o2o 分支的 proto 走 `detach()`（与特征 detach 同口径：梯度只经 o2m 回流）。
+
+**推理契约**：`(检测输出, 原型)` 二元组——E2E 下检测输出 `(B, 300, 6+nm)`，raw 下
+`(B, 4+nc+nm, N)`；E2E 的两阶段 top-k 与检测**共用同一实现**（系数按同一组 anchor 索引取回）。
+掩码解码 `utils/postprocess.process_mask`：系数 @ 原型 -> bilinear 上采样到网络输入尺寸 ->
+`>0` 二值化 -> 按框裁剪 -> 反 letterbox 重采样到原图 -> `>0.5` 再二值化（与官方
+`process_mask(upsample=True)` + `scale_masks` 两段口径一致）。
+
+**验收**：
+
+| 项 | 标准 | 实测 |
+|---|---|---|
+| 键面（vs 官方 ckpt） | 844 张量逐键一致 | 0 missing / 0 extra / 0 形状不符 |
+| strict load | 转换产物全 key 匹配 | 通过 |
+| 与官方推理输出 | 逐位一致 | (1,300,38) 与 (1,32,160,160) 均 `torch.equal` |
+| 掩码解码 vs 官方管线 | 逐像素一致 | 29 掩码 7,925,120 像素 0 差异 |
+| COCO val2017 @640（本管线） | 接近官方 | Box **39.67 / 55.48** · Mask **33.67 / 52.76**（mAP50-95 / mAP50） |
+| 官方训练期记录 | 参考 | box 39.75 · mask 33.86（差 ~0.002，指标实现噪声） |

@@ -40,7 +40,7 @@ from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from data.build import build_eval_dataset
 from data.scan import scan_summary
 from eval.coco_evaluator import CocoEvaluator
-from model.build import ARCHS, YOLO26_FAMILY, arch_display_name
+from model.build import ARCHS, YOLO26_FAMILY, arch_display_name, arch_task
 from model.weights import arch_has_scale, resolve_arch_scale, resolve_imgsz
 from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_file_only, log_params, redirect_prints, setup_logging
@@ -151,8 +151,15 @@ def main():
                 f"conf {args.conf} · iou {args.iou} · max_det {args.max_det}")
 
     # ---- 评估循环 ----
+    # 任务轴：分割跑两个评估器（bbox + segm），指标口径与官方发布的 Box/Mask 双表一致；
+    # 两者各自持有一份结果累积（同一份 dets 分别 update），互不影响。
+    heads = ["Box"]
+    if arch_task(arch) == "segment":
+        heads.append("Mask")
     with redirect_prints(logger):
-        evaluator = CocoEvaluator(dataset.gt_source(), nc=len(dataset.names))
+        evaluators = [(head, CocoEvaluator(dataset.gt_source(), nc=len(dataset.names),
+                                           iou_type="segm" if head == "Mask" else "bbox"))
+                      for head in heads]
     bar = ProgressBar(n_total, desc="val")
     t0 = time.monotonic()  # 单调时钟（WSL2 墙钟会跳变，见 utils/progress.py 注释）
     t_window, n_window = t0, 0
@@ -162,7 +169,8 @@ def main():
         image = dataset.load_image(i)
         timings["load"].append((time.monotonic() - t_load) * 1e3)
         dets, tseg = engine.predict_timed(image, conf_thres=args.conf, iou_thres=args.iou)
-        evaluator.update(dataset.image_id(i), dets)
+        for _head, evaluator in evaluators:
+            evaluator.update(dataset.image_id(i), dets)
         for k in ("preprocess", "inference", "postprocess"):
             timings[k].append(tseg[k])
         # 每 100 张与最后一张刷新进度（窗口瞬时速度）
@@ -179,20 +187,31 @@ def main():
 
     # ---- 结果 ----
     with redirect_prints(logger):
-        metrics = evaluator.compute()
+        metrics_by_head = [(head, ev.compute()) for head, ev in evaluators]
+    multi = len(metrics_by_head) > 1  # 分割：Box / Mask 两组表
 
-    n_instances = sum(r[2] for r in metrics["per_class"])
-    full_table = [_fmt_table_row("all", metrics["images"], n_instances, metrics["P"], metrics["R"],
-                                 metrics["mAP@50"], metrics["mAP@[.5:.95]"], metrics["AR@100"])]
-    full_table += [_fmt_table_row(*row) for row in metrics["per_class"]]
-    for line in [TABLE_HEADER] + (full_table[:1] if args.summary_only else full_table):
+    console_lines, file_lines, detail_lines = [], [], []
+    for head, metrics in metrics_by_head:
+        n_instances = sum(r[2] for r in metrics["per_class"])
+        full_table = [_fmt_table_row("all", metrics["images"], n_instances, metrics["P"], metrics["R"],
+                                     metrics["mAP@50"], metrics["mAP@[.5:.95]"], metrics["AR@100"])]
+        full_table += [_fmt_table_row(*row) for row in metrics["per_class"]]
+        if multi:
+            console_lines.append(bold(f"      {head} metrics"))
+            file_lines.append(f"      {head} metrics")
+        console_lines += [TABLE_HEADER] + (full_table[:1] if args.summary_only else full_table)
+        file_lines += [TABLE_HEADER] + full_table  # 文件始终写全表（记录载体，与终端裁剪无关）
+        tag = f" ({head})" if multi else ""
+        detail_lines.append(
+            f"      {f'Size buckets{tag}':<14} mAP_small {metrics['mAP_small']:.4f} · "
+            f"mAP_medium {metrics['mAP_medium']:.4f} · mAP_large {metrics['mAP_large']:.4f}"
+            f"   (COCO area <32² / 32²-96² / >96²)")
+        detail_lines.append(
+            f"      {f'Thresholds{tag}':<14} mAP50 {metrics['mAP@50']:.4f} · "
+            f"mAP75 {metrics['mAP@75']:.4f} · mAP50-95 {metrics['mAP@[.5:.95]']:.4f}"
+            f"   (IoU 0.50 / 0.75 / 0.50:0.95)")
+    for line in console_lines + detail_lines:
         logger.info(line)
-
-    size_line = (f"      {'Size buckets':<14} mAP_small {metrics['mAP_small']:.4f} · "
-                 f"mAP_medium {metrics['mAP_medium']:.4f} · mAP_large {metrics['mAP_large']:.4f}"
-                 f"   (COCO area <32² / 32²-96² / >96²)")
-    thr_line = (f"      {'Thresholds':<14} mAP50 {metrics['mAP@50']:.4f} · mAP75 {metrics['mAP@75']:.4f} · "
-                f"mAP50-95 {metrics['mAP@[.5:.95]']:.4f}   (IoU 0.50 / 0.75 / 0.50:0.95)")
     avg = {k: sum(v) / len(v) for k, v in timings.items()}
     total_ms = elapsed / n_total * 1e3
     # 四段计时不含 evaluator/进度条/循环本身；"other" 按端到端残差算，保证加和恒等于 total
@@ -208,20 +227,25 @@ def main():
             "Reference: published yolo26n = E2E 40.1 / NMS 40.9 (Objects365 pretrain + COCO finetune)",
             "           same pipeline with the official weights = E2E 40.27 / NMS 40.89",
         ]
+    elif arch == "yolo26-seg":
+        ref_lines = [
+            "Reference: official yolo26n-seg = box mAP50-95 0.3975 / mask 0.3386 "
+            "(training-time validator; pycocotools numbers above are the project's own baseline)",
+        ]
     elif arch in YOLO26_FAMILY:
         ref_lines = ["Reference: Flash-YOLO (this repo's own design) — GFLOPs below yolo26n by design"]
     else:
         ref_lines = ["Reference: official darknet yolov3-tiny = 33.1 AP50 (COCO test-dev, 416; val2017 here)"]
-    for line in ("", size_line, thr_line, speed_line, model_line, done_line, *ref_lines):
+    for line in ("", speed_line, model_line, done_line, *ref_lines):
         logger.info(line)
 
     # ---- 保存到 runs/val/valN（递增目录：完整指标表 + COCO 结果 json）----
     # metrics.txt 始终写全表（含 per-class），与 --summary-only 的终端裁剪无关：文件是记录载体
     lines = [f"val: {args.split} {n_total} images · conf={args.conf} · iou={args.iou} · max_det={args.max_det}",
-             TABLE_HEADER, *full_table, "", size_line, thr_line, speed_line, model_line, done_line, *ref_lines]
+             *file_lines, "", *detail_lines, speed_line, model_line, done_line, *ref_lines]
     (run_dir / "metrics.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     with open(run_dir / "results.json", "w", encoding="utf-8") as f:
-        json.dump(evaluator.results, f)
+        json.dump(evaluators[-1][1].results, f)  # 分割写 Mask 组（含 segmentation），检测即唯一一组
     logger.info(f"Results saved to {run_dir}")
 
 

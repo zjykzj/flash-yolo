@@ -12,6 +12,7 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data coco --nms  
 python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data coco         # 换运行时
 python scripts/eval.py --weights w.safetensors --data coco --imgsz 416                  # 指定输入尺寸
 python scripts/eval.py --weights w.safetensors --data coco --split val --limit 100      # 冒烟子集
+python scripts/eval.py --weights weights/yolo26n-seg.safetensors --data coco            # 分割（Box + Mask 双表）
 ```
 
 | 参数 | 默认 | 说明 |
@@ -62,7 +63,39 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - **NMS**：o2m 头 + 类感知 NMS，通常高 ~0.9 点、略慢（官方 40.9）。
 - yolov3-tiny 只有一条"解码 + obj×cls + NMS"路径，`--nms` / `--raw` 对它直接报错。
 
-## 5. 参考基准（COCO val2017，本管线）
+## 5. 分割（yolo26-seg）
+
+分割权重（`--weights weights/yolo26n-seg.safetensors`）自动走双表口径：同一份结果分别按
+**框 IoU（Box）** 与 **掩码 IoU（Mask）** 评估，与官方发布的 Box/Mask 双表一致。
+
+```
+      Box metrics
+      Class           Images Instances         P         R     mAP50  mAP50-95    AR@100
+      all               5000     36781    ...
+      Mask metrics
+      all               5000     36781    ...
+      Size buckets (Box)  ... / (Mask) ...
+      Thresholds (Box)    ... / (Mask) ...
+```
+
+- 掩码由 `utils/postprocess.process_mask` 解码到**原图分辨率**（与 GT 掩码同尺度），评估器现编码
+  RLE 喂给 pycocotools（`iou_type="segm"`）；
+- `runs/val/valN/results.json` 写 Mask 组（含 `segmentation` RLE 字符串），可直接当 COCO 结果提交；
+- 掩码解码与官方 val 管线**逐像素一致**（`tests/test_seg_inference.py` 对拍）；
+- 开销：conf 0.001 下每图最多 300 检出，掩码解码 + RLE 编码实测 ~0.1s/图（比检测后处理重），
+  全量 val 因此比检测慢一档。
+
+**验收（官方 yolo26n-seg @640，COCO val2017 全量，本管线 pycocotools 口径）**：
+
+| 口径 | mAP@50 | mAP@[.5:.95] |
+|---|---|---|
+| Box | 0.5548 | 0.3967 |
+| Mask | 0.5276 | 0.3367 |
+
+官方训练期 validator 记录为 box 0.3975 / mask 0.3386——两者差 ~0.002，属指标实现噪声
+（同检测侧的 40.1 vs 40.27）。全量耗时 15.1 min（181.6 ms/图：推理 12.9 + 后处理 111.1，GPU）。
+
+## 6. 参考基准（COCO val2017，本管线）
 
 | 权重 | 输入 | E2E | NMS |
 |---|---|---|---|
@@ -74,10 +107,12 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 （mAP@[.5:.95] / mAP@50。历史与实验细节见 `yolo26-runs.md` / `flash-yolo-spec.md` /
 `yolov3-tiny-runs.md`。）
 
-## 6. 坑
+## 7. 坑
 
 - **`--limit` 必须同时限制 GT**：评估器已按 `params.imgIds` 对齐子集；自己改指标代码时注意，
   否则未预测的图会把 mAP 稀释。
 - **空结果**：`loadRes([])` 会 IndexError——评估器对空结果短路返回全 0，属预期行为。
 - **crowd**：COCO 侧保留（官方口径）；YOLO 侧无 crowd，两者 val 数字差异只来自这一项。
+- **segm 缺掩码直接报错**：`iou_type="segm"` 的评估器收到无 `masks` 的 Detections 会抛
+  ValueError——不静默退化成框评估（否则会得到一份"看着像 mask mAP"的框数字）。
 - pt 的 `--imgsz` 覆盖 metadata 时会**重新 letterbox**；onnx/trt 输入尺寸由导出图决定。

@@ -12,16 +12,33 @@
     P / R —— pycocotools 不直接给 P/R，这里取 **101 点召回网格上 F1 最大点**（= ultralytics
     "best-F1 置信度处取 P/R" 的插值近似，与训练侧 FastMetrics 同口径），"all" 行 = 各类均值
     per_class —— [(类别名, 图片数, 实例数, P, R, AP50, AP@[.5:.95], AR@100), ...]
+
+iou_type（任务轴）："bbox" 只比框；"segm" 用掩码 IoU（结果需带 RLE segmentation，由
+Detections.masks 现编码）。同一份结果里 bbox 与 segmentation 并存，故分割评估只需构造两个
+评估器（bbox + segm），指标口径与官方发布的 Box/Mask 双表一致。
 """
 
 import numpy as np
+from pycocotools import mask as mask_utils
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
-__all__ = ["CocoEvaluator"]
+__all__ = ["CocoEvaluator", "encode_mask_rle"]
 
 # COCOeval 数组索引：area 'all' = 0；maxDets=100 = 2（params.maxDets=[1,10,100]）
 _AREA_ALL, _MAXDET_100 = 0, 2
+
+def encode_mask_rle(mask):
+    """二值掩码 -> pycocotools RLE（COCO 结果格式的 "segmentation" 字段）
+
+    掩码须为原图分辨率（与 GT 掩码同尺度）；pycocotools.mask.encode 要求 Fortran 序 uint8。
+    返回 {"size": [h, w], "counts": str}——counts 是官方压缩 RLE（bytes -> ASCII 字符串，
+    loadRes 两种都收，字符串便于直接写 results.json）。
+    """
+    rle = mask_utils.encode(np.asfortranarray(mask.astype(np.uint8)))
+    rle["counts"] = rle["counts"].decode("ascii")
+    return rle
+
 
 _EMPTY_METRICS = {
     "mAP@[.5:.95]": 0.0,
@@ -77,9 +94,13 @@ class CocoEvaluator:
             callable 形态供 YOLO 数据集使用：归一化标签的像素化要等图尺寸，尺寸在评估循环里才拿到，
             因此 GT dict 只能在 compute()（循环结束后）现搭
         nc: 类别数；callable 形态必填（dict 形态的 category_id 即 0..nc-1，建恒等映射）
+        iou_type: "bbox"（框 IoU）| "segm"（掩码 IoU；update 需要 Detections.masks）
     """
 
-    def __init__(self, gt=None, nc=None):
+    def __init__(self, gt=None, nc=None, iou_type="bbox"):
+        if iou_type not in ("bbox", "segm"):
+            raise ValueError(f"iou_type must be 'bbox' or 'segm', got {iou_type!r}")
+        self.iou_type = iou_type
         self._gt_lazy = None
         if callable(gt):
             if nc is None:
@@ -100,17 +121,25 @@ class CocoEvaluator:
         return self.coco_gt
 
     def update(self, image_id, detections):
-        """累积一张图的结果（COCO 结果格式：xywh + category_id + score）"""
-        for box, score, cls_idx in zip(detections.boxes, detections.scores, detections.class_ids):
+        """累积一张图的结果（COCO 结果格式：xywh + category_id + score [+ segmentation RLE]）
+
+        segm 口径下每条结果附 RLE（掩码现编码；Detections.masks 是原图分辨率，与 GT 同尺度）。
+        bbox 字段始终写——同一份结果可同时喂给 bbox 与 segm 两个评估器。
+        """
+        masks = getattr(detections, "masks", None)
+        if self.iou_type == "segm" and masks is None:
+            raise ValueError("segm evaluation requires Detections.masks (engine returned none)")
+        for i, (box, score, cls_idx) in enumerate(zip(detections.boxes, detections.scores, detections.class_ids)):
             x1, y1, x2, y2 = box
-            self.results.append(
-                {
-                    "image_id": int(image_id),
-                    "category_id": self.idx_to_cat_id[int(cls_idx)],
-                    "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
-                    "score": float(score),
-                }
-            )
+            res = {
+                "image_id": int(image_id),
+                "category_id": self.idx_to_cat_id[int(cls_idx)],
+                "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
+                "score": float(score),
+            }
+            if self.iou_type == "segm":  # 只有 segm 评估器才付出 RLE 编码开销
+                res["segmentation"] = encode_mask_rle(masks[i])
+            self.results.append(res)
 
     def compute(self):
         """返回 COCO 指标 dict（无匹配时 -1 归一化为 0；完全无预测时 pycocotools 会崩溃，直接返回 0）"""
@@ -118,7 +147,7 @@ class CocoEvaluator:
             return dict(_EMPTY_METRICS)
         coco_gt = self._materialize()
         coco_dt = coco_gt.loadRes(self.results)
-        coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
+        coco_eval = COCOeval(coco_gt, coco_dt, self.iou_type)
         # 评估范围 = 有预测的图片集合（否则 --limit 子集评估会被全量 GT 稀释）
         coco_eval.params.imgIds = sorted({r["image_id"] for r in self.results})
         coco_eval.evaluate()

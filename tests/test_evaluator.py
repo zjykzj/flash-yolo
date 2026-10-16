@@ -89,3 +89,84 @@ def test_wrong_class(tmp_path):
     )
     m = ev.compute()
     assert m["mAP@[.5:.95]"] == 0.0
+
+
+# ---- 分割（segm）口径 ----
+
+
+def _seg_ann_file(tmp_path, h=64, w=64):
+    """单图单类 GT，标注带 RLE segmentation"""
+    from eval.coco_evaluator import encode_mask_rle
+
+    mask = np.zeros((h, w), np.uint8)
+    mask[10:30, 12:40] = 1
+    rle = encode_mask_rle(mask)
+    ann = {
+        "images": [{"id": 1, "width": w, "height": h, "file_name": "x.jpg"}],
+        "annotations": [{"id": 1, "image_id": 1, "category_id": 0, "iscrowd": 0,
+                         "bbox": [12, 10, 28, 20], "area": float(mask.sum()), "segmentation": rle}],
+        "categories": [{"id": 0, "name": "c0"}],
+    }
+    path = tmp_path / "instances_test.json"
+    path.write_text(json.dumps(ann))
+    return str(path), mask
+
+
+def test_segm_perfect_match(tmp_path):
+    """掩码与 GT 完全一致 -> mask mAP = 1.0（框 mAP 同时成立）"""
+    gt, mask = _seg_ann_file(tmp_path)
+    dets = Detections(boxes=np.array([[12, 10, 40, 30]], np.float32), scores=np.array([0.9], np.float32),
+                      class_ids=np.array([0]), masks=mask[None])
+    ev = CocoEvaluator(gt, nc=1, iou_type="segm")
+    ev.update(1, dets)
+    m = ev.compute()
+    assert m["images"] == 1
+    assert m["mAP@[.5:.95]"] == 1.0 and m["mAP@50"] == 1.0
+    # 框与掩码打架时（框对、掩码空）mask mAP 必须掉下来
+    empty = Detections(boxes=dets.boxes, scores=dets.scores, class_ids=dets.class_ids,
+                       masks=np.zeros_like(dets.masks))
+    ev2 = CocoEvaluator(gt, nc=1, iou_type="segm")
+    ev2.update(1, empty)
+    assert ev2.compute()["mAP@[.5:.95]"] == 0.0
+
+
+def test_segm_requires_masks(tmp_path):
+    """segm 口径下缺 masks 必须报错（不静默退化成框评估）"""
+    gt, _ = _seg_ann_file(tmp_path)
+    dets = Detections(boxes=np.array([[12, 10, 40, 30]], np.float32), scores=np.array([0.9], np.float32),
+                      class_ids=np.array([0]))
+    ev = CocoEvaluator(gt, nc=1, iou_type="segm")
+    try:
+        ev.update(1, dets)
+    except ValueError as e:
+        assert "masks" in str(e)
+    else:
+        raise AssertionError("segm evaluation must reject detections without masks")
+
+
+def test_bbox_evaluator_ignores_masks(tmp_path):
+    """bbox 口径不受 masks 影响（同一份 dets 可同时喂两个评估器）"""
+    gt, mask = _seg_ann_file(tmp_path)
+    dets = Detections(boxes=np.array([[12, 10, 40, 30]], np.float32), scores=np.array([0.9], np.float32),
+                      class_ids=np.array([0]), masks=mask[None])
+    m = CocoEvaluator(gt, nc=1, iou_type="bbox")
+    m.update(1, dets)
+    assert m.compute()["mAP@[.5:.95]"] == 1.0
+
+
+def test_encode_mask_rle_roundtrip():
+    """RLE 编码 -> pycocotools 解码 == 原掩码（含全零 / 全一 / 花式形状）"""
+    from pycocotools import mask as M
+
+    from eval.coco_evaluator import encode_mask_rle
+
+    rng = np.random.default_rng(0)
+    for mask in (np.zeros((7, 5), np.uint8),
+                 np.ones((4, 6), np.uint8),
+                 (rng.random((23, 31)) > 0.5).astype(np.uint8),
+                 np.eye(16, dtype=np.uint8)):
+        rle = encode_mask_rle(mask)
+        assert isinstance(rle["counts"], str)  # results.json 要能直接序列化
+        assert np.array_equal(M.decode(rle), mask)
+        # 与官方编码器逐位一致（同一掩码同一 counts 字符串）
+        assert rle["counts"] == M.encode(np.asfortranarray(mask))["counts"].decode("ascii")
