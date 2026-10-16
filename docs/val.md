@@ -82,8 +82,9 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
   RLE 喂给 pycocotools（`iou_type="segm"`）；
 - `runs/val/valN/results.json` 写 Mask 组（含 `segmentation` RLE 字符串），可直接当 COCO 结果提交；
 - 掩码解码与官方 val 管线**逐像素一致**（`tests/test_seg_inference.py` 对拍）；
-- 开销：conf 0.001 下每图最多 300 检出，掩码解码 + RLE 编码实测 ~0.1s/图（比检测后处理重），
-  全量 val 因此比检测慢一档。
+- 开销：conf 0.001 下每图最多 300 检出，掩码解码是此后处理的大头——`process_mask` 按 8 张
+  一批做（`_MASK_CHUNK`），让中间张量落进缓存：实测 p50 128ms -> 59ms/图，逐位不变。
+  RLE 编码交给 pycocotools 的 C 实现（自写向量化版反而慢，见下）。
 
 **验收（官方 yolo26n-seg @640，COCO val2017 全量，本管线 pycocotools 口径）**：
 
@@ -93,7 +94,13 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 | Mask | 0.5276 | 0.3367 |
 
 官方训练期 validator 记录为 box 0.3975 / mask 0.3386——两者差 ~0.002，属指标实现噪声
-（同检测侧的 40.1 vs 40.27）。全量耗时 15.1 min（181.6 ms/图：推理 12.9 + 后处理 111.1，GPU）。
+（同检测侧的 40.1 vs 40.27）。全量耗时 15.1 min（181.6 ms/图：推理 12.9 + 后处理 111.1，GPU；
+后处理分批后见上）。
+
+**RLE 编码为什么不用自研向量化版**：实测 pycocotools 逐张 C 编码 33ms（300 掩码），而
+numpy 整批向量化（trans + nonzero + lexsort）反而 85ms——列主序展平与变化点扫描都是一次
+全像素遍历，numpy 的多次大临时量抵消了向量化收益；逐张 numpy 提取也要 20ms 且仍要接
+varint 编码。**瓶颈在掩码解码，不在编码**，故保留 pycocotools。
 
 ## 6. 参考基准（COCO val2017，本管线）
 
