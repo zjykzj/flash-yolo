@@ -67,8 +67,8 @@ def _make_mini_coco(tmp_path, n_img=32, size=320, seg=False):
     return desc
 
 
-def _make_mini_yolo(tmp_path, n_img=32, size=320):
-    """同一批图的 YOLO 版（labels 归一化 cxcywh）+ 描述符"""
+def _make_mini_yolo(tmp_path, n_img=32, size=320, seg=False):
+    """同一批图的 YOLO 版（seg=False: 归一化 cxcywh；True: 归一化矩形多边形）+ 描述符"""
     root = tmp_path / "yolo"
     for split in ("train", "val"):
         (root / "images" / split).mkdir(parents=True)
@@ -77,8 +77,12 @@ def _make_mini_yolo(tmp_path, n_img=32, size=320):
             cv2.imwrite(str(root / "images" / split / f"{i:04d}.jpg"), _draw(size))
             lines = []
             for x1, y1, x2, y2, cls in _scaled_boxes(size):
-                lines.append(f"{cls} {(x1 + x2) / 2 / size:.6f} {(y1 + y2) / 2 / size:.6f} "
-                             f"{(x2 - x1) / size:.6f} {(y2 - y1) / size:.6f}")
+                if seg:
+                    pts = (x1, y1, x2, y1, x2, y2, x1, y2)
+                    lines.append(f"{cls} " + " ".join(f"{v / size:.6f}" for v in pts))
+                else:
+                    lines.append(f"{cls} {(x1 + x2) / 2 / size:.6f} {(y1 + y2) / 2 / size:.6f} "
+                                 f"{(x2 - x1) / size:.6f} {(y2 - y1) / size:.6f}")
             (root / "labels" / split / f"{i:04d}.txt").write_text("\n".join(lines) + "\n")
     desc = tmp_path / "yolo.yaml"
     desc.write_text(f"format: yolo\npath: {root}\nnames: [cls0, cls1]\n"
@@ -201,6 +205,35 @@ def test_train_smoke_seg(tmp_path):
     model = build_model("yolo26-seg", "n", 320, nc=2)
     load_weights(model, run_dir / "weights" / "best.safetensors", strict=True)
     print(f"  [seg] 冒烟通过: seg {seg[0]:.3f} -> {seg[-1]:.3f} · val_seg {val_seg[0]:.3f} -> {val_seg[-1]:.3f}")
+
+
+def test_train_smoke_seg_yolo(tmp_path):
+    """YOLO-seg txt：多边形行 -> 图像/掩码加载、分割损失、Box+Mask 验证、产物全链路"""
+    data = _make_mini_yolo(tmp_path, seg=True)
+    cfg = TrainConfig(
+        data=str(data), model="yolo26-seg", epochs=2, batch=4, nbs=4, imgsz=320, workers=0,
+        val_epochs=1, val_limit=8, limit=0, amp=False, mask_ratio=4, overlap_mask=True,
+        mosaic=0.5, mixup=0.0, copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0,
+    )
+    torch.manual_seed(0)
+    run_dir = tmp_path / "run-seg-yolo"
+    trainer = Trainer(cfg, device="cpu", run_dir=run_dir)
+    trainer.train()
+
+    rows = list(csv_reader(run_dir / "results.csv"))
+    assert len(rows) >= 2, f"results.csv 行数不足: {len(rows)}"
+    assert "seg" in rows[0] and "val_seg" in rows[0], list(rows[0])
+    assert trainer.dataset.n_seg_fallback == 0, trainer.dataset.n_seg_fallback
+    seg = [float(r["seg"]) for r in rows]
+    val_seg = [float(r["val_seg"]) for r in rows]
+    assert all(np.isfinite(v) and v >= 0 for v in seg + val_seg), f"seg 损失异常: {seg} {val_seg}"
+    from model.build import build_model
+    from model.weights import load_meta, load_weights
+    wm = load_meta(run_dir / "weights" / "best.safetensors")
+    assert wm["arch"] == "yolo26-seg" and wm["nc"] == 2 and wm["imgsz"] == 320, wm
+    model = build_model("yolo26-seg", "n", 320, nc=2)
+    load_weights(model, run_dir / "weights" / "best.safetensors", strict=True)
+    print(f"  [seg-yolo] 冒烟通过: seg {seg[0]:.3f} -> {seg[-1]:.3f} · val_seg {val_seg[0]:.3f} -> {val_seg[-1]:.3f}")
 
 
 def test_train_smoke_seg_workers_multiscale(tmp_path):

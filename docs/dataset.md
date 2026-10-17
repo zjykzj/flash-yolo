@@ -52,7 +52,7 @@ val:   {images: images/val}
   （train 侧返回空白画布 + 空标签，val 侧保留 GT 记漏检）。
 - **实例分割训练**（`--model yolo26-seg`）额外读取 `segmentation`：多边形列表会合并多段并
   在增强后栅格化为 GT 掩码；RLE dict / 缺失 / 非法 segmentation 退回 bbox 矩形（计数并告警），
-  全部退回时直接报错。框由多边形包围盒导出（官方口径）。分割训练首版**只支持 COCO json**。
+  全部退回时直接报错。框由多边形包围盒导出（官方口径）。YOLO-seg txt 同样支持（见 §4）。
 
 ## 4. YOLO txt 格式
 
@@ -64,8 +64,13 @@ val:   {images: images/val}
 - 像素 GT 依赖图尺寸：`load_image(idx)` 记录 (h,w) 之后 `targets()` / `gt_dict()` 才可用
   （评估循环天然满足该顺序；自己写脚本时先取 GT 会得到明确报错提示）。
 - 无 crowd 概念（转换即丢弃）。
-- **不支持分割标签**：一行超过 5 个值会报错 `segmentation masks are not supported`；
-  分割训练请使用 COCO json 描述符。
+- **分割标签**（`--model yolo26-seg`）：
+  - 多边形行 `cls x1 y1 x2 y2 ...`（归一化，>=3 点）；框由多边形外接框导出；
+  - 5 列 bbox 行按矩形回退（混合标注允许，计入 `n_seg_fallback` 并在扫描行显示）；
+  - 检测解析器遇到 >5 列会报错 `polygon labels require a segmentation dataset/model`；
+  - COCO json 转 YOLO-seg：`python scripts/convert_coco_seg.py --src <json> --dst <labels-dir>`
+    （按官方 `merge_multi_segment` 口径合并多段；dataflow-cv 的 `coco2yolo` CLI 目前优先写
+    bbox，不生成多边形行）。
 
 **两种格式的 val 口径差只有 crowd 一项**，实测（coco-tiny 全量）：mAP@[.5:.95] 0.4080（coco）
 vs 0.4024（yolo）；训练侧统计逐项相等（crowd 训练侧双方都剔）。另注意 `--limit N` 的取样集
@@ -80,7 +85,8 @@ vs 0.4024（yolo）；训练侧统计逐项相等（crowd 训练侧双方都剔�
 4. 锚点（仅含 `anchors` 段的模型）：先跑 `python scripts/compute_anchors.py --data <desc>`
    看 verdict（见 `yolov3-tiny-spec.md`）——COCO 形状以外的新数据分布才需要重聚类。
 5. 分割：COCO json 的每个实例需要 `segmentation` 多边形（RLE 会退回 bbox 矩形并在扫描行
-   计数）；`mask_ratio` 必须整除 `imgsz`（默认 4；640 -> 160 与 Proto26 同网格）。
+   计数）；YOLO 侧用多边形行或 bbox 回退行；`mask_ratio` 必须整除 `imgsz`
+   （默认 4；640 -> 160 与 Proto26 同网格）。
 
 ## 6. 小数据集循环（分钟级迭代）
 
@@ -88,8 +94,10 @@ vs 0.4024（yolo）；训练侧统计逐项相等（crowd 训练侧双方都剔�
 # ① 从现有 COCO 抽子集（种子抽样 + 硬链接；同时写 coco/yolo 描述符并拷进 local/）
 python scripts/make_coco_subset.py --src /path/to/coco --dst /path/to/coco-tiny \
     --n-train 2000 --n-val 1000 --seed 0 --link-images --emit-descriptors
-# ② YOLO 格式转换（dataflow-cv；只写 labels/ 与 classes.txt，images/ 用符号链接接上）
+# ② YOLO 检测格式转换（dataflow-cv；只写 labels/ 与 classes.txt，images/ 用符号链接接上）
 dataflow-cv convert coco2yolo <json> <out-yolo>
+# ②b YOLO 分割格式转换（本仓库脚本；多边形按官方 merge 口径，bbox-only 标注写 5 列回退）
+python scripts/convert_coco_seg.py --src <json> --dst <out-yolo>/labels
 # ③ 之后 --data coco-tiny / coco-tiny-yolo 直接可用（名字寻址到 local/）
 python scripts/train.py --data coco-tiny --epochs 5 --batch 16 --workers 8
 ```

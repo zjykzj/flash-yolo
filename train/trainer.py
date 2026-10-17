@@ -226,7 +226,7 @@ class Trainer:
     def _validate(self):
         ema_model = self.ema.eval_model()
         if self.val_dataset is None:
-            self.val_dataset = build_eval_dataset(self.spec, "val")
+            self.val_dataset = build_eval_dataset(self.spec, "val", task=self.task)
         # loss_fn 同传：val 损失与训练损失同实现（复用同一次 backbone/neck 前向）
         return validate(ema_model, self.val_dataset, self.device, limit=self.cfg.val_limit,
                         loss_fn=self.loss_fn, imgsz=self.cfg.imgsz, task=self.task,
@@ -335,7 +335,7 @@ class Trainer:
                                            limit=self.cfg.limit, progress=True, task=self.task)
         self._log_split("train", self.dataset)
         if self.val_enabled:
-            self.val_dataset = build_eval_dataset(self.spec, "val", progress=True)
+            self.val_dataset = build_eval_dataset(self.spec, "val", progress=True, task=self.task)
             self._log_split("val", self.val_dataset,
                             extra=f" · limit {self.cfg.val_limit}" if self.cfg.val_limit else "")
         else:
@@ -397,7 +397,7 @@ class Trainer:
                     f"hsv h/s/v {self.cfg.hsv_h}/{self.cfg.hsv_s}/{self.cfg.hsv_v} · bgr {self.cfg.bgr}")
         if self.task == "segment":
             logger.info(f"seg: mask_ratio {self.cfg.mask_ratio} · overlap_mask {self.cfg.overlap_mask} · "
-                        f"COCO polygon annotations only (YOLO-seg rejected)")
+                        f"COCO polygons / YOLO-seg txt (bbox rows fall back to rectangles)")
         if self.task == "segment" and self.cfg.copy_paste > 0 and self.cfg.copy_paste_mode != "flip":
             logger.info("      copy_paste ignored: segmentation requires copy_paste_mode=flip")
         elif self.task != "segment" and self.cfg.copy_paste > 0 and self.cfg.copy_paste_mode != "box":

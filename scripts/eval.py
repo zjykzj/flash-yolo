@@ -107,9 +107,6 @@ def main():
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
     if arch not in YOLO26_FAMILY and args.nms:
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
-    if arch_task(arch) == "segment" and spec.format != "coco":
-        parser.error("segmentation evaluation requires a COCO json descriptor (format: coco); "
-                     "YOLO txt has no GT masks")
 
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 构建后以 engine.imgsz 为准，onnx 取图内 shape）
     imgsz = resolve_imgsz(args.weights, args.imgsz)
@@ -143,7 +140,7 @@ def main():
     # ③ 数据集：扫描行与训练日志同语法（静态提示 + 进度条 + `└` 汇总）
     # 注意不包 redirect_prints：提示行是裸 print、进度条写的是构造时捕获的 sys.stdout，
     # 包进去会一起被抓成 DEBUG 日志（INFO 级别下凭空消失）
-    dataset = build_eval_dataset(spec, args.split, progress=True)
+    dataset = build_eval_dataset(spec, args.split, progress=True, task=arch_task(arch))
     logger.info(scan_summary(dataset))
     # 进度条只走控制台（UI 元素不进 logger），文件日志里另落一行同等信息
     log_file_only(f"{args.split}: {len(dataset)} images · {dataset.n_backgrounds} backgrounds · "

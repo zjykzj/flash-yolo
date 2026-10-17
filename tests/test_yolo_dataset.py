@@ -55,8 +55,8 @@ def test_label_parse_and_pixel_roundtrip(tmp_path):
 
 def test_parse_label_file_errors(tmp_path):
     p = tmp_path / "bad.txt"
-    p.write_text("0 0.5 0.5 0.25 0.25 0.1\n")  # 6 段 = 分割
-    with pytest.raises(ValueError, match="segmentation masks are not supported"):
+    p.write_text("0 0.5 0.5 0.25 0.25 0.1\n")  # 6 列 = 预测格式/分割，检测解析器拒绝
+    with pytest.raises(ValueError, match="polygon labels require a segmentation dataset/model"):
         parse_label_file(p, nc=2)
     p.write_text("2 0.5 0.5 0.25 0.25\n")  # cls 越界（nc=2）
     with pytest.raises(ValueError, match="out of range"):

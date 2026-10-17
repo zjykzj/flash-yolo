@@ -90,7 +90,7 @@ python scripts/train.py --data coco --model yolo26-seg --name seg-coco --batch 6
 python scripts/train.py --data coco --recipe yolo26-seg-coco-ft --weights <objv1-seg.safetensors>
 ```
 
-Segmentation training requires COCO json polygon annotations; the resulting checkpoint then
+Segmentation training accepts COCO json polygons or YOLO-seg txt; the resulting checkpoint then
 evaluates with Box + Mask tables, exports a two-output ONNX/TensorRT graph, and infers masks
 through the same three engines. Details: [docs/train.md](docs/train.md).
 

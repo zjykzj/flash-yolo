@@ -224,12 +224,19 @@ def test_copy_paste_seg_flip():
     assert l0.shape == (1, 5) and len(s0) == 1
 
 
-def test_seg_training_rejects_yolo_format(tmp_path):
+def test_seg_training_accepts_yolo_bbox_fallback(tmp_path):
+    """YOLO 5 列 bbox 行在分割训练下按矩形回退（不再拒绝整个格式）"""
     root = tmp_path / "yolo"
     (root / "images" / "train").mkdir(parents=True)
     (root / "labels" / "train").mkdir(parents=True)
+    cv2.imwrite(str(root / "images" / "train" / "0001.jpg"), np.full((SIZE, SIZE, 3), 200, np.uint8))
+    (root / "labels" / "train" / "0001.txt").write_text("0 0.5 0.5 0.5 0.5\n")
     desc = tmp_path / "yolo.yaml"
     desc.write_text(f"format: yolo\npath: {root}\nnames: [a]\n"
                     "train: {images: images/train}\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="YOLO txt segmentation labels are not supported"):
-        build_train_dataset(TrainConfig(imgsz=SIZE), load_dataset(desc), "train", task="segment")
+    ds = build_train_dataset(TrainConfig(imgsz=SIZE), load_dataset(desc), "train",
+                             augment=False, task="segment")
+    assert ds.use_segments and ds.n_seg_fallback == 1
+    _, lbs, segs = ds.load_image(0)
+    assert lbs.shape == (1, 5) and np.allclose(lbs[0, 1:], [16, 16, 48, 48])
+    assert segs[0].shape == (4, 2)

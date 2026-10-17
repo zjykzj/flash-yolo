@@ -108,9 +108,6 @@ def main():
         parser.error(str(e))
     apply_cli(cfg, args)
     if arch_task(cfg.model) == "segment":
-        if spec.format != "coco":
-            parser.error("segmentation training requires a COCO json descriptor (format: coco); "
-                         "YOLO txt segmentation labels are not supported")
         if cfg.mask_ratio < 1 or cfg.imgsz % cfg.mask_ratio:
             parser.error(f"--mask-ratio must be >=1 and divide --imgsz (got {cfg.mask_ratio} / {cfg.imgsz})")
     if cfg.cfg_path and not Path(cfg.cfg_path).is_file():

@@ -20,7 +20,7 @@ python scripts/train.py --data coco --model yolov3-tiny --name v3 --imgsz 416
 # 算子替换版（LeakyReLU→SiLU；键集/参数量/GFLOPs 与原版一致）
 python scripts/train.py --data coco --model yolov3-tiny-silu --name v3s --imgsz 416
 
-# 实例分割（仅 COCO json 多边形标注；YOLO txt 分割格式未支持）
+# 实例分割（COCO json 多边形或 YOLO-seg txt 多边形；bbox 行按矩形回退）
 python scripts/train.py --data coco --model yolo26-seg --name seg --mask-ratio 4
 ```
 
@@ -32,7 +32,7 @@ python scripts/train.py --data coco --model yolo26-seg --name seg --mask-ratio 4
 |---|---|---|---|
 | *（不传）* | 从零 / 自有数据微调 | — | 100 |
 | `yolo26-coco-ft` | 官方 COCO 阶段（微调） | **需 O365 预训练权重初始化** | 245/70/80/60/40 |
-| `yolo26-seg-coco-ft` | 官方 seg COCO 阶段（微调） | 需 `yolo26*-objv1-seg`（365 类）初始化 + COCO json 分割描述符；n/s/m/l/x 全部按官方 seg ckpt 的 `train_args` 核对 | 245/50/80/60/40 |
+| `yolo26-seg-coco-ft` | 官方 seg COCO 阶段（微调） | 需 `yolo26*-objv1-seg`（365 类）初始化 + COCO json / YOLO-seg 描述符；n/s/m/l/x 全部按官方 seg ckpt 的 `train_args` 核对 | 245/50/80/60/40 |
 | `yolo26-o365-pt` | 官方 Objects365 预训练 | 需 Objects365 数据集（未在本仓库验证） | 150 |
 
 > `yolo26-seg-coco-ft` 的数值取自五个官方 seg ckpt 的 `train_args`：m/l/x 与官方检测表一致；
@@ -184,8 +184,10 @@ python scripts/bench_io.py --data coco --loader-only
    yolo26-seg 为 `box/seg/cls/l1/o2m/o2o/sem`，yolov3-tiny 为 `box/obj/cls`。
 6. 换输入尺寸（非 640）**从零训练**时，模型先验偏置按训练 imgsz 计算（`bias_init(imgsz)`）；
    有锚模型（v3）则要先用 `compute_anchors.py` 重聚类（锚点不随 imgsz 缩放）。
-7. **分割训练只接受 COCO json 多边形**：YOLO txt 分割标签直接报错；RLE/缺失 segmentation
-   退回 bbox 矩形并计入 `seg fallback`，全量 fallback 会报错（多半是描述符/标注选错）。
+7. **分割训练接受 COCO json 与 YOLO-seg txt**：COCO 的 RLE/缺失 segmentation、YOLO 的
+   5 列 bbox 行都退回矩形并计入 `seg fallback`；COCO 全量 fallback 会报错（多半是描述符/
+   标注选错）。YOLO 多边形行由 `cls x1 y1 x2 y2 ...` 解析，框取多边形外接框；
+   COCO→YOLO-seg 用 `scripts/convert_coco_seg.py`（官方 merge 口径）。
    训练中 Mask 指标在 `imgsz/mask_ratio` 网格上做快速近似，**正式数字仍以 `scripts/eval.py`
    的 pycocotools 结果为准**。分割 CopyPaste 已实现官方 **flip** 模式（`copy_paste_mode: flip`），
    官方 seg 的 semseg 辅助损失（BCE-Dice）也已参与训练；复现官方 seg 配方用

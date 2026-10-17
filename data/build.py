@@ -38,13 +38,10 @@ def build_train_dataset(cfg, spec, role="train", augment=True, limit=0, progress
                         task="detect"):
     """训练集（按 spec.format 分派）；cfg 供增强/尺寸使用（duck-typing）
 
-    task="segment" 仅支持 COCO json（多边形 GT）；YOLO txt 分割格式未实现，直接报错。
+    task="segment"：COCO json（多边形/RLE 回退）与 YOLO txt（多边形行，bbox 行矩形回退）
+    都支持；两种格式最终都走同一条 (imgs, targets, masks) 训练契约。
     """
     _check_paths(spec, role)
-    if task == "segment" and spec.format != "coco":
-        raise ValueError(
-            f"segmentation training requires a COCO json descriptor (format: coco), got format "
-            f"{spec.format!r} for {spec.name!r} — YOLO txt segmentation labels are not supported")
     r = spec.role(role)
     if spec.format == "coco":
         ds = CocoTrainDataset(cfg, r.ann, r.images, label=role, augment=augment, limit=limit,
@@ -53,11 +50,15 @@ def build_train_dataset(cfg, spec, role="train", augment=True, limit=0, progress
         _check_names(spec, ds)
         return ds
     return YoloTrainDataset(cfg, r.images, r.labels, spec.names, label=role, augment=augment,
-                            limit=limit, progress=progress, progress_file=progress_file)
+                            limit=limit, progress=progress, progress_file=progress_file,
+                            segment=(task == "segment"))
 
 
-def build_eval_dataset(spec, role="val", progress=False, progress_file=None):
-    """评估集（按 spec.format 分派）；--limit 由调用方对评估循环切片（口径与既有 eval 一致）"""
+def build_eval_dataset(spec, role="val", progress=False, progress_file=None, task="detect"):
+    """评估集（按 spec.format 分派）；--limit 由调用方对评估循环切片（口径与既有 eval 一致）
+
+    task="segment" 时 YOLO 侧额外保留多边形（seg_val / gt_dict 的 pycocotools segmentation）。
+    """
     _check_paths(spec, role)
     r = spec.role(role)
     if spec.format == "coco":
@@ -65,4 +66,4 @@ def build_eval_dataset(spec, role="val", progress=False, progress_file=None):
         _check_names(spec, ds)
         return ds
     return YoloDataset(r.images, r.labels, spec.names, label=role, progress=progress,
-                       progress_file=progress_file)
+                       progress_file=progress_file, segment=(task == "segment"))

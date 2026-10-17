@@ -13,7 +13,7 @@ import torch
 from config.train_config import TrainConfig
 from safetensors.torch import load_file
 from train.trainer import Trainer
-from test_train_smoke import _make_mini_coco  # 复用冒烟夹具（同一份迷你 COCO 构造器）
+from test_train_smoke import _make_mini_coco, _make_mini_yolo  # 复用冒烟夹具
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("FLASH_YOLO_REPRO") != "1", reason="FLASH_YOLO_REPRO=1 才执行复现闸门"
@@ -70,6 +70,17 @@ def test_same_seed_bit_identical_seg(tmp_path):
         Trainer(cfg, device="cpu", run_dir=tmp_path / f"seg-{tag}").train()
     _assert_bit_identical(_weights(tmp_path / "seg-a"), _weights(tmp_path / "seg-b"),
                           "同 seed 两跑（seg, 2 epoch）")
+
+
+def test_same_seed_bit_identical_seg_yolo(tmp_path):
+    """YOLO-seg 同 seed 两跑逐位相同（多边形 txt 解析/增强/栅格化进入 RNG 流域）"""
+    data = _make_mini_yolo(tmp_path, n_img=16, seg=True)
+    cfg = _cfg(data, model="yolo26-seg", mask_ratio=4, overlap_mask=True)
+    for tag in ("a", "b"):
+        torch.manual_seed(0)
+        Trainer(cfg, device="cpu", run_dir=tmp_path / f"yseg-{tag}").train()
+    _assert_bit_identical(_weights(tmp_path / "yseg-a"), _weights(tmp_path / "yseg-b"),
+                          "同 seed 两跑（YOLO-seg, 2 epoch）")
 
 
 def test_resume_matches_uninterrupted(tmp_path):
