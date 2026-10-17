@@ -12,7 +12,8 @@ from data.augment import augment, flip_lr, letterbox_train, resize_long_side
 from data.build import build_train_dataset
 from data.coco import CocoDataset, CocoTrainDataset
 from data.loader import collate_fn
-from data.segments import annotation_polygon, merge_polygons, rasterize_segments
+from data.segments import (annotation_polygon, merge_polygons, rasterize_segments,
+                           rasterize_segments_multi)
 from config.datasets import load_dataset
 
 SIZE = 64
@@ -92,6 +93,41 @@ def test_rasterize_overlap_and_nonoverlap():
     assert masks2[0].sum() > masks2[1].sum()
     empty, _ = rasterize_segments([], 64, 64, mask_ratio=4, overlap=True)
     assert empty.shape == (1, 16, 16) and empty.sum() == 0
+
+
+def test_rasterize_multi_matches_single_calls():
+    """多套输出与逐套调用逐像素一致（相同倍率共用 resize，overlap 各自排序）"""
+    segs = [np.array([[4.7, 4.2], [40.3, 4.9], [40.8, 40.1], [4.1, 40.7]], np.float32),
+            np.array([[20.2, 20.7], [30.9, 20.1], [30.3, 30.8], [20.6, 30.2]], np.float32)]
+    ref_overlap = rasterize_segments(segs, 64, 64, mask_ratio=4, overlap=True)
+    ref_plain = rasterize_segments(segs, 64, 64, mask_ratio=4, overlap=False)
+    ref_r2 = rasterize_segments(segs, 64, 64, mask_ratio=2, overlap=False)
+    out = rasterize_segments_multi(segs, 64, 64, [(4, True), (4, False), (2, False)])
+    assert np.array_equal(out[0][0], ref_overlap[0]) and np.array_equal(out[0][1], ref_overlap[1])
+    assert np.array_equal(out[1][0], ref_plain[0]) and out[1][1] is None
+    assert np.array_equal(out[2][0], ref_r2[0]) and out[2][0].shape == (2, 32, 32)
+    # 空实例：各 spec 的空掩码形状/类型与单套调用一致
+    empty = rasterize_segments_multi([], 64, 64, [(4, True), (2, False)])
+    assert np.array_equal(empty[0][0], rasterize_segments([], 64, 64, 4, True)[0])
+    assert np.array_equal(empty[1][0], rasterize_segments([], 64, 64, 2, False)[0])
+
+
+def test_seg_val_multi_matches_two_calls(tmp_path):
+    """验证侧一次解析出 loss/指标两套 GT，与两次 seg_val 的结果逐像素一致"""
+    desc, _ = _make_dataset(tmp_path, [
+        _ann(1, 1, [_rect(20, 20, 36, 36)], bbox=[16, 16, 16, 16]),
+        _ann(2, 2, [_rect(4, 4, 44, 44)], bbox=[4, 4, 40, 40]),
+    ])
+    from data.build import build_eval_dataset
+    ds = build_eval_dataset(load_dataset(desc), "train")
+    ref_loss = ds.seg_val(0, SIZE, 1.0, (0, 0), mask_ratio=2, overlap=True)
+    ref_metric = ds.seg_val(0, SIZE, 1.0, (0, 0), mask_ratio=4, overlap=False)
+    (lb_loss, m_loss), (lb_metric, m_metric) = ds.seg_val_multi(
+        0, SIZE, 1.0, (0, 0), [(2, True), (4, False)])
+    assert np.array_equal(lb_loss, ref_loss[0]) and np.array_equal(m_loss, ref_loss[1])
+    assert np.array_equal(lb_metric, ref_metric[0]) and np.array_equal(m_metric, ref_metric[1])
+    # overlap 索引图按面积降序 -> labels 同步重排（大实例在前；输入顺序是小、大）
+    assert lb_loss[:, 0].tolist() == [1, 0] and m_loss.shape == (1, 32, 32)
 
 
 def test_merge_multi_segment_matches_official():

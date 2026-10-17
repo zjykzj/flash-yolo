@@ -101,10 +101,10 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
         img, ratio, pad = preprocess(image, imgsz)  # letterbox 尺寸 = 训练 imgsz（与损失锚点一致）
         seg_extra = None
         if is_seg:
-            gt_lb_loss, mask_loss = dataset.seg_val(
-                i, imgsz, ratio, pad, mask_ratio=mask_ratio, overlap=overlap_mask)
-            gt_lb_metric, mask_metric = dataset.seg_val(
-                i, imgsz, ratio, pad, mask_ratio=4, overlap=False)
+            # 一次多边形解析 + 一次逐实例 fillPoly：loss 网格与指标网格共用（此前调两次
+            # seg_val，默认 mask_ratio=4 时两次栅格化完全相同）
+            (gt_lb_loss, mask_loss), (gt_lb_metric, mask_metric) = dataset.seg_val_multi(
+                i, imgsz, ratio, pad, [(mask_ratio, overlap_mask), (4, False)])
             seg_extra = (gt_lb_loss, mask_loss, gt_lb_metric, mask_metric)
         pending.append((i, image, img, ratio, pad, seg_extra))
         if len(pending) < batch and i != n - 1:

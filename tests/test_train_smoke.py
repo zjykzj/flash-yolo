@@ -6,6 +6,9 @@
 
 import json
 import os
+import subprocess
+import sys
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -198,6 +201,54 @@ def test_train_smoke_seg(tmp_path):
     model = build_model("yolo26-seg", "n", 320, nc=2)
     load_weights(model, run_dir / "weights" / "best.safetensors", strict=True)
     print(f"  [seg] 冒烟通过: seg {seg[0]:.3f} -> {seg[-1]:.3f} · val_seg {val_seg[0]:.3f} -> {val_seg[-1]:.3f}")
+
+
+def test_train_smoke_seg_workers_multiscale(tmp_path):
+    """seg + workers>0 + multi-scale：worker 传多边形、每 batch 换输入尺寸，掩码网格固定"""
+    data = _make_mini_coco(tmp_path, n_img=16, seg=True)
+    cfg = TrainConfig(
+        data=str(data), model="yolo26-seg", epochs=1, batch=4, nbs=4, imgsz=320, workers=2,
+        val_epochs=1, val_limit=4, limit=0, amp=False, mask_ratio=4, overlap_mask=True,
+        mosaic=0.5, mixup=0.0, copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0,
+        multi_scale=0.25,
+    )
+    torch.manual_seed(0)
+    run_dir = tmp_path / "run-seg-workers"
+    trainer = Trainer(cfg, device="cpu", run_dir=run_dir)
+    trainer.train()
+
+    rows = list(csv_reader(run_dir / "results.csv"))
+    assert len(rows) == 1, f"1 epoch 应只有 1 行: {len(rows)}"
+    seg, val_seg = float(rows[0]["seg"]), float(rows[0]["val_seg"])
+    assert np.isfinite(seg) and seg >= 0 and np.isfinite(val_seg) and val_seg >= 0
+    assert np.isfinite(float(rows[0]["mAP@[.5:.95](M)"]))
+    print(f"  [seg workers=2 + multi-scale] 冒烟通过: seg {seg:.3f} · val_seg {val_seg:.3f}")
+
+
+def test_export_smoke_seg(tmp_path):
+    """训练产物 -> scripts/export.py：metadata 解析 arch/scale/nc/imgsz，双输出 ONNX"""
+    pytest.importorskip("onnx")
+    ort = pytest.importorskip("onnxruntime")
+    data = _make_mini_coco(tmp_path, n_img=8, seg=True)
+    cfg = TrainConfig(
+        data=str(data), model="yolo26-seg", epochs=1, batch=4, nbs=4, imgsz=320, workers=0,
+        val_epochs=0, limit=0, amp=False, mask_ratio=4, overlap_mask=True,
+        mosaic=0.0, mixup=0.0, copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0, aug_samples=0,
+    )
+    torch.manual_seed(0)
+    run_dir = tmp_path / "run-seg-export"
+    Trainer(cfg, device="cpu", run_dir=run_dir).train()
+    weights = run_dir / "weights" / "last.safetensors"
+    out = tmp_path / "seg.onnx"
+    subprocess.run(
+        [sys.executable, "scripts/export.py", "--weights", str(weights), "--out", str(out)],
+        cwd=Path(__file__).resolve().parent.parent, check=True,
+    )
+    sess = ort.InferenceSession(str(out), providers=["CPUExecutionProvider"])
+    shapes = [tuple(o.shape) for o in sess.get_outputs()]
+    # nc=2 / nm=32 / imgsz=320：E2E (1,300,6+32) + proto (1,32,80,80)
+    assert shapes == [(1, 300, 38), (1, 32, 80, 80)], shapes
+    print(f"  [seg export] 冒烟通过: {shapes}")
 
 
 def test_train_multiscale_step_lr_smoke(tmp_path):

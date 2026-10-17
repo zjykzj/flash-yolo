@@ -17,7 +17,8 @@ import numpy as np
 
 from data.loader import SharedCounter, TrainMixin
 from data.scan import ScanResult, ScanStats
-from data.segments import annotation_polygon, polygon_bbox, rasterize_segments, transform_polygons, clip_polygons
+from data.segments import (annotation_polygon, polygon_bbox, rasterize_segments_multi,
+                           transform_polygons, clip_polygons)
 from utils.progress import ProgressBar
 
 __all__ = ["CocoDataset", "CocoTrainDataset", "parse_coco", "scan_split"]
@@ -195,12 +196,11 @@ class CocoDataset:
             out.append(([x, y, x + w, y + h], self.cat_id_to_idx[a["category_id"]]))
         return out
 
-    def seg_val(self, idx, imgsz, ratio, pad, mask_ratio=4, overlap=False, include_crowd=False):
-        """分割训练中验证：GT 多边形 -> letterbox 空间的 (labels (M,5), masks)
+    def _seg_polys(self, idx, imgsz, ratio, pad, include_crowd):
+        """第 idx 张图 -> (labels (M,5), polygons)；框由多边形包围盒导出（与训练侧同口径）
 
-        labels 的框由多边形包围盒导出（与训练侧同口径）；polygon/框均落在 letterbox 画布
-        `imgsz×imgsz`。overlap=True 时按栅格化面积降序重排 labels（与实例索引图一致）。
-        训练中 Mask 指标始终用 overlap=False（保持标签顺序，框与掩码一一对应）。
+        polygon 已变换到 letterbox 画布 `imgsz×imgsz` 并裁剪；退化框（零宽/零高）连同
+        多边形一起丢弃，保证 labels / polygons 行序一一对应。
         """
         info = self.images[idx]
         cls_ids, polys = [], []
@@ -213,9 +213,7 @@ class CocoDataset:
             cls_ids.append(self.cat_id_to_idx[a["category_id"]])
             polys.append(poly)
         if not polys:
-            empty = np.zeros((0, 5), np.float32)
-            masks, _ = rasterize_segments([], imgsz, imgsz, mask_ratio, overlap)
-            return empty, masks
+            return np.zeros((0, 5), np.float32), []
         polys = clip_polygons(transform_polygons(polys, ratio, pad), imgsz, imgsz)
         labels, kept = [], []
         for c, poly in zip(cls_ids, polys):
@@ -224,11 +222,32 @@ class CocoDataset:
                 continue
             labels.append([c, *box])
             kept.append(poly)
-        lbs = np.array(labels, np.float32).reshape(-1, 5)
-        masks, order = rasterize_segments(kept, imgsz, imgsz, mask_ratio, overlap)
-        if order is not None:
-            lbs = lbs[order]
-        return lbs, masks
+        return np.array(labels, np.float32).reshape(-1, 5), kept
+
+    def seg_val(self, idx, imgsz, ratio, pad, mask_ratio=4, overlap=False, include_crowd=False):
+        """分割训练中验证：GT 多边形 -> letterbox 空间的 (labels (M,5), masks)
+
+        labels 的框由多边形包围盒导出（与训练侧同口径）；polygon/框均落在 letterbox 画布
+        `imgsz×imgsz`。overlap=True 时按栅格化面积降序重排 labels（与实例索引图一致）。
+        训练中 Mask 指标始终用 overlap=False（保持标签顺序，框与掩码一一对应）。
+        多项需求用 `seg_val_multi`（多边形只解析/栅格化一次）。
+        """
+        return self.seg_val_multi(idx, imgsz, ratio, pad, [(mask_ratio, overlap)],
+                                  include_crowd=include_crowd)[0]
+
+    def seg_val_multi(self, idx, imgsz, ratio, pad, specs, include_crowd=False):
+        """一次解析/栅格化 -> 多套 (labels, masks)，顺序与 specs 一致
+
+        specs: list[(mask_ratio, overlap)]。训练中验证同时需要 loss 网格
+        （`mask_ratio`/`overlap_mask`）与指标网格（固定 4 / overlap=False），
+        此前调用两次 `seg_val` 会重复逐实例 fillPoly；这里多边形只变换、填充一次。
+        overlap=True 的 spec 按该网格的栅格化面积降序重排 labels。
+        """
+        lbs, polys = self._seg_polys(idx, imgsz, ratio, pad, include_crowd)
+        out = []
+        for masks, order in rasterize_segments_multi(polys, imgsz, imgsz, specs):
+            out.append((lbs[order] if order is not None else lbs, masks))
+        return out
 
 
 class CocoTrainDataset(TrainMixin):

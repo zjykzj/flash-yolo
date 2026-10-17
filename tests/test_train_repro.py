@@ -83,3 +83,17 @@ def test_resume_matches_uninterrupted(tmp_path):
     Trainer(_cfg(data, stop_after=1), device="cpu", run_dir=part).train()  # stop_after 不改调度，可比
     Trainer(_cfg(data), device="cpu", run_dir=part, resume=str(part / "resume.pt")).train()
     _assert_bit_identical(_weights(tmp_path / "run-full"), _weights(part), "一次跑完 vs resume 续训")
+
+
+def test_resume_matches_uninterrupted_seg(tmp_path):
+    """分割续训等价：掩码网格/多边形增强 RNG/优化器状态都随 resume.pt 恢复"""
+    data = _make_mini_coco(tmp_path, n_img=8, seg=True)
+    seg_kw = dict(model="yolo26-seg", mask_ratio=4, overlap_mask=True)
+    torch.manual_seed(0)
+    Trainer(_cfg(data, **seg_kw), device="cpu", run_dir=tmp_path / "seg-full").train()
+
+    torch.manual_seed(0)
+    part = tmp_path / "seg-part"
+    Trainer(_cfg(data, **seg_kw, stop_after=1), device="cpu", run_dir=part).train()
+    Trainer(_cfg(data, **seg_kw), device="cpu", run_dir=part, resume=str(part / "resume.pt")).train()
+    _assert_bit_identical(_weights(tmp_path / "seg-full"), _weights(part), "seg 一次跑完 vs resume 续训")

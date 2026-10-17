@@ -17,7 +17,7 @@ import numpy as np
 
 __all__ = [
     "annotation_polygon", "merge_polygons", "polygon_bbox", "rectangle_from_bbox",
-    "transform_polygons", "clip_polygons", "rasterize_segments",
+    "transform_polygons", "clip_polygons", "rasterize_segments", "rasterize_segments_multi",
 ]
 
 
@@ -133,8 +133,66 @@ def clip_polygons(polygons, w, h):
             for p in polygons]
 
 
+def rasterize_segments_multi(segments, h, w, specs):
+    """多边形 -> 多套 GT 掩码（每个实例只 fillPoly 一次，按倍率共用 resize 结果）
+
+    训练中验证同时需要 loss 网格（`mask_ratio` / `overlap_mask`）与指标网格
+    （固定 `mask_ratio=4` / `overlap=False`）：此前调用两次会重复逐实例 fillPoly。
+    这里按倍率去重后只栅格化一次。
+
+    Args:
+        segments: list[(K,2) float32]，顺序与标签行一致
+        h, w: 当前图像（letterbox 后）高宽
+        specs: list[(mask_ratio, overlap)]；相同 mask_ratio 的输出共用一次 resize
+
+    Returns:
+        list[(masks, order)]，顺序与 specs 一致：
+        overlap=True  -> (1, h/r, w/r) 实例索引图（面积降序，1..M），order 为面积降序原索引；
+        overlap=False -> (M, h/r, w/r) uint8 二值掩码（保持输入顺序），order=None。
+    """
+    for mask_ratio, _ in specs:
+        if mask_ratio < 1 or h % mask_ratio or w % mask_ratio:
+            raise ValueError(f"mask_ratio={mask_ratio} must divide image size {h}x{w}")
+
+    ratios = list(dict.fromkeys(int(r) for r, _ in specs))
+    grids = {r: (h // r, w // r) for r in ratios}
+    per_ratio = {r: [] for r in ratios}  # ratio -> resized masks（输入顺序）
+    for poly in segments:
+        full = np.zeros((h, w), np.uint8)
+        if len(poly) >= 3:
+            # 官方 polygon2mask 直接 np.asarray(..., int32)（截断，不四舍五入）
+            pts = np.asarray(poly, dtype=np.int32).reshape(-1, 1, 2)
+            cv2.fillPoly(full, [pts], 1)
+        for r in ratios:
+            mh, mw = grids[r]
+            per_ratio[r].append(cv2.resize(full, (mw, mh), interpolation=cv2.INTER_LINEAR))
+
+    results = []
+    for mask_ratio, overlap in specs:
+        r = int(mask_ratio)
+        masks = per_ratio[r]
+        mh, mw = grids[r]
+        if not overlap:
+            if not masks:
+                results.append((np.zeros((0, mh, mw), np.uint8), None))
+            else:
+                results.append((np.stack(masks).astype(np.uint8), None))
+            continue
+        dtype = np.uint8 if len(segments) <= 255 else np.int32
+        if not masks:
+            results.append((np.zeros((1, mh, mw), dtype), np.zeros(0, np.int64)))
+            continue
+        areas = np.array([int(m.sum()) for m in masks], np.int64)
+        order = np.argsort(-areas, kind="stable")
+        out = np.zeros((1, mh, mw), dtype=dtype)
+        for rank, idx in enumerate(order):
+            out[0] = np.maximum(out[0], masks[idx].astype(dtype) * (rank + 1))
+        results.append((out, order))
+    return results
+
+
 def rasterize_segments(segments, h, w, mask_ratio=4, overlap=True):
-    """多边形（目标坐标系，h×w）-> GT 掩码
+    """多边形（目标坐标系，h×w）-> 单套 GT 掩码（`rasterize_segments_multi` 的单项包装）
 
     Args:
         segments: list[(K,2) float32]，顺序与标签行一致
@@ -147,32 +205,4 @@ def rasterize_segments(segments, h, w, mask_ratio=4, overlap=True):
         masks, order: overlap 时 order 为面积降序的原索引（标签需按它重排）；
                      非 overlap 时 order=None。
     """
-    if mask_ratio < 1 or h % mask_ratio or w % mask_ratio:
-        raise ValueError(f"mask_ratio={mask_ratio} must divide image size {h}x{w}")
-
-    mh, mw = h // mask_ratio, w // mask_ratio
-    masks = []
-    for poly in segments:
-        full = np.zeros((h, w), np.uint8)
-        if len(poly) >= 3:
-            # 官方 polygon2mask 直接 np.asarray(..., int32)（截断，不四舍五入）
-            pts = np.asarray(poly, dtype=np.int32).reshape(-1, 1, 2)
-            cv2.fillPoly(full, [pts], 1)
-        masks.append(cv2.resize(full, (mw, mh), interpolation=cv2.INTER_LINEAR))
-
-    if not masks:
-        if overlap:
-            dtype = np.uint8 if len(segments) <= 255 else np.int32
-            return np.zeros((1, mh, mw), dtype), np.zeros(0, np.int64)
-        return np.zeros((0, mh, mw), np.uint8), None
-
-    if not overlap:
-        return np.stack(masks).astype(np.uint8), None
-
-    dtype = np.uint8 if len(segments) <= 255 else np.int32
-    areas = np.array([int(m.sum()) for m in masks], np.int64)
-    order = np.argsort(-areas, kind="stable")
-    out = np.zeros((1, mh, mw), dtype=dtype)
-    for rank, idx in enumerate(order):
-        out[0] = np.maximum(out[0], masks[idx].astype(dtype) * (rank + 1))
-    return out, order
+    return rasterize_segments_multi(segments, h, w, [(mask_ratio, overlap)])[0]

@@ -85,6 +85,8 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - **训练中验证**（`train/validator.py` + `FastMetrics`）：同一轮同时算 Box 与 Mask，Mask 在
   `imgsz/mask_ratio` 网格上做快速近似（低分辨率 `process_mask_lowres`，不落盘掩码），best 选取
   用官方 seg fitness = box mAP@[.5:.95] + mask mAP@[.5:.95]；正式数字仍以本节 pycocotools 为准。
+  每张图的 GT 多边形只栅格化一次（`seg_val_multi`，loss 网格与指标网格共用）：默认
+  `mask_ratio=4` 实测 1.79 -> 0.98 ms/图（全量 5000 图 8.9 -> 4.9 s），输出逐像素不变。
   训练列 `sem` 是 semseg 辅助损失（BCE-Dice）；验证模式不返回 semantic，所以 `val_sem` 恒 0
   （官方同口径）；
 - 开销：conf 0.001 下每图最多 300 检出，掩码解码是此后处理的大头——`process_mask` 按 8 张

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **YOLO26-seg**: segmentation is now end to end — official architecture/weights convert bit-for-bit, `train.py --model yolo26-seg` trains from COCO polygons (BCE mask loss, Box+Mask validation, `--mask-ratio`/`--overlap-mask`), and trained checkpoints run through infer, export, and pycocotools eval (official weights: box 39.67 / mask 33.67 mAP50-95).
 - **Official seg training parity**: semseg (BCE-Dice) and flip-mode CopyPaste now train, the mask loss is batched (B=32/640 loss overhead 134 ms → 20 ms), and `yolo26-seg-coco-ft` records `mask_ratio=1` / `overlap_mask` / `copy_paste_mode=flip`.
 - **Faster segmentation post-processing**: `process_mask` decodes masks in batches of 8 instead of one shot, keeping the intermediates in cache — measured p50 128 ms to 59 ms per 300-detection image with byte-identical masks, cutting a full COCO val run from 15.1 to 11.5 minutes.
+- **Single-pass segmentation validation**: the training-time validator now rasterizes each GT polygon once and derives both the loss grid (`mask_ratio`/`overlap_mask`) and the metric grid (`imgsz/4`) from it; on COCO val at 640 the default `mask_ratio=4` path drops from 1.79 to 0.98 ms/image (8.9 s → 4.9 s per 5000-image pass) with byte-identical masks.
 
 ## [0.6.0] - 2026-10-15
 
