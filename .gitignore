@@ -675,3 +675,6 @@ CLAUDE.md
 
 # local dataset descriptors (machine paths; see config/datasets/spec.py)
 config/datasets/local/
+
+# 实验筛选语料不入库（本地档案；受支持架构只放 config/models/ 顶层）
+config/models/screening/

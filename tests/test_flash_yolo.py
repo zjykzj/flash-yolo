@@ -5,7 +5,6 @@
 
 from pathlib import Path
 
-import pytest
 import torch
 
 from model.build import DetectionModel, build_model
@@ -42,11 +41,13 @@ def test_gflops_budget_below_yolo26n():
     assert fl("flash-yolo", None) < fl("yolo26", "n") * 0.8
 
 
-@pytest.mark.parametrize("yaml_name", ["flash-yolo.yaml", "flash-yolo-s1.yaml", "flash-yolo-s2.yaml",
-                                       "flash-yolo-s3.yaml", "flash-yolo-s4.yaml"])
-def test_flash_yolo_variant_yamls_build(yaml_name):
-    """config/models/ 下全部 flash-yolo 结构（现役 + s1-s4 筛选语料）都能组装 + 前向（yaml 回归闸门）"""
-    model = DetectionModel(cfg_path=ROOT / "config" / "models" / yaml_name, scale="flash", imgsz=320)
+def test_flash_yolo_yaml_builds():
+    """现役结构 flash-yolo.yaml 能组装 + 前向（yaml 回归闸门）
+
+    筛选变体（S1/S3/S4）是本地实验档案（config/models/screening/，gitignored），不随仓库分发，
+    也不在测试契约内——S2 即现役 flash-yolo.yaml。
+    """
+    model = DetectionModel(cfg_path=ROOT / "config" / "models" / "flash-yolo.yaml", scale="flash", imgsz=320)
     model.eval()
     with torch.no_grad():
         out = model(torch.zeros(1, 3, 320, 320))

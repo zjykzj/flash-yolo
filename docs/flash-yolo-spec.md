@@ -33,18 +33,17 @@
 | Run | 设计 | GFLOPs | mAP@[.5:.95] | mAP@50 |
 |---|---|---|---|---|
 | S0 | YOLO26n（对照） | 5.48 | 29.22 | 42.45 |
-| S1 | flash-yolo 主设计（六处 PoolConv + 1×1 stem） | 3.79 | 26.25 | 38.92 |
-| **S2** | S1 + DW stem | 3.80 | **26.92** | 39.67 |
+| S1 | 旧主设计：六处 PoolConv，stem 仅 1×1 投影（无 DW 3×3） | 3.79 | 26.25 | 38.92 |
+| **S2** | S1 + DW stem（3×3 depthwise + 1×1；**即现役 `flash-yolo.yaml`**） | 3.80 | **26.92** | 39.67 |
 | S3 | S1 + neck 通道 ×0.75 | 3.09 | 25.00 | 37.66 |
-| S4 | S1 + LiteBlock（neck） | 3.00 | 21.83 | 34.55 |
+| S4 | S1 + neck 的 C3k2 → LiteBlock | 3.00 | 21.83 | 34.55 |
 
 ```bash
-# 筛选 run（每个 ~4 h，单张 RTX 5090）；s1–s4 即 --cfg 语料（flash-yolo.yaml = 定稿 S2）
+# 筛选 run（每个 ~4 h，单张 RTX 5090）。S2 即现役 config/models/flash-yolo.yaml，按模型名直接训练；
+# S0 用 yolo26n 对照。S1/S3/S4 是本地实验档案（不随仓库分发）：按上表差异从 flash-yolo.yaml
+# 派生一份本地 yaml，再用 --cfg <本地路径> 指向即可复跑。
 python scripts/train.py --data coco --model yolo26 --scale n --name fy-s0-yolo26n --batch 32 --workers 8 --imgsz 640 --epochs 20
-python scripts/train.py --data coco --model flash-yolo --cfg config/models/flash-yolo-s1.yaml --name fy-s1-flash-yolo --batch 32 --workers 8 --imgsz 640 --epochs 20
-python scripts/train.py --data coco --model flash-yolo --cfg config/models/flash-yolo-s2.yaml --name fy-s2-dwstem --batch 32 --workers 8 --imgsz 640 --epochs 20
-python scripts/train.py --data coco --model flash-yolo --cfg config/models/flash-yolo-s3.yaml --name fy-s3-nk75 --batch 32 --workers 8 --imgsz 640 --epochs 20
-python scripts/train.py --data coco --model flash-yolo --cfg config/models/flash-yolo-s4.yaml --name fy-s4-lite --batch 32 --workers 8 --imgsz 640 --epochs 20
+python scripts/train.py --data coco --model flash-yolo --name fy-s2-dwstem --batch 32 --workers 8 --imgsz 640 --epochs 20
 ```
 
 **结论**：
@@ -55,7 +54,8 @@ python scripts/train.py --data coco --model flash-yolo --cfg config/models/flash
    想要更小模型时它是备选，本轮不作为主设计。
 3. **LiteBlock 在 neck 失败**：同算力下 S4 比 S3 低 3.2 点（21.83 vs 25.00）——
    MobileNeXt 式"低维瓶颈 + DW"在 neck 的通道数下不成立，淘汰。
-4. 定稿选 **S2**（DW stem 版）；S1 存为旧主设计，s1–s4 全部保留为筛选语料（`--cfg` 可精确复现）。
+4. 定稿选 **S2**（DW stem 版，即现役 `flash-yolo.yaml`）；S1 为旧主设计。筛选变体不入库——
+   结构与单变量差异由本节表格记录，需要复跑时从 `flash-yolo.yaml` 派生本地 yaml 即可。
 
 ## 4. 定稿结构（`config/models/flash-yolo.yaml` = S2）
 
@@ -149,5 +149,5 @@ python scripts/eval.py --weights runs/train/flash-coco-e100/weights/best.safeten
 python scripts/eval.py --weights runs/train/flash-coco-e100/weights/best.safetensors --data coco --nms
 ```
 
-筛选 run 的命令见第 3 节；`config/models/flash-yolo-s1.yaml` … `-s4.yaml` 是筛选语料，
-`flash-yolo.yaml` 是定稿结构（`--cfg` 可指任意一个精确复现对应的 run）。
+筛选 run 的命令见第 3 节；`flash-yolo.yaml` 是定稿结构（S2）。筛选变体属本地实验档案，
+不入库，结构与单变量差异见第 3 节。
