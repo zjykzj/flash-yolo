@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
 import torch
 
-from model.weights import arch_has_scale, load_weights, resolve_arch_scale, resolve_imgsz
+from model.weights import arch_has_scale, load_meta, load_weights, resolve_arch_scale, resolve_imgsz
 from model.build import ARCHS, YOLO26_FAMILY, arch_task, build_model
 from utils.logger import get_logger, log_params, setup_logging
 
@@ -47,10 +47,11 @@ def main():
     parser.add_argument("--dynamic", action="store_true", help="dynamic batch axis (default: fixed batch=1)")
     parser.add_argument("--model", default=None, choices=sorted(ARCHS),
                         help="architecture (default: inferred from the weights filename)")
-    parser.add_argument("--scale", default="n", help="model scale (yolo26 only: n/s/m/l/x)")
+    parser.add_argument("--scale", default=None,
+                        help="model scale (yolo26 family: n/s/m/l/x; default: weights metadata / filename)")
     parser.add_argument("--nc", type=int, default=None,
                         help="class count for models trained on a non-COCO dataset "
-                             "(default: the model yaml's nc)")
+                             "(default: weights metadata, else the model yaml's nc)")
     parser.add_argument("--imgsz", type=int, default=None,
                         help="export input size (default: weights metadata, else 640)")
     parser.add_argument("--opset", type=int, default=18)
@@ -73,13 +74,15 @@ def main():
     if args.trt and args.dynamic:
         parser.error("--trt requires fixed shapes (drop --dynamic)")
     imgsz = resolve_imgsz(args.weights, args.imgsz)  # CLI > 权重 metadata > 640
+    meta = load_meta(args.weights)  # 可选 metadata：训练产物自带 nc（自定义类别免 --nc）
+    nc = args.nc if args.nc is not None else meta.get("nc")
 
     out_path = args.out or str(ROOT / "runs" / "export" / (Path(args.weights).stem + ".onnx"))
     log_params(logger, __file__, weights=args.weights, out=out_path, model=arch, imgsz=imgsz,
-               nc=args.nc if args.nc is not None else 80, opset=args.opset,
+               nc=nc if nc is not None else 80, opset=args.opset,
                dynamic=args.dynamic, raw=args.raw, trt=args.trt, fp16=args.fp16)
 
-    model = build_model(arch, scale, nc=args.nc)
+    model = build_model(arch, scale, nc=nc)
     load_weights(model, args.weights, strict=True)
     head = model.model[-1]
     if hasattr(head, "end2end"):  # V3Detect 无此开关（前向即解码）

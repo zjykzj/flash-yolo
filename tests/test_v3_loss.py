@@ -7,7 +7,7 @@ import torch
 
 from config.train_config import TrainConfig
 from train.loss import build_loss
-from train.loss_v3 import ComputeLossV3
+from train.loss.v3_detect import ComputeLossV3
 
 _ANCHORS = [[[23, 27], [37, 58], [81, 82]], [[81, 82], [135, 169], [344, 319]]]
 

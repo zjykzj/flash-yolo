@@ -35,8 +35,8 @@ def _scaled_boxes(size):
     return [[int(round(v * r)) if i < 4 else v for i, v in enumerate(b)] for b in _BOXES]
 
 
-def _make_mini_coco(tmp_path, n_img=32, size=320):
-    """n 张图 + 2 类的迷你 COCO（images/<split>/ 布局）+ 描述符"""
+def _make_mini_coco(tmp_path, n_img=32, size=320, seg=False):
+    """n 张图 + 2 类的迷你 COCO（images/<split>/ 布局）+ 描述符；seg=True 时带矩形多边形"""
     root = tmp_path / "coco"
     (root / "annotations").mkdir(parents=True)
     for split in ("train", "val"):
@@ -49,8 +49,11 @@ def _make_mini_coco(tmp_path, n_img=32, size=320):
             images.append({"id": i + 1, "file_name": f"{i:04d}.jpg", "width": size, "height": size})
             for x1, y1, x2, y2, cls in _scaled_boxes(size):
                 aid += 1
-                anns.append({"id": aid, "image_id": i + 1, "category_id": cls + 1,
-                             "bbox": [x1, y1, x2 - x1, y2 - y1], "area": (x2 - x1) * (y2 - y1), "iscrowd": 0})
+                ann = {"id": aid, "image_id": i + 1, "category_id": cls + 1,
+                       "bbox": [x1, y1, x2 - x1, y2 - y1], "area": (x2 - x1) * (y2 - y1), "iscrowd": 0}
+                if seg:
+                    ann["segmentation"] = [[x1, y1, x2, y1, x2, y2, x1, y2]]
+                anns.append(ann)
         (root / "annotations" / f"instances_{split}.json").write_text(json.dumps(
             {"images": images, "annotations": anns,
              "categories": [{"id": 1, "name": "cls0"}, {"id": 2, "name": "cls1"}]}))
@@ -159,6 +162,40 @@ def test_train_smoke_v3(tmp_path):
     assert wm["arch"] == "yolov3-tiny" and wm["nc"] == 2 and wm["imgsz"] == 320, wm
     assert wm["anchors"] == [[[23, 27], [37, 58], [81, 82]], [[81, 82], [135, 169], [344, 319]]], wm["anchors"]
     print(f"  [v3] 冒烟通过: obj {objs[0]:.3f} -> {objs[-1]:.3f} · val_obj {val_obj[0]:.3f} -> {val_obj[-1]:.3f}")
+
+
+def test_train_smoke_seg(tmp_path):
+    """YOLO26-seg：COCO 多边形 -> 掩码加载/分割损失/Box+Mask 验证/产物全链路"""
+    data = _make_mini_coco(tmp_path, seg=True)
+    cfg = TrainConfig(
+        data=str(data), model="yolo26-seg", epochs=2, batch=4, nbs=4, imgsz=320, workers=0,
+        val_epochs=1, val_limit=8, limit=0, amp=False, mask_ratio=4, overlap_mask=True,
+        mosaic=0.5, mixup=0.0, copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0,
+    )
+    torch.manual_seed(0)
+    run_dir = tmp_path / "run-seg"
+    trainer = Trainer(cfg, device="cpu", run_dir=run_dir)
+    trainer.train()
+
+    assert (run_dir / "weights" / "last.safetensors").exists()
+    assert (run_dir / "weights" / "best.safetensors").exists()
+    assert (run_dir / "resume.pt").exists()
+    rows = list(csv_reader(run_dir / "results.csv"))
+    assert len(rows) >= 2, f"results.csv 行数不足: {len(rows)}"
+    assert "seg" in rows[0] and "val_seg" in rows[0], list(rows[0])
+    assert "P(M)" in rows[0] and "mAP@[.5:.95](M)" in rows[0], list(rows[0])
+    seg = [float(r["seg"]) for r in rows]
+    val_seg = [float(r["val_seg"]) for r in rows]
+    assert all(np.isfinite(v) and v >= 0 for v in seg + val_seg), f"seg 损失异常: {seg} {val_seg}"
+    assert all(np.isfinite(float(r["mAP@[.5:.95](M)"])) for r in rows)
+    assert trainer.head.nc == 2, f"模型 nc 应跟随描述符: {trainer.head.nc}"
+    from model.build import build_model
+    from model.weights import load_meta, load_weights
+    wm = load_meta(run_dir / "weights" / "best.safetensors")
+    assert wm["arch"] == "yolo26-seg" and wm["nc"] == 2 and wm["imgsz"] == 320, wm
+    model = build_model("yolo26-seg", "n", 320, nc=2)
+    load_weights(model, run_dir / "weights" / "best.safetensors", strict=True)
+    print(f"  [seg] 冒烟通过: seg {seg[0]:.3f} -> {seg[-1]:.3f} · val_seg {val_seg[0]:.3f} -> {val_seg[-1]:.3f}")
 
 
 def test_train_multiscale_step_lr_smoke(tmp_path):

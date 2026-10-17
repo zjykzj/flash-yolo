@@ -31,6 +31,10 @@ val_limit: 0       # 0 = 全量 val2017
 limit: 0           # 训练子集（前 N 张；0 = 全量）
 stop_after: 0      # >0 = 只跑前 N 轮（lr/close_mosaic 仍按 epochs 算——A/B 筛选实验用）
 
+# ---- segmentation（仅 --model yolo26-seg）----
+mask_ratio: 4      # GT 掩码下采样倍率：imgsz/mask_ratio；4 = 与 Proto26 同分辨率（官方默认）
+overlap_mask: true # true = 每图一张实例索引图（官方默认）；false = 每实例一张二值掩码
+
 # ---- 训练产物（复盘/调优用）----
 save_period: 20    # 每 N 轮存 weights/epochNNN.safetensors（保留最近 keep_periodic 个，可中途分叉实验；0 = 关）
 keep_periodic: 3

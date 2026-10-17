@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **YOLO26-seg**: segmentation joins the framework — `--model yolo26-seg` builds the official architecture, `yolo26n-seg.pt` converts to weights whose outputs match the official model bit-for-bit, `infer.py` draws masks, and `eval.py` reports Box and Mask mAP together (official weights: box 39.67 / mask 33.67 mAP50-95 on COCO val2017). Training is not wired up yet.
+- **YOLO26-seg**: segmentation is now end to end — official architecture/weights convert bit-for-bit, `train.py --model yolo26-seg` trains from COCO polygons (BCE mask loss, Box+Mask validation, `--mask-ratio`/`--overlap-mask`), and trained checkpoints run through infer, export, and pycocotools eval (official weights: box 39.67 / mask 33.67 mAP50-95).
 - **Faster segmentation post-processing**: `process_mask` decodes masks in batches of 8 instead of one shot, keeping the intermediates in cache — measured p50 128 ms to 59 ms per 300-detection image with byte-identical masks, cutting a full COCO val run from 15.1 to 11.5 minutes.
 
 ## [0.6.0] - 2026-10-15

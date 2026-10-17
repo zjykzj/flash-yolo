@@ -47,11 +47,22 @@ class SharedCounter:
 class TrainMixin:
     """训练数据集共用行为：增强入口 / close_mosaic / 惰性 corrupt 计数
 
-    子类需提供：cfg（duck-typing）、use_augment、load_image(idx) -> (BGR, labels)、_corrupt(SharedCounter)
+    子类需提供：cfg（duck-typing）、use_augment、load_image(idx) -> (BGR, labels[, segments])、
+    use_segments（分割训练为 True）、_corrupt(SharedCounter)。
     """
 
+    use_segments = False
+
     def __getitem__(self, idx):
-        img, labels = self.load_image(idx)
+        sample = self.load_image(idx)
+        if self.use_segments:
+            img, labels, segments = sample
+            if self.use_augment:
+                return augment(img, labels, self.load_image, self.cfg, _rng(), idx, len(self),
+                               segments=segments)
+            return letterbox_train(img, labels, self.cfg.imgsz, segments=segments,
+                                   mask_ratio=self.cfg.mask_ratio, overlap_mask=self.cfg.overlap_mask)
+        img, labels = sample
         if self.use_augment:
             return augment(img, labels, self.load_image, self.cfg, _rng(), idx, len(self))
         return letterbox_train(img, labels, self.cfg.imgsz)
@@ -108,11 +119,22 @@ def _rng():
 
 
 def collate_fn(batch):
-    """-> (imgs (B,3,H,W) float32, targets (N,6) [batch_idx, cls, x1, y1, x2, y2])"""
+    """检测 -> (imgs, targets)；分割 -> (imgs, targets, masks)
+
+    imgs: (B,3,H,W) float32；targets: (N,6) [batch_idx, cls, x1, y1, x2, y2]；
+    masks: overlap -> (B, H/r, W/r) int32 实例索引图；非 overlap -> (N, H/r, W/r) uint8。
+    """
+    if len(batch[0]) == 3:
+        imgs, labels, masks = zip(*batch)
+        tgts = _stack_targets(labels)
+        return torch.stack(imgs), tgts, torch.from_numpy(np.concatenate(masks, 0))
     imgs, labels = zip(*batch)
+    return torch.stack(imgs), _stack_targets(labels)
+
+
+def _stack_targets(labels):
     targets = []
     for bi, lbs in enumerate(labels):
         if len(lbs):
             targets.append(np.concatenate([np.full((len(lbs), 1), bi, np.float32), lbs], axis=1))
-    tgts = torch.from_numpy(np.concatenate(targets)) if targets else torch.zeros((0, 6))
-    return torch.stack(imgs), tgts
+    return torch.from_numpy(np.concatenate(targets)) if targets else torch.zeros((0, 6))

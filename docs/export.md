@@ -19,7 +19,7 @@ python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov
 | `--raw` | off | 导出原始头 (B, 4+nc, N)（**yolo26 专属**；v3 会报错） |
 | `--dynamic` | off | 动态 batch 轴；默认**固定 batch 1**（边缘工具链偏好静态 shape） |
 | `--model` / `--scale` | 从文件名推断 | 架构/档位 |
-| `--nc` | 模型 yaml 的 nc | 非 COCO 数据训练的模型改头 |
+| `--nc` | 权重 metadata，否则模型 yaml 的 nc | 非 COCO 数据训练的模型改头 |
 | `--imgsz` | 权重 metadata > 640 | 导出输入尺寸 |
 | `--opset` | 脚本默认 | ONNX opset |
 
@@ -32,6 +32,9 @@ python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov
 | yolo26-seg | `output0 (B, 300, 6+nm)` + `output1 (B, nm, H/4, W/4)` | 系数接在末维；原型单独一路（同官方导出的 output0/output1 命名） |
 | yolo26-seg `--raw` | `output0 (B, 4+nc+nm, N)` + `output1` 同上 | 掩码由 `process_mask` 解码到原图分辨率 |
 | yolov3-tiny | `(B, NA, 5+nc)` | NA = 3·ΣH·W；obj×cls 与 NMS 在外部 |
+
+> 训练产出的 `best/last.safetensors` 自带 metadata，`--scale` / `--nc` 可省略（自动解析）；
+> onnx 文件本身不带 metadata，onnx 推理时仍需 `--model` / `--scale`（非 COCO nc 还要 `--data`）。
 
 > **TorchScript 导出器**：`torch.onnx.export` 在 torch 2.9 起默认走 dynamo 导出器，其
 > `external_data=True` 默认会把 ~10MB 的模型也拆成 `<name>.onnx.data`（`.onnx` 单独不可用）。

@@ -63,6 +63,8 @@ class Segment26(Detect):
                          与特征 detach 同口径：梯度只经 o2m 流回原型）
     """
 
+    task = "segment"
+
     def __init__(self, nc=80, nm=32, npr=256, reg_max=1, end2end=True, ch=()):
         super().__init__(nc, reg_max, end2end, ch)
         self.nm = nm
@@ -94,11 +96,14 @@ class Segment26(Detect):
         )
         return y
 
-    def _forward_train(self, x, proto):
+    def _forward_train(self, x, proto=None):
         """训练模式：双分支原始输出 + 原型（o2o 分支的 proto 走 detach——与特征 detach 同口径）
 
-        bias_init（继承自 Detect）只覆盖 cv2/cv3——cv4 不设先验（官方口径）。
+        proto 省略时现场计算（验证循环只拿 feats 的调用路径用）。bias_init（继承自 Detect）
+        只覆盖 cv2/cv3——cv4 不设先验（官方口径）。
         """
+        if proto is None:
+            proto = self.proto(x)
         o2m = self._forward_head_seg(x, self.cv2, self.cv3, self.cv4)
         x_detached = [feat.detach() for feat in x]
         o2o = self._forward_head_seg(x_detached, self.one2one_cv2, self.one2one_cv3, self.one2one_cv4)

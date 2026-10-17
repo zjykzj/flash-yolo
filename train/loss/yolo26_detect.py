@@ -21,10 +21,9 @@ import torch
 import torch.nn.functional as F
 
 from train.assigner import TaskAlignedAssigner, bbox_iou_torch, padded_gt
-from train.loss_v3 import ComputeLossV3
 from utils.anchors import make_anchors
 
-__all__ = ["ComputeLoss", "build_loss"]
+__all__ = ["ComputeLoss"]
 
 
 class ComputeLoss:
@@ -59,13 +58,47 @@ class ComputeLoss:
         feats = [torch.zeros(1, 1, imgsz // int(s), imgsz // int(s), device=self.device) for s in self.strides]
         return make_anchors(feats, self.strides, 0.5)
 
-    def forward(self, preds, targets, batch_size, imgsz):
+    def _branch_terms(self, boxes, scores, anchors, strides, gt, gt_mask, batch_size, imgsz, one2one):
+        """单分支检测三项 + 分配结果（返回 l_box/l_cls/l_l1 与 assigner dict）"""
+        # 标签分配（detach + 内部 no_grad，官方口径）
+        a = self.assigner.forward_batch(
+            boxes.detach(), scores.detach(), anchors, strides, gt, gt_mask, one2one=one2one
+        )
+        fg = a["fg_mask"]  # (B, N)
+        t = a["target_scores"]  # (B, N, nc) 软标签（官方口径，逐 GT 归一）
+        t_sum = t.sum().clamp_min(1.0)  # 官方三项损失共用的归一化分母 Σtarget_scores
+        w = t.sum(-1)  # (B, N) 逐 anchor 软权重（非 fg 恒 0）
+
+        # 分类：官方 `bce.sum() / target_scores_sum`（×batch 维持 Σ_img 口径）
+        l_cls = F.binary_cross_entropy_with_logits(
+            scores.permute(0, 2, 1), t, reduction="sum"
+        ) / t_sum * batch_size
+
+        # 框：软加权 (1-CIoU) 求和 / Σt（官方 box 项同式；无正样本时自然为 0）
+        ax, ay = anchors[0], anchors[1]
+        pred_xyxy = torch.stack(
+            [ax - boxes[:, 0], ay - boxes[:, 1], ax + boxes[:, 2], ay + boxes[:, 3]], 2
+        )  # (B, N, 4)
+        ciou = bbox_iou_torch(pred_xyxy, a["target_boxes"], ciou=True)  # (B, N)
+        l_box = ((1.0 - ciou) * w * fg).sum() / t_sum * batch_size
+
+        # l1：ltrb 按 stride/imgsz 归一化后取 4 边均值、软加权 / Σt（官方 reg_max=1 分支同式）
+        d = (boxes.transpose(1, 2) - a["target_ltrb"]) * strides[0][None, :, None] / imgsz
+        l_l1 = (d.abs().mean(-1) * w * fg).sum() / t_sum * batch_size
+        return l_box, l_cls, l_l1, a
+
+    def _extra_branch_terms(self, branch, preds_b, assignment, masks, targets, strides, batch_size, imgsz):
+        """分支附加损失（分割子类覆盖）；检测基类无附加项"""
+        return None, {}
+
+    def forward(self, preds, targets, batch_size, imgsz, masks=None):
         """总损失（fp32 内部计算，兼容 AMP 下的 fp16 输入）
 
         Args:
             preds: head 训练输出 {"one2many": {"boxes","scores"}, "one2one": ...}
             targets: (N, 6) [batch_idx, cls, x1, y1, x2, y2] 像素坐标
             batch_size: 本 batch 图像数
+            masks: 分割 GT（由子类消费；检测路径为 None）
         Returns:
             (loss_total, items) — total 为 weight*Σ_img L_img（x batch 与 nbs/accum 口径一致），
             items 为 per-image 均值口径的分解字典（日志用，float）
@@ -74,6 +107,8 @@ class ComputeLoss:
         gt, gt_mask = padded_gt(targets, batch_size)
         total = torch.zeros((), device=self.device)
         items = {"box": 0.0, "cls": 0.0, "l1": 0.0, "o2m": 0.0, "o2o": 0.0}
+        for k in self.item_keys:
+            items.setdefault(k, 0.0)
         has_o2o = "one2one" in preds
 
         for branch, name in (("one2many", "o2m"), ("one2one", "o2o")):
@@ -85,38 +120,22 @@ class ComputeLoss:
             boxes = preds[branch]["boxes"].float()  # (B, 4, N) ltrb grid 单位
             scores = preds[branch]["scores"].float()  # (B, nc, N)
 
-            # 标签分配（detach + 内部 no_grad，官方口径）
-            a = self.assigner.forward_batch(
-                boxes.detach(), scores.detach(), anchors, strides, gt, gt_mask, one2one=(branch == "one2one")
-            )
-            fg = a["fg_mask"]  # (B, N)
-            t = a["target_scores"]  # (B, N, nc) 软标签（官方口径，逐 GT 归一）
-            t_sum = t.sum().clamp_min(1.0)  # 官方三项损失共用的归一化分母 Σtarget_scores
-            w = t.sum(-1)  # (B, N) 逐 anchor 软权重（非 fg 恒 0）
-
-            # 分类：官方 `bce.sum() / target_scores_sum`（×batch 维持 Σ_img 口径）
-            l_cls = F.binary_cross_entropy_with_logits(
-                scores.permute(0, 2, 1), t, reduction="sum"
-            ) / t_sum * batch_size
-
-            # 框：软加权 (1-CIoU) 求和 / Σt（官方 box 项同式；无正样本时自然为 0）
-            ax, ay = anchors[0], anchors[1]
-            pred_xyxy = torch.stack(
-                [ax - boxes[:, 0], ay - boxes[:, 1], ax + boxes[:, 2], ay + boxes[:, 3]], 2
-            )  # (B, N, 4)
-            ciou = bbox_iou_torch(pred_xyxy, a["target_boxes"], ciou=True)  # (B, N)
-            l_box = ((1.0 - ciou) * w * fg).sum() / t_sum * batch_size
-
-            # l1：ltrb 按 stride/imgsz 归一化后取 4 边均值、软加权 / Σt（官方 reg_max=1 分支同式）
-            d = (boxes.transpose(1, 2) - a["target_ltrb"]) * strides[0][None, :, None] / imgsz
-            l_l1 = (d.abs().mean(-1) * w * fg).sum() / t_sum * batch_size
+            l_box, l_cls, l_l1, a = self._branch_terms(
+                boxes, scores, anchors, strides, gt, gt_mask, batch_size, imgsz,
+                one2one=(branch == "one2one"))
+            extra_loss, extra_items = self._extra_branch_terms(
+                branch, preds[branch], a, masks, targets, strides, batch_size, imgsz)
 
             branch_loss = (self.cfg.box_gain * l_box + self.cfg.cls_gain * l_cls + self.cfg.dfl_gain * l_l1) / batch_size
+            if extra_loss is not None:
+                branch_loss = branch_loss + extra_loss / batch_size
             total = total + weight * branch_loss * batch_size
             items[name] = items[name] + branch_loss
             items["box"] = items["box"] + l_box / batch_size
             items["cls"] = items["cls"] + l_cls / batch_size
             items["l1"] = items["l1"] + l_l1 / batch_size
+            for k, v in extra_items.items():
+                items[k] = items[k] + v
 
         # 一次性同步取日志值（每 iter 仅此一处 device->host）
         keys = list(items)
@@ -126,15 +145,3 @@ class ComputeLoss:
         return total, dict(zip(keys, vals))
 
     __call__ = forward  # 普通类不自动调用 forward，显式别名
-
-
-_LOSS_BY_ARCH = {"yolo26": ComputeLoss, "yolov3-tiny": ComputeLossV3,
-                 "yolov3-tiny-silu": ComputeLossV3, "flash-yolo": ComputeLoss}
-
-
-def build_loss(arch, cfg, head, device):
-    """按架构分派损失实现（trainer 的单一入口；接口同构：item_keys / __call__）"""
-    cls = _LOSS_BY_ARCH.get(arch)
-    if cls is None:
-        raise ValueError(f"unknown arch {arch!r}; available: {sorted(_LOSS_BY_ARCH)}")
-    return cls(cfg, head, device)

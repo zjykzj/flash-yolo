@@ -16,6 +16,7 @@ import numpy as np
 
 from data.loader import SharedCounter, TrainMixin
 from data.scan import ScanResult, ScanStats
+from data.segments import annotation_polygon, polygon_bbox, rasterize_segments, transform_polygons, clip_polygons
 from utils.progress import ProgressBar
 
 __all__ = ["CocoDataset", "CocoTrainDataset", "parse_coco", "scan_split"]
@@ -46,7 +47,7 @@ def parse_coco(ann_file, status_line=None):
 
 
 def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels=False,
-               progress=False, progress_file=None):
+               build_segments=False, progress=False, progress_file=None):
     """解析 ann json + 单趟扫描 -> ScanResult
 
     exists 检查 / crowd 剔除 / 逐图标签构造合并进同一个循环：本机 118k 图实测扫描段 ≈2.6s，
@@ -55,6 +56,8 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
 
     训练侧 drop_crowd+build_labels（标签 (M,5) [cls,x1,y1,x2,y2] 原图像素坐标）；
     验证侧两者都不开（保留 crowd、不建标签，只计数——与官方 val 口径一致）。
+    build_segments=True（分割训练）：标签框改由多边形包围盒导出，并保存合并后的多边形；
+    RLE/缺失 segmentation 退回 bbox 矩形并计入 n_seg_fallback（全部 fallback 直接报错）。
     缺图（官方 train2017 图片集比标注少 1 张的兜底）从 images 中剔除并计数。
     """
     prefix = f"{label}:".ljust(7)  # `train: ` / `val:   ` 对齐
@@ -71,7 +74,8 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
     stride = max(1, len(images) // 400)  # 计数行的字符串构造也按 stride 走（11.8 万次 f-string 不值得）
     t_scan = time.monotonic()
     kept, labels = [], [] if build_labels else None
-    n_missing = n_bg = n_crowd = n_instances = 0
+    segments = [] if build_segments else None
+    n_missing = n_bg = n_crowd = n_instances = n_seg_fallback = 0
     first_missing = None
     for i, img in enumerate(images, 1):
         anns = by_image.get(img["id"], [])
@@ -82,13 +86,33 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
             if drop_crowd:
                 n_crowd += sum(1 for a in anns if a.get("iscrowd", 0))
                 anns = [a for a in anns if not a.get("iscrowd", 0)]
-            if build_labels:
-                lbs = [[cat_id_to_idx[a["category_id"]], *a["bbox"][:2],
-                        a["bbox"][0] + a["bbox"][2], a["bbox"][1] + a["bbox"][3]] for a in anns]
-                labels.append(np.array(lbs, np.float32).reshape(-1, 5) if lbs else np.zeros((0, 5), np.float32))
+            if build_segments:
+                lbs, img_segs, n_valid = [], [], 0
+                for a in anns:
+                    poly, fallback = annotation_polygon(a)
+                    if poly is None:
+                        continue
+                    box = polygon_bbox(poly)
+                    if box[2] <= box[0] or box[3] <= box[1]:
+                        continue
+                    if build_labels:
+                        lbs.append([cat_id_to_idx[a["category_id"]], *box])
+                    img_segs.append(poly)
+                    n_seg_fallback += fallback
+                    n_valid += 1
+                if build_labels:
+                    labels.append(np.array(lbs, np.float32).reshape(-1, 5) if lbs else np.zeros((0, 5), np.float32))
+                segments.append(img_segs)  # 与 kept/labels 逐图对齐（空图也占位）
+                n_instances += n_valid
+                n_bg += n_valid == 0
+            else:
+                if build_labels:
+                    lbs = [[cat_id_to_idx[a["category_id"]], *a["bbox"][:2],
+                            a["bbox"][0] + a["bbox"][2], a["bbox"][1] + a["bbox"][3]] for a in anns]
+                    labels.append(np.array(lbs, np.float32).reshape(-1, 5) if lbs else np.zeros((0, 5), np.float32))
+                n_instances += len(anns)
+                n_bg += not anns
             kept.append(img)
-            n_instances += len(anns)
-            n_bg += not anns
         if bar is not None and (i % stride == 0 or i == len(images)):
             speed = i / max(time.monotonic() - t_scan, 1e-6)
             # desc 只用文件名：完整路径已在上面的静态提示行；过长还会折行坏掉 \r 刷新
@@ -96,9 +120,14 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
                                       f"{n_bg} backgrounds, {n_missing} missing:")
     if bar is not None:
         bar.close()  # 换行保留定格行（与训练/验证条同约定）
+    if build_segments and n_instances and n_seg_fallback == n_instances:
+        raise ValueError(
+            f"segmentation training requires polygon annotations, but all {n_instances} annotations "
+            f"in {ann_file} fell back to bbox rectangles (RLE or missing segmentation) — "
+            f"check the dataset descriptor / annotation format")
     stats = ScanStats(n_missing, n_bg, n_crowd, n_instances,
-                      parse_time, time.monotonic() - t_scan, first_missing)
-    return ScanResult(kept, labels, by_image, cat_id_to_idx, names, stats)
+                      parse_time, time.monotonic() - t_scan, first_missing, n_seg_fallback)
+    return ScanResult(kept, labels, by_image, cat_id_to_idx, names, stats, segments)
 
 
 class CocoDataset:
@@ -119,6 +148,7 @@ class CocoDataset:
         self.n_backgrounds = stats.n_backgrounds
         self.n_missing = stats.n_missing
         self.n_crowd_excluded = 0  # val 侧不剔 crowd（字段对齐训练集，便于统一打印）
+        self.n_seg_fallback = 0  # val 侧不做分割回退统计（只在分割训练扫描时累计）
         self.parse_time = stats.parse_time
         self.scan_time = stats.scan_time
         self.first_missing = stats.first_missing
@@ -162,6 +192,41 @@ class CocoDataset:
             out.append(([x, y, x + w, y + h], self.cat_id_to_idx[a["category_id"]]))
         return out
 
+    def seg_val(self, idx, imgsz, ratio, pad, mask_ratio=4, overlap=False, include_crowd=False):
+        """分割训练中验证：GT 多边形 -> letterbox 空间的 (labels (M,5), masks)
+
+        labels 的框由多边形包围盒导出（与训练侧同口径）；polygon/框均落在 letterbox 画布
+        `imgsz×imgsz`。overlap=True 时按栅格化面积降序重排 labels（与实例索引图一致）。
+        训练中 Mask 指标始终用 overlap=False（保持标签顺序，框与掩码一一对应）。
+        """
+        info = self.images[idx]
+        cls_ids, polys = [], []
+        for a in self.annotations[info["id"]]:
+            if not include_crowd and a.get("iscrowd", 0):
+                continue
+            poly, _fallback = annotation_polygon(a)
+            if poly is None:
+                continue
+            cls_ids.append(self.cat_id_to_idx[a["category_id"]])
+            polys.append(poly)
+        if not polys:
+            empty = np.zeros((0, 5), np.float32)
+            masks, _ = rasterize_segments([], imgsz, imgsz, mask_ratio, overlap)
+            return empty, masks
+        polys = clip_polygons(transform_polygons(polys, ratio, pad), imgsz, imgsz)
+        labels, kept = [], []
+        for c, poly in zip(cls_ids, polys):
+            box = polygon_bbox(poly)
+            if box[2] <= box[0] or box[3] <= box[1]:
+                continue
+            labels.append([c, *box])
+            kept.append(poly)
+        lbs = np.array(labels, np.float32).reshape(-1, 5)
+        masks, order = rasterize_segments(kept, imgsz, imgsz, mask_ratio, overlap)
+        if order is not None:
+            lbs = lbs[order]
+        return lbs, masks
+
 
 class CocoTrainDataset(TrainMixin):
     """COCO 训练集：单趟扫描剔 crowd + 建标签（(M,5) [cls,x1,y1,x2,y2] 原图像素）
@@ -171,17 +236,20 @@ class CocoTrainDataset(TrainMixin):
     """
 
     def __init__(self, cfg, ann_file, img_dir, label="train", augment=True, limit=0,
-                 progress=False, progress_file=None):
+                 progress=False, progress_file=None, segment=False):
         self.cfg = cfg  # TrainConfig 共享引用：close_mosaic 原地清零概率
         self.use_augment = augment
+        self.use_segments = segment
         self.ann_file = Path(ann_file)
         self.img_dir = Path(img_dir)
         self.label = label
 
         # 解析 + 单趟扫描（存在的图 / 剔 crowd / 建标签 / 计数在同一个循环里，见 data/coco.py::scan_split）
         res = scan_split(self.ann_file, self.img_dir, label, limit=limit, drop_crowd=True,
-                         build_labels=True, progress=progress, progress_file=progress_file)
+                         build_labels=True, build_segments=segment,
+                         progress=progress, progress_file=progress_file)
         self.images, self.labels, self.cat_id_to_idx = res.images, res.labels, res.cat_id_to_idx
+        self.segments = res.segments if segment else None
         self.names = res.names
 
         self.n_instances = res.stats.n_instances
@@ -189,6 +257,7 @@ class CocoTrainDataset(TrainMixin):
         self.n_backgrounds = res.stats.n_backgrounds
         self.n_missing = res.stats.n_missing
         self.n_crowd_excluded = res.stats.n_crowd_excluded
+        self.n_seg_fallback = res.stats.n_seg_fallback
         self.first_missing = res.stats.first_missing
         self.parse_time, self.scan_time = res.stats.parse_time, res.stats.scan_time
         self._corrupt = SharedCounter()  # worker 里读失败 +1；父进程用 n_corrupt 读
@@ -201,13 +270,18 @@ class CocoTrainDataset(TrainMixin):
         return self.images[idx]["id"]
 
     def load_image(self, idx):
-        """(BGR img, labels 副本)——mosaic/copy_paste/mixup 的邻图加载入口
+        """(BGR img, labels 副本[, segments 副本])——mosaic/copy_paste/mixup 的邻图加载入口
 
-        读不出来（文件损坏 / 训练中被删）时不再抛异常：计数 + 返回空白画布与空标签（当背景样本，
-        不教假框），训练不因单张坏图中断。计数在 worker 进程里 +1、父进程每 epoch 读一次。
+        分割训练额外返回多边形列表（与 labels 行一一对应）。读不出来（文件损坏 / 训练中被删）时
+        不再抛异常：计数 + 返回空白画布与空标签/空多边形（当背景样本，不教假框）。
         """
         img = cv2.imread(str(self.img_dir / self.images[idx]["file_name"]))
         if img is None:
             self._corrupt.bump()
-            return np.zeros((self.cfg.imgsz, self.cfg.imgsz, 3), np.uint8), np.zeros((0, 5), np.float32)
+            blank = np.zeros((self.cfg.imgsz, self.cfg.imgsz, 3), np.uint8)
+            if self.use_segments:
+                return blank, np.zeros((0, 5), np.float32), []
+            return blank, np.zeros((0, 5), np.float32)
+        if self.use_segments:
+            return img, self.labels[idx].copy(), [p.copy() for p in self.segments[idx]]
         return img, self.labels[idx].copy()

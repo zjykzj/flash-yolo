@@ -33,8 +33,8 @@ class TrainConfig:
     data: str = ""  # 数据集描述符（config/datasets/[local/]<name>.yaml 或 .yaml 路径）；
                     # 空 = 未设置，必须由 CLI --data 提供（见 scripts/train.py）
     scale: str = "n"
-    model: str = "yolo26"  # 架构名（model/build.py 的 ARCHS 注册表；yolo26 | yolov3-tiny |
-                          # yolov3-tiny-silu（算子替换版）| flash-yolo）
+    model: str = "yolo26"  # 架构名（model/build.py 的 ARCHS 注册表；yolo26 | yolo26-seg |
+                          # yolov3-tiny | yolov3-tiny-silu（算子替换版）| flash-yolo）
     cfg_path: str = ""  # 自定义模型 yaml 覆盖 ARCHS 注册路径（架构筛选实验用；"" = 用注册表）
     epochs: int = 100
     batch: int = 16  # 物理 batch（开箱即用值；nbs 累积保证梯度语义不变）
@@ -51,6 +51,10 @@ class TrainConfig:
     val_limit: int = 0
     limit: int = 0  # 训练子集（前 N 张；0 = 全量）
     stop_after: int = 0  # >0 = 只跑前 N 轮（lr/close_mosaic 仍按 epochs 算——筛选实验用）
+
+    # segmentation（仅 task=segment 使用；检测路径不读）
+    mask_ratio: int = 4  # GT 掩码下采样倍率：imgsz/mask_ratio；4 = 与 Proto26 同分辨率（官方默认）
+    overlap_mask: bool = True  # True = 每图一张实例索引图（官方默认）；False = 每实例一张二值掩码
 
     # 训练产物（复盘/调优用，默认全开——关掉它们等于放弃事后分析能力）
     save_period: int = 20  # 每 N 轮存 weights/epochNNN.safetensors（保留最近 keep_periodic 个）
@@ -174,11 +178,13 @@ def load_train_config(path, recipe=None, scale=None) -> TrainConfig:
     merged["scale"] = scale
     if merged.get("optimizer", "musgd") not in ("musgd", "sgd"):
         raise ValueError(f"unknown optimizer {merged['optimizer']!r} (musgd | sgd)")
-    if recipe != "default" and merged.get("model", "yolo26") != "yolo26" and "model" not in overrides:
+    if recipe != "default" and "model" not in overrides:
         # 配方未声明 model 视为 yolo26 系配方（coco-ft/o365-pt 均如此）；自带 model 的配方
-        # 面向特定架构，不告警
-        logger.warning(f"recipe {recipe!r} does not declare a model — it is a yolo26-tuned recipe; "
-                       f"training {merged['model']!r} with it is not recommended")
+        # 面向特定架构，不告警。yolo26 系（含 seg / flash-yolo）复用同一套超参。
+        from model.build import YOLO26_FAMILY  # 懒加载：config 模块不承担 torch 导入
+        if merged.get("model", "yolo26") not in YOLO26_FAMILY:
+            logger.warning(f"recipe {recipe!r} does not declare a model — it is a yolo26-tuned recipe; "
+                           f"training {merged['model']!r} with it is not recommended")
     return TrainConfig(**merged)
 
 

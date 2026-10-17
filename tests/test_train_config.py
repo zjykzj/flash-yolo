@@ -19,6 +19,7 @@ def test_default_recipe():
     assert cfg.nbs == 64 and cfg.momentum == 0.937 and cfg.weight_decay == 0.0005
     assert cfg.box_gain == 7.5 and cfg.cls_gain == 0.5 and cfg.dfl_gain == 1.5 and cfg.obj_gain == 1.0
     assert cfg.mosaic == 1.0 and cfg.mixup == 0.0 and cfg.copy_paste == 0.0
+    assert cfg.mask_ratio == 4 and cfg.overlap_mask is True
     print("  内置 default（100 轮/通用增强）正确")
 
 

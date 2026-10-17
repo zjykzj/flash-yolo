@@ -1,13 +1,13 @@
 """训练模块（M3）：算法与训练循环（数据 I/O 与增强在 data/ 下）
 
-每个文件独立可读、可单测：config(dataclass) / assigner / loss / optimizer /
+每个文件独立可读、可单测：config(dataclass) / assigner / loss/ / optimizer /
 ema / lr / checkpoint / validator / trainer。
 """
 
 from train.assigner import TaskAlignedAssigner
 from config.train_config import TrainConfig, apply_cli, load_train_config
 from train.ema import ModelEMA
-from train.loss import ComputeLoss
+from train.loss import ComputeLoss, ComputeLossSeg
 from train.optimizer import MuSGD, build_param_groups
 from train.trainer import Trainer
 from train.validator import validate
@@ -18,6 +18,7 @@ __all__ = [
     "apply_cli",
     "TaskAlignedAssigner",
     "ComputeLoss",
+    "ComputeLossSeg",
     "MuSGD",
     "build_param_groups",
     "ModelEMA",

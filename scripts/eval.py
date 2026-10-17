@@ -76,7 +76,8 @@ def main():
     parser.add_argument("--engine", choices=["pt", "onnx", "trt"], default="pt")
     parser.add_argument("--model", default=None, choices=sorted(ARCHS),
                         help="architecture (default: inferred from the weights filename)")
-    parser.add_argument("--scale", default="n", help="model scale (yolo26 only: n/s/m/l/x)")
+    parser.add_argument("--scale", default=None,
+                        help="model scale (yolo26 family: n/s/m/l/x; default: weights metadata / filename)")
     parser.add_argument("--nms", action="store_true", help="use o2m+NMS path (yolo26 only; default E2E NMS-free)")
     parser.add_argument("--conf", type=float, default=CONF_THRES, help=f"confidence threshold (default {CONF_THRES})")
     parser.add_argument("--iou", type=float, default=IOU_THRES, help=f"NMS IoU threshold (default {IOU_THRES})")
@@ -106,6 +107,9 @@ def main():
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
     if arch not in YOLO26_FAMILY and args.nms:
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
+    if arch_task(arch) == "segment" and spec.format != "coco":
+        parser.error("segmentation evaluation requires a COCO json descriptor (format: coco); "
+                     "YOLO txt has no GT masks")
 
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 构建后以 engine.imgsz 为准，onnx 取图内 shape）
     imgsz = resolve_imgsz(args.weights, args.imgsz)

@@ -11,7 +11,7 @@ from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from utils.iou import box_iou
 
 __all__ = ["decode_raw", "non_max_suppression", "nms_per_image", "v3_detections", "scale_boxes",
-           "process_mask"]
+           "process_mask", "process_mask_lowres"]
 
 # 三个检测层特征图尺寸（640 输入）：P3/P4/P5
 _LEVEL_SHAPES = [(80, 80), (40, 40), (20, 20)]
@@ -215,6 +215,42 @@ def process_mask(proto, coeffs, boxes, net_hw, ori_hw, ratio, pad):
         content = masks[:, top:bottom, left:right].float()
         masks = F.interpolate(content[:, None], size=(ori_h, ori_w), mode="bilinear", align_corners=False)[:, 0]
         out[i:j] = (masks > 0.5).to(torch.uint8).numpy()
+    return out
+
+
+def process_mask_lowres(proto, coeffs, boxes, net_hw=None, chunk=_MASK_CHUNK):
+    """原型 + 系数 -> 原型网格分辨率的二值掩码（官方 `process_mask(upsample=False)` 口径）
+
+    训练中验证用：只做 ① 系数 @ 原型 -> logits ② >0 二值化 ③ 按框裁剪（框缩放到掩码网格）。
+    不 upsample 到网络输入/原图分辨率（那是正式评估的 `process_mask`；这里的分辨率与 GT 掩码
+    网格（imgsz/mask_ratio）一致，指标口径与官方训练 val 同源）。
+
+    Args:
+        proto: (nm, mh, mw)
+        coeffs: (M, nm)
+        boxes: (M, 4) letterbox 空间 xyxy
+        net_hw: (H, W) 网络输入尺寸；给定时把框缩放到原型网格
+    Returns:
+        (M, mh, mw) uint8
+    """
+    import torch
+
+    n = int(coeffs.shape[0])
+    nm, mh, mw = proto.shape
+    if n == 0:
+        return np.zeros((0, mh, mw), dtype=np.uint8)
+    p = torch.from_numpy(np.ascontiguousarray(proto, dtype=np.float32)).reshape(nm, -1)
+    c = torch.from_numpy(np.ascontiguousarray(coeffs, dtype=np.float32))
+    b = torch.from_numpy(np.ascontiguousarray(boxes, dtype=np.float32))
+    if net_hw is not None:
+        net_h, net_w = int(net_hw[0]), int(net_hw[1])
+        b = b * torch.tensor([mw / net_w, mh / net_h, mw / net_w, mh / net_h], dtype=b.dtype)
+    out = np.empty((n, mh, mw), dtype=np.uint8)
+    for i in range(0, n, chunk):
+        j = min(i + chunk, n)
+        masks = (c[i:j] @ p).reshape(-1, mh, mw)
+        masks = _crop_mask((masks > 0).to(torch.uint8), b[i:j])
+        out[i:j] = masks.numpy()
     return out
 
 

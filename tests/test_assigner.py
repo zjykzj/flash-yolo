@@ -75,7 +75,12 @@ def test_tal_known_answer():
     # 回归目标（逐 anchor grid 单位，原始框）
     np.testing.assert_allclose(out["target_ltrb"][10].tolist(), [1.5, 1.5, 0.5, 0.5], atol=1e-5)  # GT1 [1,1,3,3]
     np.testing.assert_allclose(out["target_boxes"][10].tolist(), [1, 1, 3, 3], atol=1e-5)
-    print("  TAL 已知答案全部正确")
+    # 分割掩码 gather 用：正样本逐 anchor 的 GT 索引（非正样本 0）
+    idx = out["target_gt_idx"]
+    assert idx.shape == (16,)
+    assert idx[10].item() == 0 and idx[5].item() == 0 and idx[15].item() == 1
+    assert (idx[~out["fg_mask"]] == 0).all()
+    print("  TAL 已知答案全部正确（含 target_gt_idx）")
 
 
 def test_stal_surrogate():
@@ -122,4 +127,5 @@ def test_empty_gt():
                                             torch.zeros(0, 5))
     assert out["n_pos"] == 0 and not out["fg_mask"].any()
     assert out["target_scores"].shape == (4, 2)
+    assert out["target_gt_idx"].shape == (4,) and not out["target_gt_idx"].any()
     print("  空 GT 安全返回")

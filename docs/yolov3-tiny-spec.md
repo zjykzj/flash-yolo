@@ -116,7 +116,7 @@ wh = anchor · exp(t)               # tw/th 取原始 logits，先 clamp(±8) �
 - `postprocess_val` 与 `Detect.postprocess_val` 同契约（每图 (M,6)），validator 的逐图
   循环对两者无差别。
 
-## 6. 训练：损失与匹配（`train/loss_v3.py::ComputeLossV3`）
+## 6. 训练：损失与匹配（`train/loss/v3_detect.py::ComputeLossV3`）
 
 - **匹配（darknet 语义）**：逐 GT、逐级，在 3 个槽位里取「形状 IoU」（中心重合的宽高 IoU）
   最大者为唯一正样本；责任格子 = GT 中心所在 cell（clamp 到网格内）。每 GT 每级至多

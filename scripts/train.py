@@ -20,7 +20,8 @@ import torch
 
 from config.datasets import load_dataset
 from config.train_config import TRAIN_CONFIG_PATH, apply_cli, load_train_config
-from model.build import ARCHS
+from model.build import ARCHS, arch_task
+from model.weights import arch_has_scale
 from train.trainer import Trainer
 from utils.logger import attach_file_log, get_logger, log_params, setup_logging
 from utils.paths import increment_path
@@ -32,7 +33,7 @@ logger = get_logger(__name__)
 # TrainConfig 可调字段按类型分组（argparse 默认 None -> 不覆盖 yaml）
 _INT_FIELDS = ["epochs", "batch", "nbs", "imgsz", "workers", "seed", "close_mosaic", "val_epochs", "val_limit",
                "limit", "ns_iters", "ema_tau", "topk", "topk_o2o", "topk2",
-               "stop_after", "save_period", "keep_periodic", "diag_interval", "aug_samples"]
+               "stop_after", "save_period", "keep_periodic", "diag_interval", "aug_samples", "mask_ratio"]
 _FLOAT_FIELDS = ["lr0", "lrf", "momentum", "weight_decay", "muon_w", "sgd_w", "warmup_epochs", "warmup_momentum",
                  "lr_step_gamma", "box_gain", "cls_gain", "dfl_gain", "obj_gain", "tal_alpha", "tal_beta",
                  "prog_alpha_init", "prog_alpha_final", "stal_s_min", "stal_s_ref", "ema_decay",
@@ -49,7 +50,8 @@ def main():
     parser.add_argument("--resume", default=None, help="resume.pt path or run dir (restores full training state)")
     parser.add_argument("--device", default=None, help="torch device (default: auto)")
     parser.add_argument("--name", default=None, help="run dir suffix (runs/train/train-<name>)")
-    parser.add_argument("--scale", dest="scale", default=None, help="model scale (yolo26 only: n/s/m/l/x)")
+    parser.add_argument("--scale", dest="scale", default=None,
+                        help="model scale (yolo26 family: n/s/m/l/x; other architectures are fixed)")
     parser.add_argument("--model", dest="model", default=None, choices=sorted(ARCHS),
                         help="architecture (default: train.yaml `model`, yolo26)")
     parser.add_argument("--cfg", dest="cfg_path", default=None,
@@ -77,6 +79,9 @@ def main():
     parser.add_argument("--obj-iou-target", dest="obj_iou_target", action=argparse.BooleanOptionalAction, default=None,
                         help="v3 IoU-aware objectness: positive obj target = IoU(pred, matched GT) with 5x "
                              "positive weight (default: yaml `obj_iou_target`, false = darknet hard 0/1)")
+    parser.add_argument("--overlap-mask", dest="overlap_mask", action=argparse.BooleanOptionalAction, default=None,
+                        help="segmentation GT masks: one per-image instance index map (default: yaml `overlap_mask`, "
+                             "true; --no-overlap-mask = one binary mask per instance)")
     parser.add_argument("--verbose", action="store_true", help="DEBUG logging (third-party output)")
     # TrainConfig 字段（默认 None -> 不覆盖 yaml）
     for f in _INT_FIELDS:
@@ -101,11 +106,14 @@ def main():
     except (ValueError, FileNotFoundError) as e:
         parser.error(str(e))
     apply_cli(cfg, args)
+    if arch_task(cfg.model) == "segment" and spec.format != "coco":
+        parser.error("segmentation training requires a COCO json descriptor (format: coco); "
+                     "YOLO txt segmentation labels are not supported")
     if cfg.cfg_path and not Path(cfg.cfg_path).is_file():
         parser.error(f"--cfg not found: {cfg.cfg_path}")
 
-    # 架构相关收尾：v3 系档位由 yaml 固定（此处归一化供参数预览显示；Trainer 内有同款守卫）
-    if cfg.model != "yolo26":
+    # 架构相关收尾：固定档位架构（v3 系）在此归一化供参数预览显示；Trainer 内有同款守卫
+    if not arch_has_scale(cfg.model):
         if args.scale:
             logger.warning(f"--scale {args.scale} ignored for model {cfg.model!r} "
                            f"(scale is fixed to {ARCHS[cfg.model]['default_scale']!r})")
@@ -124,7 +132,9 @@ def main():
     attach_file_log(run_dir / "run.log")
     log_params(logger, __file__, data=cfg.data, model=cfg.model, scale=cfg.scale, recipe=cfg.recipe,
                epochs=cfg.epochs, batch=cfg.batch, nbs=cfg.nbs, imgsz=cfg.imgsz,
-               workers=cfg.workers, seed=cfg.seed)
+               workers=cfg.workers, seed=cfg.seed,
+               **(dict(mask_ratio=cfg.mask_ratio, overlap_mask=cfg.overlap_mask)
+                  if arch_task(cfg.model) == "segment" else {}))
     # 启动信息块由 Trainer 按构建时机分段打印（环境 -> 模型 -> 数据集 -> 组件 -> 起跑），见 train/trainer.py
 
     trainer = Trainer(cfg, device=device, run_dir=run_dir, resume=args.resume, weights=args.weights, spec=spec)

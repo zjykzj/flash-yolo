@@ -21,6 +21,8 @@
 
 约定：
 - 标签格式 (M, 5) float32 [cls, x1, y1, x2, y2]，当前画布像素坐标
+- 分割：segments list[(K,2)] 与标签行一一对应，几何算子同步变换；最后一个算子后
+  在 S×S 栅格化并按 mask_ratio 降采样（overlap=True 时按面积降序重排标签）
 - close_mosaic：trainer 在最后 N epoch 将 mosaic/mixup/copy_paste 概率原地清零
 - MixUp/CopyPaste 的配对图在单样本 __getitem__ 内随机抽取（官方为 batch 内配对，
   此处按独立样本口径实现，属文档化简化）
@@ -29,6 +31,8 @@
 import cv2
 import numpy as np
 import torch
+
+from data.segments import polygon_bbox, rasterize_segments
 
 __all__ = ["augment", "letterbox_train", "resize_long_side"]
 
@@ -39,23 +43,30 @@ AREA_THR = 0.10  # box_candidates: 最小面积保留率（检测任务，官方
 
 
 # ---- 几何工具（官方口径）----
-def resize_long_side(img, labels, size):
-    """等比缩放到长边 = size（官方 BaseDataset.load_image rect_mode）
-
-    小图同样上采样；尺寸取 ceil 并 clamp 到 size（官方 min(math.ceil(w0*r), imgsz)）。
-    """
+def _resize_long_side(img, labels, segments, size):
     h0, w0 = img.shape[:2]
     if max(h0, w0) == size:
-        return img, labels
+        return img, labels, segments
     r = size / max(h0, w0)
     w, h = min(int(np.ceil(w0 * r)), size), min(int(np.ceil(h0 * r)), size)
     out = cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
+    segs = _scale_segments(segments, w / w0, h / h0) if segments is not None else None
     if not len(labels):
-        return out, labels
+        return out, labels, segs
     lbs = labels.copy()
     lbs[:, 1::2] *= w / w0
     lbs[:, 2::2] *= h / h0
-    return out, lbs
+    return out, lbs, segs
+
+
+def resize_long_side(img, labels, size, segments=None):
+    """等比缩放到长边 = size（官方 BaseDataset.load_image rect_mode）
+
+    小图同样上采样；尺寸取 ceil 并 clamp 到 size（官方 min(math.ceil(w0*r), imgsz)）。
+    segments 给定时返回三元组（多边形按同一比例缩放）。
+    """
+    out, lbs, segs = _resize_long_side(img, labels, segments, size)
+    return _ret(out, lbs, segs)
 
 
 def _clip_boxes(boxes, w, h):
@@ -75,12 +86,66 @@ def _clip(labels, w, h):
     return labels
 
 
+def _zero_area_keep(labels):
+    """零面积框的保留掩码（标签与多边形必须共用同一个 keep）"""
+    if not len(labels):
+        return np.zeros(0, bool)
+    return (labels[:, 3] - labels[:, 1]) * (labels[:, 4] - labels[:, 2]) > 0
+
+
 def _drop_zero_area(labels):
     """丢弃零面积框（官方 Instances.remove_zero_area_boxes）"""
     if not len(labels):
         return labels
-    keep = (labels[:, 3] - labels[:, 1]) * (labels[:, 4] - labels[:, 2]) > 0
-    return labels[keep]
+    return labels[_zero_area_keep(labels)]
+
+
+# ---- 多边形几何（与框逐点对齐；segments=None 时全部跳过）----
+def _scale_segments(segments, sx, sy):
+    return [np.stack([p[:, 0] * sx, p[:, 1] * sy], 1).astype(np.float32) for p in segments]
+
+
+def _shift_segments(segments, dx, dy):
+    return [(p + np.array([dx, dy], np.float32)).astype(np.float32) for p in segments]
+
+
+def _clip_segments(segments, w, h):
+    return [np.stack([np.clip(p[:, 0], 0, w), np.clip(p[:, 1], 0, h)], 1).astype(np.float32)
+            for p in segments]
+
+
+def _affine_segments(segments, M):
+    out = []
+    for p in segments:
+        q = p @ M[:2, :2].T + M[:2, 2]
+        out.append(q.astype(np.float32))
+    return out
+
+
+def _flip_lr_segments(segments, W):
+    return [np.stack([W - p[:, 0], p[:, 1]], 1).astype(np.float32) for p in segments]
+
+
+def _flip_ud_segments(segments, H):
+    return [np.stack([p[:, 0], H - p[:, 1]], 1).astype(np.float32) for p in segments]
+
+
+def _subset_segments(segments, keep):
+    return [p for p, k in zip(segments, keep) if k]
+
+
+def _ret(img, labels, segments):
+    """内部 3 元组 -> 公共 API：segments 未启用时维持历史 2 元组"""
+    return (img, labels, segments) if segments is not None else (img, labels)
+
+
+def _load_sample(img_loader, index, with_segments):
+    """邻图加载：分割数据集返回 3 元组，检测数据集返回 2 元组"""
+    sample = img_loader(index)
+    if with_segments:
+        return sample
+    img, labels = sample
+    return img, labels, None
 
 
 def _box_candidates(boxes_pre, boxes_post, wh_thr=WH_THR, ar_thr=AR_THR, area_thr=AREA_THR, eps=1e-16):
@@ -101,22 +166,17 @@ def _box_candidates(boxes_pre, boxes_post, wh_thr=WH_THR, ar_thr=AR_THR, area_th
 
 
 # ---- 增强算子 ----
-def mosaic(img_loader, idx, n, hyp, rng):
-    """4 块拼图 -> (2S, 2S) 画布（官方 Mosaic._mosaic4 几何）
-
-    每块等比缩放到长边 S 后按自然尺寸锚定在随机中心 (xc, yc)：左/上块以中心为右下角、
-    右/下块以中心为左上角，越界部分裁到画布（块可以跨越中线）。
-    """
+def _mosaic(img_loader, idx, n, hyp, rng, segments):
     S = hyp.imgsz
     canvas = np.full((S * 2, S * 2, 3), BORDER, np.uint8)
     b = -(S // 2)  # 官方 self.border = (-imgsz // 2, -imgsz // 2)
     yc, xc = (int(rng.uniform(-b, 2 * S + b)) for _ in range(2))
     indices = [idx] + [int(rng.integers(0, n)) for _ in range(3)]
 
-    labels4 = []
+    labels4, segs4 = [], []
     for i, index in enumerate(indices):
-        img, lbs = img_loader(index)
-        img, lbs = resize_long_side(img, lbs, S)
+        img, lbs, segs = _load_sample(img_loader, index, segments is not None)
+        img, lbs, segs = _resize_long_side(img, lbs, segs, S)
         h, w = img.shape[:2]
         if i == 0:  # top left
             x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc
@@ -131,13 +191,31 @@ def mosaic(img_loader, idx, n, hyp, rng):
             x1a, y1a, x2a, y2a = xc, yc, min(xc + w, S * 2), min(S * 2, yc + h)
             x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
         canvas[y1a:y2a, x1a:x2a] = img[y1b:y2b, x1b:x2b]
+        dx, dy = x1a - x1b, y1a - y1b
         if len(lbs):
             lbs = lbs.copy()
-            lbs[:, 1::2] += x1a - x1b  # 官方 _update_labels(padw, padh)
-            lbs[:, 2::2] += y1a - y1b
+            lbs[:, 1::2] += dx  # 官方 _update_labels(padw, padh)
+            lbs[:, 2::2] += dy
         labels4.append(lbs)
+        if segs is not None:
+            segs4.append(_shift_segments(segs, dx, dy))
     labels = np.concatenate(labels4) if any(len(l) for l in labels4) else np.zeros((0, 5), np.float32)
-    return canvas, _drop_zero_area(_clip(labels, S * 2, S * 2))
+    if segments is None:
+        return canvas, _drop_zero_area(_clip(labels, S * 2, S * 2)), None
+    labels = _clip(labels, S * 2, S * 2)
+    keep = _zero_area_keep(labels)
+    segs = _subset_segments([p for part in segs4 for p in part], keep)
+    return canvas, labels[keep], _clip_segments(segs, S * 2, S * 2)
+
+
+def mosaic(img_loader, idx, n, hyp, rng, segments=None):
+    """4 块拼图 -> (2S, 2S) 画布（官方 Mosaic._mosaic4 几何）
+
+    每块等比缩放到长边 S 后按自然尺寸锚定在随机中心 (xc, yc)：左/上块以中心为右下角、
+    右/下块以中心为左上角，越界部分裁到画布（块可以跨越中线）。
+    segments 给定时返回三元组，多边形与框共享同一 keep。
+    """
+    return _ret(*_mosaic(img_loader, idx, n, hyp, rng, segments))
 
 
 def copy_paste(img, labels, img_loader, n, hyp, rng):
@@ -171,12 +249,7 @@ def copy_paste(img, labels, img_loader, n, hyp, rng):
     return img, labels
 
 
-def random_perspective(img, labels, hyp, rng):
-    """随机仿射（旋转/各向同性缩放/x-y 剪切/平移）-> S×S
-
-    M = T @ S @ R @ C（官方 _compute_affine_matrix；perspective 项为单位阵）；
-    旋转缩放绕当前画布中心，平移量以**输出尺寸** S 为单位。
-    """
+def _random_perspective(img, labels, hyp, rng, segments):
     S = hyp.imgsz
     h, w = img.shape[:2]
     angle = float(rng.uniform(-hyp.degrees, hyp.degrees))
@@ -199,30 +272,54 @@ def random_perspective(img, labels, hyp, rng):
     M = T @ Sh @ R @ C  # 官方顺序 T @ S @ R @ P @ C（P = I）
 
     out = cv2.warpAffine(img, M[:2], (S, S), borderValue=(BORDER,) * 3)
-    if not len(labels):
-        return out, labels
-    lbs = labels.copy()
-    # 角点变换 -> 外接框
-    corners = np.stack(
-        [lbs[:, 1:3], np.stack([lbs[:, 3], lbs[:, 2]], 1), lbs[:, 3:5], np.stack([lbs[:, 1], lbs[:, 4]], 1)], 1
-    )  # (M, 4, 2)
-    new_c = corners @ M[:2, :2].T + M[:2, 2]
-    new = np.stack([new_c[:, :, 0].min(1), new_c[:, :, 1].min(1),
-                    new_c[:, :, 0].max(1), new_c[:, :, 1].max(1)], 1).astype(np.float32)
-    pre = lbs[:, 1:5] * g  # 官方 box1：原框按本次仿射 scale 缩放
-    keep = _box_candidates(pre, _clip_boxes(new, S, S))
-    return out, np.concatenate([lbs[:, :1], new], 1)[keep]
+    pre = labels[:, 1:5] * g if len(labels) else np.zeros((0, 4), np.float32)  # 官方 box1
+
+    if segments is None:
+        if not len(labels):
+            return out, labels, None
+        lbs = labels.copy()
+        # 角点变换 -> 外接框
+        corners = np.stack(
+            [lbs[:, 1:3], np.stack([lbs[:, 3], lbs[:, 2]], 1), lbs[:, 3:5], np.stack([lbs[:, 1], lbs[:, 4]], 1)], 1
+        )  # (M, 4, 2)
+        new_c = corners @ M[:2, :2].T + M[:2, 2]
+        new = np.stack([new_c[:, :, 0].min(1), new_c[:, :, 1].min(1),
+                        new_c[:, :, 0].max(1), new_c[:, :, 1].max(1)], 1).astype(np.float32)
+        keep = _box_candidates(pre, _clip_boxes(new, S, S))
+        return out, np.concatenate([lbs[:, :1], new], 1)[keep], None
+
+    # 分割：多边形逐点仿射 -> clip -> 框由多边形包围盒导出（官方 area_thr=0.01）
+    polys = _clip_segments(_affine_segments(segments, M), S, S)
+    boxes = (np.stack([polygon_bbox(p) for p in polys]).astype(np.float32)
+             if polys else np.zeros((0, 4), np.float32))
+    keep = _box_candidates(pre, boxes, area_thr=0.01) if len(boxes) else np.zeros(0, bool)
+    lbs = np.concatenate([labels[:, :1], boxes], 1)[keep] if len(labels) else labels
+    return out, lbs.astype(np.float32), _subset_segments(polys, keep)
 
 
-def mixup(img, labels, other_img, other_labels, alpha, rng):
-    """图像混合：img*(1-r) + other*r，r ~ Beta(alpha, alpha)；标签拼接"""
+def random_perspective(img, labels, hyp, rng, segments=None):
+    """随机仿射（旋转/各向同性缩放/x-y 剪切/平移）-> S×S
+
+    M = T @ S @ R @ C（官方 _compute_affine_matrix；perspective 项为单位阵）；
+    旋转缩放绕当前画布中心，平移量以**输出尺寸** S 为单位。
+    segments 给定时返回三元组；框由变换后的多边形包围盒导出，过滤用 area_thr=0.01。
+    """
+    return _ret(*_random_perspective(img, labels, hyp, rng, segments))
+
+
+def mixup(img, labels, other_img, other_labels, alpha, rng, segments=None, other_segments=None):
+    """图像混合：img*(1-r) + other*r，r ~ Beta(alpha, alpha)；标签（与多边形）拼接"""
     r = float(rng.beta(alpha, alpha))
     img = np.clip(img * (1 - r) + other_img * r, 0, 255).astype(np.uint8)
     if len(labels) and len(other_labels):
         labels = np.concatenate([labels, other_labels])
+        if segments is not None:
+            segments = segments + other_segments
     elif len(other_labels):
         labels = other_labels
-    return img, labels
+        if segments is not None:
+            segments = other_segments
+    return _ret(img, labels, segments)
 
 
 def random_hsv(img, h_gain, s_gain, v_gain, rng):
@@ -244,28 +341,30 @@ def random_hsv(img, h_gain, s_gain, v_gain, rng):
     return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
 
 
-def flip_lr(img, labels):
+def flip_lr(img, labels, segments=None):
     """水平镜像：x' = W - x"""
     out = img[:, ::-1].copy()
     lbs = labels.copy()
+    W = img.shape[1]
     if len(lbs):
-        W = img.shape[1]
         x1 = lbs[:, 1].copy()
         lbs[:, 1] = W - lbs[:, 3]
         lbs[:, 3] = W - x1
-    return out, lbs
+    segs = _flip_lr_segments(segments, W) if segments is not None else None
+    return _ret(out, lbs, segs)
 
 
-def flip_ud(img, labels):
+def flip_ud(img, labels, segments=None):
     """垂直镜像：y' = H - y"""
     out = img[::-1].copy()
     lbs = labels.copy()
+    H = img.shape[0]
     if len(lbs):
-        H = img.shape[0]
         y1 = lbs[:, 2].copy()
         lbs[:, 2] = H - lbs[:, 4]
         lbs[:, 4] = H - y1
-    return out, lbs
+    segs = _flip_ud_segments(segments, H) if segments is not None else None
+    return _ret(out, lbs, segs)
 
 
 def bgr_swap(img):
@@ -280,34 +379,59 @@ def format_img(img_bgr):
     return torch.from_numpy(t.astype(np.float32))
 
 
-def augment(img, labels, img_loader, hyp, rng, idx, n):
-    """完整训练增强 -> (tensor (3,S,S), labels (M,5))"""
+def augment(img, labels, img_loader, hyp, rng, idx, n, segments=None):
+    """完整训练增强 -> (tensor (3,S,S), labels (M,5)[, masks])
+
+    segments 给定时（分割训练）返回三元组；最后一个算子之后统一栅格化 GT 掩码
+    （overlap 时按面积降序重排 labels，与实例索引图 ID 对齐）。
+    """
     S = hyp.imgsz
+    seg_on = segments is not None
+    if seg_on and len(segments) != len(labels):
+        raise ValueError(f"segments/labels misaligned: {len(segments)} vs {len(labels)}")
     if rng.random() < hyp.mosaic:
-        img, labels = mosaic(img_loader, idx, n, hyp, rng)
+        img, labels, segments = _mosaic(img_loader, idx, n, hyp, rng, segments)
     else:
-        img, labels = resize_long_side(img, labels, S)
-    if hyp.copy_paste > 0 and hyp.copy_paste_mode == "box":
+        img, labels, segments = _resize_long_side(img, labels, segments, S)
+    if not seg_on and hyp.copy_paste > 0 and hyp.copy_paste_mode == "box":
         img, labels = copy_paste(img, labels, img_loader, n, hyp, rng)
-    img, labels = random_perspective(img, labels, hyp, rng)
+    img, labels, segments = _random_perspective(img, labels, hyp, rng, segments)
 
     if rng.random() < hyp.mixup:
-        other_img, other_labels = img_loader(int(rng.integers(0, n)))
-        other_img, other_labels = resize_long_side(other_img, other_labels, S)
-        other_img, other_labels = random_perspective(other_img, other_labels, hyp, rng)
-        img, labels = mixup(img, labels, other_img, other_labels, alpha=32.0, rng=rng)
+        other_img, other_labels, other_segs = _load_sample(
+            img_loader, int(rng.integers(0, n)), seg_on)
+        other_img, other_labels, other_segs = _resize_long_side(other_img, other_labels, other_segs, S)
+        other_img, other_labels, other_segs = _random_perspective(
+            other_img, other_labels, hyp, rng, other_segs)
+        if seg_on:
+            img, labels, segments = mixup(img, labels, other_img, other_labels, alpha=32.0, rng=rng,
+                                          segments=segments, other_segments=other_segs)
+        else:
+            img, labels = mixup(img, labels, other_img, other_labels, alpha=32.0, rng=rng)
 
     img = random_hsv(img, hyp.hsv_h, hyp.hsv_s, hyp.hsv_v, rng)
     if rng.random() < hyp.flipud:
-        img, labels = flip_ud(img, labels)
+        if seg_on:
+            img, labels, segments = flip_ud(img, labels, segments=segments)
+        else:
+            img, labels = flip_ud(img, labels)
     if rng.random() < hyp.fliplr:
-        img, labels = flip_lr(img, labels)
+        if seg_on:
+            img, labels, segments = flip_lr(img, labels, segments=segments)
+        else:
+            img, labels = flip_lr(img, labels)
     if rng.random() < hyp.bgr:
         img = bgr_swap(img)
-    return format_img(img), labels
+    if not seg_on:
+        return format_img(img), labels
+
+    masks, order = rasterize_segments(segments, S, S, hyp.mask_ratio, hyp.overlap_mask)
+    if order is not None:  # overlap：标签按掩码面积降序重排，与索引 ID 一致
+        labels = labels[order]
+    return format_img(img), labels, masks
 
 
-def letterbox_train(img, labels, imgsz):
+def letterbox_train(img, labels, imgsz, segments=None, mask_ratio=4, overlap_mask=True):
     """augment=False 路径：等比缩放 + 灰边（复用 data/preprocess.letterbox 口径）"""
     from data.preprocess import letterbox
 
@@ -316,5 +440,14 @@ def letterbox_train(img, labels, imgsz):
     if len(lbs):
         lbs[:, 1::2] = lbs[:, 1::2] * ratio + pad_left
         lbs[:, 2::2] = lbs[:, 2::2] * ratio + pad_top
-        lbs = _drop_zero_area(_clip(lbs, imgsz, imgsz))
-    return format_img(img), lbs
+        lbs = _clip(lbs, imgsz, imgsz)
+    if segments is None:
+        return format_img(img), _drop_zero_area(lbs)
+    segs = _shift_segments(_scale_segments(segments, ratio, ratio), pad_left, pad_top)
+    keep = _zero_area_keep(lbs)
+    lbs = lbs[keep]
+    segs = _clip_segments(_subset_segments(segs, keep), imgsz, imgsz)
+    masks, order = rasterize_segments(segs, imgsz, imgsz, mask_ratio, overlap_mask)
+    if order is not None:
+        lbs = lbs[order]
+    return format_img(img), lbs, masks

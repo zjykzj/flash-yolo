@@ -14,7 +14,7 @@
 
 import numpy as np
 
-from utils.iou import box_iou_matrix
+from utils.iou import box_iou_matrix, mask_iou_matrix
 
 __all__ = ["FastMetrics"]
 
@@ -76,15 +76,53 @@ def _ap_from_tp_fp(tp, fp, n_gt):
     return float(pr.sum() / len(_RECALL_POINTS))
 
 
-class FastMetrics:
-    """累积每图 (检测, GT) -> compute() 输出 mAP@50 / mAP@[.5:.95] / AR@100 / images / instances"""
+def _class_stats_from_records(records, n_gt_c):
+    """单类 (scores, tp (n,n_thr)) 记录 -> (ap50, ap50-95, ar, P@.5, R@.5)
 
-    def __init__(self, nc=80):
+    与框指标同一套全局分数排序 + 101 点插值；records 为空时返回全 0。
+    """
+    n_thr = len(_IOU_THRESHOLDS)
+    if records:
+        scores_all = np.concatenate([s for s, _ in records])
+        tp_all = np.concatenate([t for _, t in records], axis=0)
+    else:
+        scores_all = np.zeros(0)
+        tp_all = np.zeros((0, n_thr), bool)
+    order = np.argsort(-scores_all, kind="stable")
+    ap_by_thr, rec_by_thr = [], []
+    pr = rc = 0.0
+    for ti in range(n_thr):
+        tp = tp_all[order, ti]
+        fp = ~tp
+        if ti == 0 and len(tp):  # IoU=0.5：max-F1 置信度点的 P/R
+            tpc, fpc = np.cumsum(tp), np.cumsum(fp)
+            prec = tpc / np.maximum(tpc + fpc, 1)
+            rec = tpc / n_gt_c
+            f1 = 2 * prec * rec / np.maximum(prec + rec, 1e-9)
+            i = int(np.argmax(f1))
+            pr, rc = float(prec[i]), float(rec[i])
+        ap_by_thr.append(_ap_from_tp_fp(tp, fp, n_gt_c))
+        rec_by_thr.append(tp.sum() / n_gt_c)
+    return ap_by_thr[0], float(np.mean(ap_by_thr)), float(np.mean(rec_by_thr)), pr, rc
+
+
+class FastMetrics:
+    """累积每图 (检测, GT) -> compute() 输出 mAP@50 / mAP@[.5:.95] / AR@100 / images / instances
+
+    task="segment" 时额外累积掩码匹配（`update_mask`），compute() 追加
+    P/R/mAP@50/mAP@[.5:.95](M) 四项；框指标路径与检测完全一致。
+    """
+
+    def __init__(self, nc=80, task="detect"):
         self.nc = nc
+        self.task = task
         self.det_boxes, self.det_scores, self.det_cls = [], [], []
         self.gt_boxes, self.gt_cls = [], []
         self.n_images = 0
         self.n_instances = 0
+        # 掩码侧只存紧凑的逐 (图, 类) tp 行（n_det, n_thr），不保留掩码本体
+        self.mask_by_class = [[] for _ in range(nc)]
+        self.n_gt_mask = np.zeros(nc, np.int64)
 
     def update(self, det_boxes, det_scores, det_cls, gt_boxes, gt_cls):
         """累积一张图（均为原图像素坐标；gt 不含 crowd）"""
@@ -96,11 +134,38 @@ class FastMetrics:
         self.gt_cls.append(np.asarray(gt_cls, np.int64).reshape(-1))
         self.n_instances += len(gt_cls)
 
+    def update_mask(self, det_masks, det_scores, det_cls, gt_masks, gt_cls):
+        """累积一张图的掩码匹配（与 update 的框结果独立）
+
+        掩码在同一网格（训练 val 为 imgsz/mask_ratio）；匹配在 update 时立即完成，
+        只保留每 (图, 类) 的 tp 行，避免跨图保存掩码本体。
+        """
+        det_masks = np.asarray(det_masks, np.uint8)
+        gt_masks = np.asarray(gt_masks, np.uint8)
+        det_scores = np.asarray(det_scores, np.float32).reshape(-1)
+        det_cls = np.asarray(det_cls, np.int64).reshape(-1)
+        gt_cls = np.asarray(gt_cls, np.int64).reshape(-1)
+        self.n_gt_mask += np.bincount(gt_cls, minlength=self.nc)
+        for c in np.unique(det_cls):
+            c = int(c)
+            m = det_cls == c
+            order = np.argsort(-det_scores[m])[:_MAX_DETS]
+            d_scores = det_scores[m][order]
+            m_gt = gt_cls == c
+            if m_gt.any():
+                tp = _greedy_match_all_thr(mask_iou_matrix(det_masks[m][order], gt_masks[m_gt]), d_scores)
+            else:
+                tp = np.zeros((len(d_scores), len(_IOU_THRESHOLDS)), bool)
+            self.mask_by_class[c].append((d_scores, tp))
+
     def compute(self):
         """COCO 口径近似指标"""
         if self.n_images == 0:
-            return {"mAP@50": 0.0, "mAP@[.5:.95]": 0.0, "AR@100": 0.0, "P": 0.0, "R": 0.0,
-                    "images": 0, "instances": 0}
+            out = {"mAP@50": 0.0, "mAP@[.5:.95]": 0.0, "AR@100": 0.0, "P": 0.0, "R": 0.0,
+                   "images": 0, "instances": 0}
+            if self.task == "segment":
+                out.update({"P(M)": 0.0, "R(M)": 0.0, "mAP@50(M)": 0.0, "mAP@[.5:.95](M)": 0.0})
+            return out
         # 预分组：每类 -> [(img_idx, dets, dets_scores, gts)]（每图取 top-100 检测）
         per_class = {}
         for c in range(self.nc):
@@ -171,7 +236,7 @@ class FastMetrics:
             aps.append(float(np.mean(ap_by_thr)))
             ars.append(float(np.mean(rec_by_thr)))
 
-        return {
+        out = {
             "mAP@50": round(float(np.mean(ap50s)), 4) if ap50s else 0.0,
             "mAP@[.5:.95]": round(float(np.mean(aps)), 4) if aps else 0.0,
             "AR@100": round(float(np.mean(ars)), 4) if ars else 0.0,
@@ -180,3 +245,22 @@ class FastMetrics:
             "images": self.n_images,
             "instances": self.n_instances,
         }
+        if self.task == "segment":
+            ap50s_m, aps_m, ars_m, prs_m, rcs_m = [], [], [], [], []
+            for c in range(self.nc):
+                n_gt_c = int(self.n_gt_mask[c])
+                if n_gt_c == 0:
+                    continue
+                ap50, ap, ar, pr, rc = _class_stats_from_records(self.mask_by_class[c], n_gt_c)
+                ap50s_m.append(ap50)
+                aps_m.append(ap)
+                ars_m.append(ar)
+                prs_m.append(pr)
+                rcs_m.append(rc)
+            out.update({
+                "P(M)": round(float(np.mean(prs_m)), 4) if prs_m else 0.0,
+                "R(M)": round(float(np.mean(rcs_m)), 4) if rcs_m else 0.0,
+                "mAP@50(M)": round(float(np.mean(ap50s_m)), 4) if ap50s_m else 0.0,
+                "mAP@[.5:.95](M)": round(float(np.mean(aps_m)), 4) if aps_m else 0.0,
+            })
+        return out

@@ -34,13 +34,22 @@ def _check_names(spec, ds):
                              f"has {ds.names[i]!r} — names must match the json categories in sorted-id order")
 
 
-def build_train_dataset(cfg, spec, role="train", augment=True, limit=0, progress=False, progress_file=None):
-    """训练集（按 spec.format 分派）；cfg 供增强/尺寸使用（duck-typing）"""
+def build_train_dataset(cfg, spec, role="train", augment=True, limit=0, progress=False, progress_file=None,
+                        task="detect"):
+    """训练集（按 spec.format 分派）；cfg 供增强/尺寸使用（duck-typing）
+
+    task="segment" 仅支持 COCO json（多边形 GT）；YOLO txt 分割格式未实现，直接报错。
+    """
     _check_paths(spec, role)
+    if task == "segment" and spec.format != "coco":
+        raise ValueError(
+            f"segmentation training requires a COCO json descriptor (format: coco), got format "
+            f"{spec.format!r} for {spec.name!r} — YOLO txt segmentation labels are not supported")
     r = spec.role(role)
     if spec.format == "coco":
         ds = CocoTrainDataset(cfg, r.ann, r.images, label=role, augment=augment, limit=limit,
-                              progress=progress, progress_file=progress_file)
+                              progress=progress, progress_file=progress_file,
+                              segment=(task == "segment"))
         _check_names(spec, ds)
         return ds
     return YoloTrainDataset(cfg, r.images, r.labels, spec.names, label=role, augment=augment,

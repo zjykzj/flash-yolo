@@ -61,6 +61,17 @@ def test_same_seed_bit_identical_gpu(tmp_path):
                           "同 seed 两跑（GPU, 2 epoch）")
 
 
+def test_same_seed_bit_identical_seg(tmp_path):
+    """分割训练同 seed 两跑逐位相同（多边形增强 + 掩码栅格化进入 RNG 流域）"""
+    data = _make_mini_coco(tmp_path, seg=True)
+    cfg = _cfg(data, model="yolo26-seg", mask_ratio=4, overlap_mask=True)
+    for tag in ("a", "b"):
+        torch.manual_seed(0)
+        Trainer(cfg, device="cpu", run_dir=tmp_path / f"seg-{tag}").train()
+    _assert_bit_identical(_weights(tmp_path / "seg-a"), _weights(tmp_path / "seg-b"),
+                          "同 seed 两跑（seg, 2 epoch）")
+
+
 def test_resume_matches_uninterrupted(tmp_path):
     """1 轮后从 resume.pt 续训 == 一次跑完 2 轮（RNG 流域每 epoch 重播 + 三套 RNG 入 checkpoint）"""
     data = _make_mini_coco(tmp_path)

@@ -169,6 +169,14 @@ C2PSA / PSABlock / Attention）。
 `>0` 二值化 -> 按框裁剪 -> 反 letterbox 重采样到原图 -> `>0.5` 再二值化（与官方
 `process_mask(upsample=True)` + `scale_masks` 两段口径一致）。
 
+**训练**：`ComputeLossSeg` 复用检测双分支损失（box/cls/l1 + ProgLoss），每个分支额外计算掩码项：
+系数 @ 原型 -> BCE（按责任 GT 框裁剪、按归一化框面积缩放，全 batch 求和 / 正样本数），
+掩码增益 = `box_gain`（官方 `loss[1] *= hyp.box`）；o2m/o2o 的 proto 分别取自身输出（o2o 已
+detach），alpha 权重作用于整条分支。数据侧 COCO 多边形随几何增强变换，最终栅格化到
+`imgsz/mask_ratio`（默认 4，与 Proto26 同网格；`overlap_mask=True` 为面积降序实例索引图）。
+训练中验证同时算 Box + Mask（低分辨率快速近似），best fitness = box + mask mAP@[.5:.95]。
+官方 `semseg` 辅助语义项未实现（结构与现有 head 契约一致，见上表）。
+
 **验收**：
 
 | 项 | 标准 | 实测 |

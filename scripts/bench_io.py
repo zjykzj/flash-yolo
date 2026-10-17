@@ -42,7 +42,8 @@ from config.datasets import load_dataset
 from config.train_config import TRAIN_CONFIG_PATH, load_train_config
 from data.build import build_train_dataset
 from data.loader import collate_fn, worker_init_fn
-from model.build import ARCHS, build_model
+from model.build import ARCHS, arch_task, build_model
+from model.weights import arch_has_scale
 from train.ema import ModelEMA
 from train.loss import build_loss
 from train.optimizer import MuSGD, build_param_groups
@@ -107,8 +108,8 @@ def bench_loader(ds, batch, workers, threads, warm, timed):
             break
     n = 0
     t0 = time.monotonic()
-    for i, (imgs, _t) in enumerate(dl):
-        n += imgs.shape[0]
+    for i, batch_ in enumerate(dl):
+        n += batch_[0].shape[0]
         if i + 1 >= timed:
             break
     el = time.monotonic() - t0
@@ -116,13 +117,18 @@ def bench_loader(ds, batch, workers, threads, warm, timed):
     return n / el
 
 
-def _step(model, loss_fn, opt, ema, imgs, targets, batch, cfg, device):
+def _step(model, loss_fn, opt, ema, imgs, targets, batch, cfg, device, masks=None):
     """单个训练步（与 Trainer 主循环同口径，仅跳过 AMP/日志）"""
     imgs = imgs.to(device, non_blocking=True,
                    memory_format=torch.channels_last if cfg.channels_last else torch.preserve_format)
     targets = targets.to(device)
+    if masks is not None:
+        masks = masks.to(device)
     preds = model(imgs)
-    loss, _ = loss_fn(preds, targets, batch, cfg.imgsz)
+    if masks is not None:
+        loss, _ = loss_fn(preds, targets, batch, cfg.imgsz, masks=masks)
+    else:
+        loss, _ = loss_fn(preds, targets, batch, cfg.imgsz)
     loss.backward()
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
     opt.step()
@@ -135,14 +141,16 @@ def bench_e2e(ds, model, loss_fn, opt, ema, batch, workers, threads, warm, timed
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
     dl = build_loader(ds, batch, workers, threads)
-    for i, (imgs, targets) in enumerate(dl):
+    for i, batch_ in enumerate(dl):
         if i + 1 >= warm:
             break
-        _step(model, loss_fn, opt, ema, imgs, targets, batch, cfg, device)
+        imgs, targets, masks = batch_ if len(batch_) == 3 else (*batch_, None)
+        _step(model, loss_fn, opt, ema, imgs, targets, batch, cfg, device, masks=masks)
     t0 = time.monotonic()
     nb = 0
-    for imgs, targets in dl:
-        _step(model, loss_fn, opt, ema, imgs, targets, batch, cfg, device)
+    for batch_ in dl:
+        imgs, targets, masks = batch_ if len(batch_) == 3 else (*batch_, None)
+        _step(model, loss_fn, opt, ema, imgs, targets, batch, cfg, device, masks=masks)
         nb += 1
         if nb >= timed:
             break
@@ -178,7 +186,7 @@ def main():
     cfg = load_train_config(TRAIN_CONFIG_PATH)
     if args.model:
         cfg.model = args.model
-    if cfg.model != "yolo26":  # 档位由架构固定（与 Trainer 同口径）
+    if not arch_has_scale(cfg.model):  # 档位由架构固定（与 Trainer 同口径）
         cfg.scale = ARCHS[cfg.model]["default_scale"]
     cfg.data = args.data
     log_params(logger, __file__, data=args.data, model=cfg.model, batch=args.batch,
@@ -203,7 +211,8 @@ def main():
         logger.warning(f"batch {bad} 不整除 nbs={cfg.nbs} → accum 取整后 wd 因子 ≠ 1.0，与官方不等价"
                        f"（本仓库未实现 wd 缩放）；建议 {[b for b in (16, 32, 64, 128) if b <= cfg.nbs]}")
 
-    ds = build_train_dataset(cfg, spec, "train", augment=True, limit=args.limit, progress=False)
+    ds = build_train_dataset(cfg, spec, "train", augment=True, limit=args.limit, progress=False,
+                             task=arch_task(cfg.model))
 
     # ---- ① loader-only 全网格 ----
     logger.info("")

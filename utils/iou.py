@@ -2,7 +2,7 @@
 
 import numpy as np
 
-__all__ = ["box_iou", "box_iou_matrix"]
+__all__ = ["box_iou", "box_iou_matrix", "mask_iou_matrix"]
 
 
 def box_iou(box, boxes):
@@ -43,4 +43,24 @@ def box_iou_matrix(boxes1, boxes2):
     y2 = np.minimum(boxes1[:, None, 3], boxes2[None, :, 3])
     inter = np.clip(x2 - x1, 0, None) * np.clip(y2 - y1, 0, None)
     union = area1[:, None] + area2[None, :] - inter
+    return inter / np.maximum(union, 1e-9)
+
+
+def mask_iou_matrix(masks1, masks2):
+    """两组掩码的 IoU 矩阵（同一网格，二值或 0/1）
+
+    Args:
+        masks1: (N, h, w)
+        masks2: (M, h, w)
+
+    Returns:
+        (N, M) IoU
+    """
+    n, m = len(masks1), len(masks2)
+    if n == 0 or m == 0:
+        return np.zeros((n, m), np.float32)
+    a = np.asarray(masks1, np.float32).reshape(n, -1)
+    b = np.asarray(masks2, np.float32).reshape(m, -1)
+    inter = a @ b.T
+    union = a.sum(1)[:, None] + b.sum(1)[None, :] - inter
     return inter / np.maximum(union, 1e-9)

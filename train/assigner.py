@@ -130,7 +130,7 @@ class TaskAlignedAssigner:
 
         Returns:
             dict: fg_mask (B, N) / target_scores (B, N, nc) / target_ltrb (B, N, 4) /
-                  target_boxes (B, N, 4) / n_pos (B,) long
+                  target_boxes (B, N, 4) / target_gt_idx (B, N) / n_pos (B,) long
         """
         B, _, N = pred_boxes.shape
         nc = pred_scores.shape[1]
@@ -141,6 +141,7 @@ class TaskAlignedAssigner:
             "target_scores": torch.zeros(B, N, nc, device=device),
             "target_ltrb": torch.zeros(B, N, 4, device=device),
             "target_boxes": torch.zeros(B, N, 4, device=device),
+            "target_gt_idx": torch.zeros(B, N, dtype=torch.long, device=device),
             "n_pos": torch.zeros(B, dtype=torch.long, device=device),
         }
         if gt.shape[1] == 0 or not gt_mask.any():
@@ -233,6 +234,7 @@ class TaskAlignedAssigner:
             [ax[None, :] - g[..., 0], ay[None, :] - g[..., 1], g[..., 2] - ax[None, :], g[..., 3] - ay[None, :]], -1
         ) * m4
         out["target_boxes"][i:j] = g * m4
+        out["target_gt_idx"][i:j] = gt_idx * fg_mask  # 非正样本 0（分割掩码 gather 用）
         out["fg_mask"][i:j] = fg_mask
 
     def forward(self, pred_boxes, pred_scores, anchors, strides, gt, one2one=False):
@@ -249,5 +251,6 @@ class TaskAlignedAssigner:
             "target_scores": out["target_scores"][0],
             "target_ltrb": out["target_ltrb"][0],
             "target_boxes": out["target_boxes"][0],
+            "target_gt_idx": out["target_gt_idx"][0],
             "n_pos": int(out["n_pos"][0]),
         }
