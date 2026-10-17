@@ -44,13 +44,39 @@ def test_recipe_file_n():
 
 
 def test_seg_recipe():
-    """yolo26-seg-coco-ft：官方 seg ckpt 的 mask_ratio/overlap/copy_paste 口径显式落盘"""
+    """yolo26-seg-coco-ft n 档：数值取自官方 yolo26n-seg.pt 的 train_args"""
     cfg = load_train_config(TRAIN_CONFIG_PATH, recipe="yolo26-seg-coco-ft", scale="n")
     assert cfg.model == "yolo26-seg"
     assert cfg.mask_ratio == 1 and cfg.overlap_mask is True
     assert cfg.copy_paste == 0.075 and cfg.copy_paste_mode == "flip"
-    assert cfg.epochs == 245 and cfg.box_gain == 5.63 and cfg.cls_gain == 0.56
+    assert cfg.epochs == 245 and cfg.nbs == 128
+    assert cfg.lr0 == 0.0054 and cfg.lrf == 0.05 and cfg.momentum == 0.937
+    assert cfg.warmup_epochs == 1.0 and cfg.warmup_momentum == 0.658
+    assert cfg.box_gain == 5.628 and cfg.cls_gain == 0.561 and cfg.dfl_gain == 9.039
+    # n-seg ckpt 与检测表不同：mixup/degrees/shear/bgr 都是 0
+    assert cfg.mixup == 0.0 and cfg.degrees == 0.0 and cfg.shear == 0.0 and cfg.bgr == 0.0
+    assert cfg.muon_w == 0.528 and cfg.sgd_w == 0.674 and cfg.topk == 8
     print("  yolo26-seg-coco-ft n 档配方正确")
+
+
+def test_seg_recipe_per_scale():
+    """s/m/l/x：各自官方 seg ckpt 的 train_args（s 是另一提交的早期基线）"""
+    s = load_train_config(TRAIN_CONFIG_PATH, recipe="yolo26-seg-coco-ft", scale="s")
+    assert s.epochs == 50 and s.lr0 == 0.00125 and s.lrf == 0.5
+    assert s.momentum == 0.937 and s.weight_decay == 0.0007
+    assert s.topk == 10 and s.box_gain == 7.5 and s.cls_gain == 0.5 and s.dfl_gain == 6.0
+    assert s.mixup == 0.05 and s.copy_paste == 0.15 and s.aug_scale == 0.9
+    assert s.translate == 0.1 and s.fliplr == 0.5 and s.hsv_s == 0.7 and s.close_mosaic == 5
+    for scale, epochs, cp in (("m", 80, 0.304), ("l", 60, 0.404), ("x", 40, 0.404)):
+        cfg = load_train_config(TRAIN_CONFIG_PATH, recipe="yolo26-seg-coco-ft", scale=scale)
+        assert cfg.epochs == epochs and cfg.copy_paste == cp, f"{scale}: {cfg.epochs}/{cfg.copy_paste}"
+        assert cfg.lr0 == 0.00038 and cfg.lrf == 0.882
+        assert cfg.momentum == 0.948 and cfg.weight_decay == 0.00027
+        assert cfg.topk == 5 and cfg.box_gain == 9.832 and cfg.cls_gain == 0.649 and cfg.dfl_gain == 0.958
+        assert cfg.mixup == 0.427 and cfg.aug_scale == 0.95
+        assert cfg.translate == 0.275 and cfg.fliplr == 0.304
+        assert cfg.mask_ratio == 1 and cfg.overlap_mask is True and cfg.copy_paste_mode == "flip"
+    print("  yolo26-seg-coco-ft s/m/l/x 分档配方正确")
 
 
 def test_recipe_file_per_scale():

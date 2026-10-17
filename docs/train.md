@@ -32,18 +32,34 @@ python scripts/train.py --data coco --model yolo26-seg --name seg --mask-ratio 4
 |---|---|---|---|
 | *（不传）* | 从零 / 自有数据微调 | — | 100 |
 | `yolo26-coco-ft` | 官方 COCO 阶段（微调） | **需 O365 预训练权重初始化** | 245/70/80/60/40 |
-| `yolo26-seg-coco-ft` | 官方 seg COCO 阶段（微调） | 需 O365 初始化 + COCO json 分割描述符；n 档逐项核对官方 seg ckpt | 245（s/m/l/x 沿用 detect 值，未核对 seg ckpt） |
+| `yolo26-seg-coco-ft` | 官方 seg COCO 阶段（微调） | 需 `yolo26*-objv1-seg`（365 类）初始化 + COCO json 分割描述符；n/s/m/l/x 全部按官方 seg ckpt 的 `train_args` 核对 | 245/50/80/60/40 |
 | `yolo26-o365-pt` | 官方 Objects365 预训练 | 需 Objects365 数据集（未在本仓库验证） | 150 |
 
-> `yolo26-seg-coco-ft` 显式写入官方 seg ckpt 的三个口径：`mask_ratio: 1`、`overlap_mask: true`、
-> `copy_paste: 0.075` + `copy_paste_mode: flip`，并启用 semseg 辅助损失；从零训练仍用 default。
+> `yolo26-seg-coco-ft` 的数值取自五个官方 seg ckpt 的 `train_args`：m/l/x 与官方检测表一致；
+> s 来自另一提交的早期基线（epochs 50 / lr0 0.00125），n 的 mixup/degrees/shear/bgr 与检测表不同——
+> 均按 seg ckpt 保留。配方显式写入 `mask_ratio: 1`、`overlap_mask: true`、`copy_paste_mode: flip`，
+> semseg 辅助损失始终启用；未实现的 ckpt 参数（cls_w/o2m/erasing 等）见配方头部。从零训练仍用 default。
 
 ```bash
 python scripts/train.py --data coco --recipe yolo26-coco-ft --weights yolo26n-objv1-150.safetensors
 
 # 分割官方 COCO 阶段（n 档；mask_ratio=1 / copy_paste_mode=flip / semseg）
-python scripts/train.py --data coco --recipe yolo26-seg-coco-ft --weights yolo26n-objv1-150.safetensors
+python scripts/convert_weights.py --src weights/yolo26n-objv1-seg.pt \
+    --dst weights/yolo26n-objv1-seg.safetensors
+python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
+    --weights weights/yolo26n-objv1-seg.safetensors
 ```
+
+> 分割初始化是 **365 类**的 O365 权重，COCO 训练建 80 类头：`--weights` 走
+> `load_weights_finetune` 的 key+shape 交集加载——backbone/neck/proto/cv2 逐位加载，
+> cv3/one2one_cv3/semseg 等类别相关头按 80 类重建（n 档实测 740/844 张量加载、104 个重初始化）。
+> 实测（RTX 4080 32GB，mask_ratio=1，640，batch 1，AMP）训练约 **5.2 img/s**、峰值 **1.41G**；
+> 全量 COCO 245 轮约 **65 天/单卡**——完整复现需要多卡（当前 Trainer 单设备，DDP 未实现）。
+>
+> **单卡闭环验收（coco-tiny：train 2000 / val 1000）**：官方 n 档配方 + O365 初始化，
+> 1 epoch / batch 4 / AMP / 640 —— 训练 7m20s、峰值 5.31G；pycocotools Box mAP50-95
+> 0.0017 / Mask 0.0015（person 0.073 / 0.062）；导出双输出 ONNX 后 pt/onnx 掩码逐像素一致。
+> 1 epoch 只用于验收管线，不代表精度（类别头重建后仅 ~15 个优化步）。
 
 > v3 没有专用配方：**推荐配置 = default + 两个开关**（`--model yolov3-tiny-silu --obj-iou-target`），
 > 依据与数字见 `yolov3-tiny-runs.md` §4.5；旧的 `yolov3-tiny-darknet` 配方已定案退役（§4.4）。

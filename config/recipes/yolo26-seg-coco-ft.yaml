@@ -1,92 +1,121 @@
 # 官方 YOLO26-seg Stage-2 COCO 微调配方（发布权重 yolo26*-seg.pt 的对应配方）
 #
-# 来源：官方 yolo26n-seg.pt 内嵌的 train_args（已逐项核对）+
-#       Ultralytics《YOLO26 Training Recipe》的超参表。
-#       检测/增强/优化器数值与 yolo26-coco-ft 同族；seg 专属项来自 checkpoint：
-#         mask_ratio: 1 · overlap_mask: true · copy_paste: 0.075 · copy_paste_mode: flip
+# 来源：五个官方 checkpoint 内嵌的 train_args（ultralytics 8.3.222，
+#       weights/yolo26{n,s,m,l,x}-seg.pt，逐 scale 读取）：
+#         n  2026-01-03  exp-main-seg-topk @46c348d  (name: yolo26n-best-hyp-seg-1p)
+#         s  2025-12-02  @522d5a8（不同提交；整套为早期基线，与其它四档差异很大）
+#         m  2026-01-10  exp-main-seg-topk @46c348d
+#         l  2026-01-07  exp-main-seg-topk @46c348d
+#         x  2025-12-30  exp-main-seg-topk @46c348d
+#       官方《YOLO26 Training Recipe》的检测表与 m/l/x 逐项吻合（四舍五入内），
+#       但 n/s 的 seg ckpt 记录与检测表不同——本配方以 **seg ckpt 的 train_args 为准**
+#       （目标是复现发布权重，而非检测表）。
 #
-# ⚠️ 前置条件：**必须**用 Objects365v1 预训练权重初始化（yolo26{n,s,m,l,x}-objv1-150）。
-#    从零训练请用内置 default（本配方是微调档，lr0 只有 default 的 54%）。
+# 与官方检测表的差异（按 seg ckpt 保留）：
+#   n: momentum 0.937（表 0.947）· mixup 0（表 0.012）· degrees/shear 0（表 1.11/1.46）·
+#      bgr 0（表 0.106）
+#   s: epochs 50 / lr0 0.00125 / lrf 0.5 / momentum 0.937 / wd 0.0007 /
+#      gains 7.5-0.5-6.0；ckpt 无 topk 记录（null），按 released code 默认 10。
+#   m/l/x: 与检测表一致（copy_paste 0.304/0.404/0.404、mixup 0.427、topk 5 等）。
 #
-# 归属：`base` = n 档（官方 yolo26n-seg.pt 逐项核对）；
-#       s/m/l/x 的 scale_overrides 沿用 yolo26-coco-ft 的发布值（**未从 seg 权重核对**，
-#       仅作为可运行起点；拿到官方 seg s/m/l/x train_args 后应逐项替换）。
+# ⚠️ 前置条件：**必须**用 Objects365v1 分割预训练权重初始化
+#    （yolo26{n,s,m,l,x}-objv1-seg.pt，365 类）。Trainer 的 --weights 走 key+shape 交集加载
+#    （load_weights_finetune）：backbone/neck/proto/cv2 逐位加载，cv3/semseg 等类别相关头
+#    按 COCO 80 类重建；实测 n 档 740/844 张量加载、104 个类别头张量重初始化。
+#    从零训练请用内置 default（本配方为微调档，lr0 只有 default 的 54% 或更低）。
+#
+# batch/nbs：官方物理 batch 128（x 档 125）训练；ckpt 内嵌 nbs=64 是 ultralytics 默认，
+#    本仓库用 nbs 决定“每多少张图一次优化步”（accum=round(nbs/batch)），所以写 nbs=128
+#    以对齐官方物理 batch。batch 是机器相关值，命令行给，不写进配方。
+#    close_mosaic 由 Trainer 按 min(N, epochs//5) 缩放：x 档 40 轮 -> 实际最后 8 轮。
+#
+# 官方记录但本仓库未实现的参数（实验分支/额外增强，仅供留档）：
+#   cls_w: n 2.74 / s 2.0 / m,l,x 3.48   —— o2o 分类损失额外权重
+#   o2m:   n,s 1.0 / m,l,x 0.705         —— ProgLoss 初始权重（本仓库用 0.8）
+#   erasing 0.4 · auto_augment randaugment · cutmix/perspective（m 档非 0，本仓库忽略）
+#   warmup_bias_lr: n 0.081 / s 0.1 / m,l,x 0.057（本仓库未实现）
+#   amp: 官方 true；本仓库 default 为 false（微调可显式 --amp）
 #
 # 用法：python scripts/train.py --recipe yolo26-seg-coco-ft --scale n \
-#         --weights <objv1-150.safetensors> --data <coco-seg 描述符>
+#         --weights <objv1-seg.safetensors> --data <coco-seg 描述符> --batch <N>
 #
-# 说明：官方 semseg 辅助项与 seg CopyPaste(flip) 已在本次实现；本配方显式打开两者所需开关。
+# 说明：官方 semseg 辅助项与 seg CopyPaste(flip) 已实现；本配方显式打开所需开关。
 
 base:
   model: yolo26-seg
-  mask_ratio: 1        # 官方 yolo26n-seg.pt 记录值（全分辨率 GT 掩码；显存占用显著高于默认 4）
+  mask_ratio: 1        # 官方 seg ckpt 记录值（全分辨率 GT 掩码；显存显著高于默认 4）
   overlap_mask: true
   copy_paste_mode: flip
-  epochs: 245          # n 档 245 轮（s/m/l/x 见 scale_overrides）
-  nbs: 128
+  epochs: 245          # n 档（s/m/l/x 见 scale_overrides）
+  nbs: 128             # 对齐官方物理 batch 128（见头部 batch/nbs 说明）
   lr0: 0.0054
-  lrf: 0.0495
-  momentum: 0.947
+  lrf: 0.05
+  momentum: 0.937
   weight_decay: 0.00064
-  warmup_epochs: 0.98
-  muon_w: 0.528        # 实验分支参数：官方 n 档记录值
+  warmup_epochs: 1.0
+  warmup_momentum: 0.658
+  muon_w: 0.528        # 实验分支参数：n 档记录值
   sgd_w: 0.674
-  topk: 8              # 官方 n 档 o2m 分配 top-k（released 代码默认 10）
-  box_gain: 5.63
-  cls_gain: 0.56
-  dfl_gain: 9.04
+  topk: 8              # n 档 o2m 分配 top-k（released code 默认 10）
+  box_gain: 5.628
+  cls_gain: 0.561
+  dfl_gain: 9.039
   mosaic: 0.909
-  mixup: 0.012
-  copy_paste: 0.075    # 官方记录值；检测标签无 segments 时官方实现恒为 no-op（见 copy_paste_mode）
+  mixup: 0.0
+  copy_paste: 0.075    # seg 标签有 segments，flip 模式真实生效
   aug_scale: 0.562
-  degrees: 1.11
-  shear: 1.46
+  degrees: 0.0
+  shear: 0.0
   translate: 0.071
   fliplr: 0.606
   hsv_h: 0.014
   hsv_s: 0.645
   hsv_v: 0.566
-  bgr: 0.106
+  bgr: 0.0
+  close_mosaic: 10
 
 scale_overrides:
   s:
-    epochs: 70
-    lr0: 0.00038
-    lrf: 0.882
-    momentum: 0.948
-    weight_decay: 0.00027
-    warmup_epochs: 0.99
-    muon_w: 0.436
-    sgd_w: 0.479
-    topk: 5
-    box_gain: 9.83
-    cls_gain: 0.65
-    dfl_gain: 0.96
-    mosaic: 0.992
+    epochs: 50
+    lr0: 0.00125
+    lrf: 0.5
+    momentum: 0.937
+    weight_decay: 0.0007
+    warmup_epochs: 1.0
+    warmup_momentum: 0.8
+    muon_w: 0.5
+    sgd_w: 0.5
+    topk: 10
+    box_gain: 7.5
+    cls_gain: 0.5
+    dfl_gain: 6.0
+    mosaic: 1.0
     mixup: 0.05
-    copy_paste: 0.404
+    copy_paste: 0.15
     aug_scale: 0.9
     degrees: 0.0
     shear: 0.0
-    translate: 0.275
-    fliplr: 0.304
-    hsv_h: 0.013
-    hsv_s: 0.353
-    hsv_v: 0.194
+    translate: 0.1
+    fliplr: 0.5
+    hsv_h: 0.015
+    hsv_s: 0.7
+    hsv_v: 0.4
     bgr: 0.0
+    close_mosaic: 5
   m:
     epochs: 80
     lr0: 0.00038
     lrf: 0.882
     momentum: 0.948
     weight_decay: 0.00027
-    warmup_epochs: 0.99
+    warmup_epochs: 0.987
+    warmup_momentum: 0.541
     muon_w: 0.436
     sgd_w: 0.479
     topk: 5
-    box_gain: 9.83
-    cls_gain: 0.65
-    dfl_gain: 0.96
+    box_gain: 9.832
+    cls_gain: 0.649
+    dfl_gain: 0.958
     mosaic: 0.992
     mixup: 0.427
     copy_paste: 0.304
@@ -99,20 +128,22 @@ scale_overrides:
     hsv_s: 0.353
     hsv_v: 0.194
     bgr: 0.0
+    close_mosaic: 10
   l:
     epochs: 60
     lr0: 0.00038
     lrf: 0.882
     momentum: 0.948
     weight_decay: 0.00027
-    warmup_epochs: 0.99
+    warmup_epochs: 1.0
+    warmup_momentum: 0.541
     muon_w: 0.436
     sgd_w: 0.479
     topk: 5
-    box_gain: 9.83
-    cls_gain: 0.65
-    dfl_gain: 0.96
-    mosaic: 0.992
+    box_gain: 9.832
+    cls_gain: 0.649
+    dfl_gain: 0.958
+    mosaic: 1.0
     mixup: 0.427
     copy_paste: 0.404
     aug_scale: 0.95
@@ -124,20 +155,22 @@ scale_overrides:
     hsv_s: 0.353
     hsv_v: 0.194
     bgr: 0.0
+    close_mosaic: 10
   x:
     epochs: 40
     lr0: 0.00038
     lrf: 0.882
     momentum: 0.948
     weight_decay: 0.00027
-    warmup_epochs: 0.99
+    warmup_epochs: 1.0
+    warmup_momentum: 0.541
     muon_w: 0.436
     sgd_w: 0.479
     topk: 5
-    box_gain: 9.83
-    cls_gain: 0.65
-    dfl_gain: 0.96
-    mosaic: 0.992
+    box_gain: 9.832
+    cls_gain: 0.649
+    dfl_gain: 0.958
+    mosaic: 1.0
     mixup: 0.427
     copy_paste: 0.404
     aug_scale: 0.95
@@ -149,3 +182,4 @@ scale_overrides:
     hsv_s: 0.353
     hsv_v: 0.194
     bgr: 0.0
+    close_mosaic: 10

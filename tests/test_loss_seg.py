@@ -43,9 +43,9 @@ def _case(grad=False):
     return model, preds, targets
 
 
-def _rect_masks(targets, overlap):
-    """GT 框 -> proto 网格矩形掩码；overlap=True: (B,h,w) 实例索引；False: (N,h,w)"""
-    mh = mw = IMGSZ // MASK_RATIO
+def _rect_masks(targets, overlap, mask_ratio=MASK_RATIO):
+    """GT 框 -> 掩码网格矩形掩码；overlap=True: (B,h,w) 实例索引；False: (N,h,w)"""
+    mh = mw = IMGSZ // mask_ratio
 
     def box(row):
         x1, y1, x2, y2 = (row[2:] * (mw / IMGSZ)).tolist()
@@ -100,11 +100,12 @@ def _ref_batch(targets, masks, overlap):
             "masks": masks.float(), "sem_masks": _sem_masks(targets, masks, overlap)}
 
 
+@pytest.mark.parametrize("mask_ratio", [4, 1])  # 4=批量路径；1=高分辨率切片路径
 @pytest.mark.parametrize("overlap", [True, False])
-def test_seg_loss_parity_vs_ultralytics(overlap):
-    cfg = TrainConfig(overlap_mask=overlap, mask_ratio=MASK_RATIO)
+def test_seg_loss_parity_vs_ultralytics(overlap, mask_ratio):
+    cfg = TrainConfig(overlap_mask=overlap, mask_ratio=mask_ratio)
     model, preds, targets = _case()
-    masks = _rect_masks(targets, overlap)
+    masks = _rect_masks(targets, overlap, mask_ratio)
     batch = _ref_batch(targets, masks, overlap)
     loss_fn = ComputeLossSeg(cfg, model.model[-1], torch.device("cpu"))
     loss_fn.set_alpha(0, cfg.epochs)

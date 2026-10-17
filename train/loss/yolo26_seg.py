@@ -22,6 +22,10 @@ __all__ = ["ComputeLossSeg"]
 
 # 掩码损失分块预算：每块 gather 的 proto 约 4 * nm * mh * mw 字节
 _MASK_LOSS_CHUNK_ELEMS = 32_000_000  # ~128 MiB float32
+# 高分辨率掩码网格（如官方 mask_ratio=1 @640 = 640²）改走「按 GT 框切片」：
+# 分块 gather 的 proto 副本会被 autograd 逐块保留（实测 B=1/P=200 约 10.5GB）。
+# 低分辨率（默认 mask_ratio=4 @640 = 160²）保留批量路径，吞吐与逐位行为不变。
+_BOX_SLICE_MASK_ELEMS = 32_768
 
 
 def _crop_mask_float(loss, boxes):
@@ -33,6 +37,69 @@ def _crop_mask_float(loss, boxes):
     rows = (torch.arange(h, device=loss.device)[None, :] >= y1[:, None]) & \
            (torch.arange(h, device=loss.device)[None, :] < y2[:, None])
     return loss * cols[:, None, :].to(loss.dtype) * rows[:, :, None].to(loss.dtype)
+
+
+def _mask_loss_batched(coeff_pos, proto, img_idx, gt_idx_pos, masks, mxyxy, area,
+                       row_idx, nm, mh, mw, overlap):
+    """批量路径：分块 gather proto -> 全网格 BCE -> crop -> 按面积归一化
+
+    返回 Σ(逐正样本损失)（未除正样本数）。mxyxy 为掩码网格坐标的 GT 框。
+    """
+    chunk = max(1, _MASK_LOSS_CHUNK_ELEMS // max(nm * mh * mw, 1))
+    total = coeff_pos.new_zeros(())
+    n_pos = coeff_pos.shape[0]
+    for s in range(0, n_pos, chunk):
+        e = min(s + chunk, n_pos)
+        proto_c = proto[img_idx[s:e]]  # (c, nm, mh, mw)
+        pred = torch.bmm(coeff_pos[s:e].unsqueeze(1), proto_c.reshape(e - s, nm, -1))
+        pred = pred.squeeze(1).reshape(-1, mh, mw)
+        if overlap:
+            gt = (masks[img_idx[s:e]] == (gt_idx_pos[s:e] + 1)[:, None, None]).to(pred.dtype)
+        else:
+            gt = masks[row_idx[s:e]].to(pred.dtype)
+        loss = F.binary_cross_entropy_with_logits(pred, gt, reduction="none")
+        loss = _crop_mask_float(loss, mxyxy[s:e])
+        total = total + (loss.mean(dim=(1, 2)) / area[s:e]).sum()
+    return total
+
+
+def _mask_loss_sliced(coeff_pos, proto, img_idx, gt_idx_pos, masks, mxyxy, area,
+                      row_idx, nm, mh, mw, overlap):
+    """高分辨率路径：逐正样本按 GT 框切片做 BCE，只保留框内像素
+
+    与批量路径数学等价（官方 crop_mask 把框外置零，框外对求和无贡献）：
+        mean_grid(loss) / area == sum_inside / (mh*mw*area)
+    整数边界与官方 crop 条件 (col >= x1) & (col < x2) 一致：ceil(x1) .. ceil(x2)-1。
+    框坐标/索引一次性取回 CPU（每分支每步一次同步），循环体内不再触发 device 同步。
+    """
+    x1, y1, x2, y2 = mxyxy.unbind(1)
+    bounds = torch.stack([
+        torch.ceil(x1).clamp(0, mw).long(), torch.ceil(x2).clamp(0, mw).long(),
+        torch.ceil(y1).clamp(0, mh).long(), torch.ceil(y2).clamp(0, mh).long(),
+    ], 1)
+    cols = [bounds, torch.stack([img_idx, gt_idx_pos], 1)]
+    if not overlap:
+        cols.append(row_idx[:, None])
+    meta = torch.cat(cols, 1).cpu().tolist()
+    areas = area.cpu().tolist()
+    n_pos = coeff_pos.shape[0]
+    total = None
+    for i in range(n_pos):
+        c0, c1, r0, r1, bi, gi = (int(v) for v in meta[i][:6])
+        if c1 <= c0 or r1 <= r0:  # crop 后全零 -> 贡献 0（官方同口径）
+            continue
+        proto_i = proto[bi][:, r0:r1, c0:c1].reshape(nm, -1)
+        pred_i = (coeff_pos[i].unsqueeze(0) @ proto_i).squeeze(0)
+        if overlap:
+            gt_i = (masks[bi, r0:r1, c0:c1] == (gi + 1)).reshape(-1).to(pred_i.dtype)
+        else:
+            gt_i = masks[int(meta[i][6]), r0:r1, c0:c1].reshape(-1).to(pred_i.dtype)
+        loss_i = F.binary_cross_entropy_with_logits(pred_i, gt_i, reduction="sum")
+        term = loss_i / (mh * mw * areas[i])
+        total = term if total is None else total + term
+    if total is None:  # 全部退化框：保持 proto/coeff 的图连通（官方同款零项）
+        total = (proto * 0).sum() + (coeff_pos * 0).sum()
+    return total
 
 
 class ComputeLossSeg(ComputeLoss):
@@ -97,22 +164,10 @@ class ComputeLossSeg(ComputeLoss):
             if row_idx.numel() and int(row_idx.max()) >= masks.shape[0]:
                 raise ValueError("mask/target index out of range — masks are not aligned with targets")
 
-        chunk = max(1, _MASK_LOSS_CHUNK_ELEMS // max(nm * mh * mw, 1))
-        total = coeff.new_zeros(())
         n_pos = pos.numel()
-        for s in range(0, n_pos, chunk):
-            e = min(s + chunk, n_pos)
-            proto_c = proto[img_idx[s:e]]  # (c, nm, mh, mw)
-            pred = torch.bmm(coeff_pos[s:e].unsqueeze(1), proto_c.reshape(e - s, nm, -1))
-            pred = pred.squeeze(1).reshape(-1, mh, mw)
-            if self.overlap:
-                gt = (masks[img_idx[s:e]] == (gt_idx_pos[s:e] + 1)[:, None, None]).to(pred.dtype)
-            else:
-                gt = masks[row_idx[s:e]].to(pred.dtype)
-            loss = F.binary_cross_entropy_with_logits(pred, gt, reduction="none")
-            loss = _crop_mask_float(loss, mxyxy[s:e])
-            total = total + (loss.mean(dim=(1, 2)) / area[s:e]).sum()
-
+        helper = _mask_loss_sliced if mh * mw > _BOX_SLICE_MASK_ELEMS else _mask_loss_batched
+        total = helper(coeff_pos, proto, img_idx, gt_idx_pos, masks, mxyxy, area,
+                       None if self.overlap else row_idx, nm, mh, mw, self.overlap)
         l_seg = total / n_pos
         extra = self.cfg.box_gain * l_seg * batch_size
         items = {"seg": l_seg.detach(), "sem": 0.0}

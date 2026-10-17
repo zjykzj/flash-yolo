@@ -100,6 +100,9 @@ def test_arch_resolution():
     """架构轴：文件名/后缀 -> arch + task（档位正则仍从 yolo26n-seg 里取 n）"""
     assert arch_from_weights("weights/yolo26n-seg.safetensors") == "yolo26-seg"
     assert arch_from_weights("yolo26x-seg.pt") == "yolo26-seg"
+    # O365 预训练资产名：yolo26n-objv1-seg.pt -> 分割架构（档位正则仍能取 n）
+    assert arch_from_weights("yolo26n-objv1-seg.pt") == "yolo26-seg"
+    assert resolve_arch_scale("yolo26n-objv1-seg.pt") == ("yolo26-seg", "n")
     assert arch_from_weights("weights/yolo26n.safetensors") is None  # 检测权重仍走默认 yolo26
     assert resolve_arch_scale("weights/yolo26n-seg.safetensors") == ("yolo26-seg", "n")
     assert arch_task("yolo26-seg") == "segment"

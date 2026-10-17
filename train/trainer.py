@@ -23,7 +23,8 @@ from data.build import build_eval_dataset, build_train_dataset
 from data.loader import collate_fn, seed_main_rng, worker_init_fn
 from data.scan import scan_summary
 from model.summary import summary_lines
-from model.weights import arch_has_scale, encode_anchors, load_weights, provenance_meta
+from model.weights import (arch_has_scale, encode_anchors, load_weights, load_weights_finetune,
+                           provenance_meta)
 from model.build import ARCHS, YOLO26_FAMILY, arch_display_name, arch_task, build_model
 from train.checkpoint import load_resume, save_best_last, save_periodic, save_resume
 from train.ema import ModelEMA
@@ -112,7 +113,10 @@ class Trainer:
         if cfg.cfg_path:
             logger.info(f"model cfg: {cfg.cfg_path} (custom structure, not from the ARCHS registry)")
         if weights:
-            load_weights(model, weights, strict=True)
+            loaded, skipped = load_weights_finetune(model, weights)
+            if skipped:
+                logger.info(f"weight init: {len(loaded)} tensors loaded · {len(skipped)} class-head "
+                            f"tensors re-initialized ({skipped[0][1]} -> {skipped[0][2]})")
         model.to(self.device).train()
         if cfg.channels_last:  # NHWC 训练（在 EMA deepcopy 之前，副本继承布局）
             model.to(memory_format=torch.channels_last)

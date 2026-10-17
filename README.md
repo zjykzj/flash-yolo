@@ -86,8 +86,8 @@ Instance segmentation is supported end to end as well:
 
 ```bash
 python scripts/train.py --data coco --model yolo26-seg --name seg-coco --batch 64 --workers 16
-# official COCO-stage recipe (needs Objects365 initialization):
-python scripts/train.py --data coco --recipe yolo26-seg-coco-ft --weights <objv1-150.safetensors>
+# official COCO-stage recipe (needs Objects365 seg initialization, 365 -> 80 classes):
+python scripts/train.py --data coco --recipe yolo26-seg-coco-ft --weights <objv1-seg.safetensors>
 ```
 
 Segmentation training requires COCO json polygon annotations; the resulting checkpoint then

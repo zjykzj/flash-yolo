@@ -18,9 +18,9 @@ from safetensors.torch import load_file, save_file
 
 from config.inference import IMGSZ
 
-__all__ = ["load_weights", "save_weights", "scale_from_weights", "arch_from_weights", "arch_has_scale",
-           "resolve_arch_scale", "resolve_imgsz", "load_meta", "encode_meta", "encode_anchors", "apply_meta",
-           "provenance_meta"]
+__all__ = ["load_weights", "load_weights_finetune", "save_weights", "scale_from_weights",
+           "arch_from_weights", "arch_has_scale", "resolve_arch_scale", "resolve_imgsz", "load_meta",
+           "encode_meta", "encode_anchors", "apply_meta", "provenance_meta"]
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ _SCALE_RE = re.compile(r"yolo26([nsmlx])($|[-_.])", re.I)
 # flash-yolo（本项目自有架构）。长名在前，否则 "yolov3-tiny-silu" 会被 "yolov3-tiny" 前缀误吸
 _ARCH_RE = re.compile(r"(yolov3-tiny-silu|yolov3-tiny|flash-yolo)($|[-_.])", re.I)
 # 任务后缀：yolo26n-seg（官方分割权重命名）。先于档位判定：yolo26 系里带 -seg 归 yolo26-seg
-_TASK_SUFFIX_RE = re.compile(r"yolo26[nsmlx]-(seg)($|[-_.])", re.I)
+_TASK_SUFFIX_RE = re.compile(r"yolo26[nsmlx](?:[-_.][a-z0-9]+)*[-_.]seg($|[-_.])", re.I)
 # 带档位维度（scale 参与解析）的架构；其余架构档位固定（v3: tiny / flash-yolo: flash）
 _SCALED_ARCHS = ("yolo26", "yolo26-seg")
 
@@ -202,6 +202,48 @@ def load_weights(model, path, strict=True):
         if unexpected:
             logger.warning(f"unexpected sample: {unexpected[:5]}")
     return missing, unexpected
+
+
+def load_weights_finetune(model, path):
+    """微调初始化：key 必须一一对应，只跳过任务头内 shape 变化的张量（如 O365 365 类 -> COCO 80 类）
+
+    与 `load_weights(strict=True)` 的区别只有一条：允许同 key 的 shape 变化并按交集加载。
+    - key 缺失/多余 -> 报错（架构改名/换错权重不会被静默吞掉）；
+    - shape 变化只允许发生在任务头 `model.model[-1]` 内（分类分支/语义头随 nc 变）；
+      头外任何 shape 不匹配 -> 报错（不同档位/架构的权重不会被部分加载）；
+    - 加载后返回 (loaded, skipped)：skipped 为 [(key, ckpt_shape, model_shape), ...]，
+      调用方据此打印“跳过了哪些类别相关层”。
+
+    官方 O365 预训练权重是 365 类；COCO 训练建 80 类头时用它初始化，类别头随机初始化、
+    backbone/neck/proto/cv2 等逐位加载——与 ultralytics 的 intersect 加载语义一致。
+    """
+    sd = load_file(path)
+    target = model.state_dict()
+    missing = sorted(set(target) - set(sd))
+    unexpected = sorted(set(sd) - set(target))
+    if missing or unexpected:
+        raise ValueError(
+            f"checkpoint/model key mismatch: missing {len(missing)} {missing[:5]}, "
+            f"unexpected {len(unexpected)} {unexpected[:5]} — use the matching architecture"
+        )
+    names = {id(m): n for n, m in model.named_modules()}
+    head_prefix = names[id(model.model[-1])] + "."
+    loaded, skipped = {}, []
+    for k, v in sd.items():
+        if tuple(v.shape) == tuple(target[k].shape):
+            loaded[k] = v
+        else:
+            skipped.append((k, tuple(v.shape), tuple(target[k].shape)))
+    bad = [k for k, _, _ in skipped if not k.startswith(head_prefix)]
+    if bad:
+        raise ValueError(
+            f"shape mismatch outside the task head ({head_prefix}): {bad[:5]} — "
+            "check the model scale/architecture; only class-dependent head tensors may be re-initialized"
+        )
+    if not loaded:
+        raise ValueError("no tensors loaded from checkpoint")
+    model.load_state_dict(loaded, strict=False)
+    return loaded, skipped
 
 
 def save_weights(model, path, metadata=None):
