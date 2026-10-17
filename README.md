@@ -82,6 +82,18 @@ python scripts/train.py --data coco --model flash-yolo --name flash-coco-e100 --
 `--name` is optional — it only names the run dir (`train-<name>`; without it you get
 `runs/train/train`, then `train2`, `train3`, …).
 
+Instance segmentation is supported end to end as well:
+
+```bash
+python scripts/train.py --data coco --model yolo26-seg --name seg-coco --batch 64 --workers 16
+# official COCO-stage recipe (needs Objects365 initialization):
+python scripts/train.py --data coco --recipe yolo26-seg-coco-ft --weights <objv1-150.safetensors>
+```
+
+Segmentation training requires COCO json polygon annotations; the resulting checkpoint then
+evaluates with Box + Mask tables, exports a two-output ONNX/TensorRT graph, and infers masks
+through the same three engines. Details: [docs/train.md](docs/train.md).
+
 ### Evaluate — formal pycocotools numbers
 
 ```bash

@@ -43,7 +43,7 @@ _STR_FIELDS = ["copy_paste_mode"]
 
 
 def main():
-    parser = argparse.ArgumentParser(description="YOLO26 / YOLOv3-tiny training")
+    parser = argparse.ArgumentParser(description="YOLO26 / YOLO26-seg / YOLOv3-tiny training")
     parser.add_argument("--data", default=None,
                         help="dataset descriptor: a name in config/datasets/ (local/ wins) or a .yaml path")
     parser.add_argument("--weights", default=None, help="init from .safetensors (finetune; default: from scratch)")
@@ -89,8 +89,9 @@ def main():
     for f in _FLOAT_FIELDS:
         parser.add_argument(f"--{f.replace('_', '-')}", dest=f, type=float, default=None, help=f"override train.yaml {f}")
     for f in _STR_FIELDS:
-        parser.add_argument(f"--{f.replace('_', '-')}", dest=f, choices=["off", "box"], default=None,
-                            help=f"override train.yaml {f} (off = 官方检测口径 no-op | box = 矩形贴块近似)")
+        parser.add_argument(f"--{f.replace('_', '-')}", dest=f, choices=["off", "box", "flip"], default=None,
+                            help=f"override train.yaml {f} (off = 官方检测口径 no-op | box = 矩形贴块近似 | "
+                                 f"flip = 官方分割 CopyPaste)")
     args = parser.parse_args()
 
     if args.verbose:
@@ -106,9 +107,12 @@ def main():
     except (ValueError, FileNotFoundError) as e:
         parser.error(str(e))
     apply_cli(cfg, args)
-    if arch_task(cfg.model) == "segment" and spec.format != "coco":
-        parser.error("segmentation training requires a COCO json descriptor (format: coco); "
-                     "YOLO txt segmentation labels are not supported")
+    if arch_task(cfg.model) == "segment":
+        if spec.format != "coco":
+            parser.error("segmentation training requires a COCO json descriptor (format: coco); "
+                         "YOLO txt segmentation labels are not supported")
+        if cfg.mask_ratio < 1 or cfg.imgsz % cfg.mask_ratio:
+            parser.error(f"--mask-ratio must be >=1 and divide --imgsz (got {cfg.mask_ratio} / {cfg.imgsz})")
     if cfg.cfg_path and not Path(cfg.cfg_path).is_file():
         parser.error(f"--cfg not found: {cfg.cfg_path}")
 

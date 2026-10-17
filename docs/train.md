@@ -32,10 +32,17 @@ python scripts/train.py --data coco --model yolo26-seg --name seg --mask-ratio 4
 |---|---|---|---|
 | *（不传）* | 从零 / 自有数据微调 | — | 100 |
 | `yolo26-coco-ft` | 官方 COCO 阶段（微调） | **需 O365 预训练权重初始化** | 245/70/80/60/40 |
+| `yolo26-seg-coco-ft` | 官方 seg COCO 阶段（微调） | 需 O365 初始化 + COCO json 分割描述符；n 档逐项核对官方 seg ckpt | 245（s/m/l/x 沿用 detect 值，未核对 seg ckpt） |
 | `yolo26-o365-pt` | 官方 Objects365 预训练 | 需 Objects365 数据集（未在本仓库验证） | 150 |
+
+> `yolo26-seg-coco-ft` 显式写入官方 seg ckpt 的三个口径：`mask_ratio: 1`、`overlap_mask: true`、
+> `copy_paste: 0.075` + `copy_paste_mode: flip`，并启用 semseg 辅助损失；从零训练仍用 default。
 
 ```bash
 python scripts/train.py --data coco --recipe yolo26-coco-ft --weights yolo26n-objv1-150.safetensors
+
+# 分割官方 COCO 阶段（n 档；mask_ratio=1 / copy_paste_mode=flip / semseg）
+python scripts/train.py --data coco --recipe yolo26-seg-coco-ft --weights yolo26n-objv1-150.safetensors
 ```
 
 > v3 没有专用配方：**推荐配置 = default + 两个开关**（`--model yolov3-tiny-silu --obj-iou-target`），
@@ -73,6 +80,7 @@ python scripts/train.py --data coco --recipe yolo26-coco-ft --weights yolo26n-ob
 | `--obj-iou-target` | false | v3 系 IoU-aware objectness（参考 zjykzj/YOLOv3）：正样本 obj 目标 = IoU(预测框, 责任 GT)、权重 ×5；false = darknet 硬目标 0/1 |
 | `--close-mosaic` | 10 | 最后 N 轮关 mosaic/mixup/copy_paste（自动 `min(N, epochs//5)`） |
 | `--multi-scale` | 0.0 | 输入尺寸抖动 ±r（ultralytics 口径，按 32 量化） |
+| `--copy-paste-mode` | `off` | `off` / `box`（检测矩形贴块近似）/ `flip`（官方分割 CopyPaste） |
 | `--channels-last` | true | NHWC 训练（cuDNN 反向快 ~33%）；推理/导出不受影响 |
 | `--stop-after` | 0 | 只跑前 N 轮（lr/close_mosaic 仍按 `epochs` 调度 → 可与全长 run 逐轮对齐） |
 | `--val-epochs` | 1 | 0 = 全程不验证（冒烟）；`--val-limit` 限制验证图数 |
@@ -88,7 +96,7 @@ python scripts/train.py --data coco --recipe yolo26-coco-ft --weights yolo26n-ob
 | `weights/best.safetensors` | 按训练中指标选的 EMA 权重（**正式数字请另行 eval**）；分割的 fitness = box mAP@[.5:.95] + mask mAP@[.5:.95] |
 | `weights/last.safetensors` · `best_raw.safetensors` | 最后一轮 / 非 EMA 最佳 |
 | `weights/epochNNN.safetensors` | 每 `save_period`（默认 20）轮一存，留最近 `keep_periodic` 个——**中途分叉实验用** |
-| `results.csv` | 逐轮训练损失 + 训练中指标 + **val 损失**（val_box/val_cls/val_l1/val_o2m/val_o2o）；分割另有 `seg`/`val_seg` 与 `P(M)/R(M)/mAP50(M)/mAP@[.5:.95](M)` |
+| `results.csv` | 逐轮训练损失 + 训练中指标 + **val 损失**（val_box/val_cls/val_l1/val_o2m/val_o2o）；分割另有 `seg`/`val_seg`、`sem`/`val_sem` 与 `P(M)/R(M)/mAP50(M)/mAP@[.5:.95](M)`（`val_sem` 在验证模式恒 0，官方同口径） |
 | `diag/train_diag.csv` | 每 `diag_interval` 步：**裁剪前**梯度范数、分组 lr、损失分解 |
 | `samples/*.png` | 增强抽样网格（首轮 / 关 mosaic 后 / 末轮各一张，肉眼校验增强口径） |
 | `meta.json` | 环境（git commit / torch / CUDA / GPU）+ 解析后的完整配置快照 |
@@ -157,10 +165,12 @@ python scripts/bench_io.py --data coco --loader-only
    `scripts/eval.py`（见 `val.md`）。
 4. **val 损失不可与训练损失直接比**（增强分布 / EMA vs raw / BN 模式三重差异），只做趋势。
 5. 训练日志的损失列名由损失函数 `item_keys` 派生：yolo26 为 `box/cls/l1/o2m/o2o`，
-   yolov3-tiny 为 `box/obj/cls`。
+   yolo26-seg 为 `box/seg/cls/l1/o2m/o2o/sem`，yolov3-tiny 为 `box/obj/cls`。
 6. 换输入尺寸（非 640）**从零训练**时，模型先验偏置按训练 imgsz 计算（`bias_init(imgsz)`）；
    有锚模型（v3）则要先用 `compute_anchors.py` 重聚类（锚点不随 imgsz 缩放）。
 7. **分割训练只接受 COCO json 多边形**：YOLO txt 分割标签直接报错；RLE/缺失 segmentation
    退回 bbox 矩形并计入 `seg fallback`，全量 fallback 会报错（多半是描述符/标注选错）。
    训练中 Mask 指标在 `imgsz/mask_ratio` 网格上做快速近似，**正式数字仍以 `scripts/eval.py`
-   的 pycocotools 结果为准**；分割 CopyPaste 在 v1 未实现（`copy_paste > 0` 会被忽略并告警）。
+   的 pycocotools 结果为准**。分割 CopyPaste 已实现官方 **flip** 模式（`copy_paste_mode: flip`），
+   官方 seg 的 semseg 辅助损失（BCE-Dice）也已参与训练；复现官方 seg 配方用
+   `--recipe yolo26-seg-coco-ft`。

@@ -20,7 +20,7 @@ SAFE_PATH = ROOT / "weights" / "yolo26n-seg.safetensors"
 
 
 def test_structure_and_params():
-    """结构硬指标：yolo26n-seg = 3,126,280 参数（含推理不使用的 proto.semseg 子模块）"""
+    """结构硬指标：yolo26n-seg = 3,126,280 参数（含训练期 semseg 辅助头，推理不使用）"""
     model = build_yolo26_seg("n")
     head = model.model[-1]
     assert isinstance(head, Segment26) and isinstance(head.proto, Proto26)
@@ -87,10 +87,13 @@ def test_train_branch_contract():
     out = model(torch.rand(1, 3, 640, 640))
     assert set(out) == {"one2many", "one2one"}
     for branch in out.values():
-        assert set(branch) == {"boxes", "scores", "mask_coefficient", "proto"}
+        assert set(branch) == {"boxes", "scores", "mask_coefficient", "proto", "semantic"}
         assert branch["mask_coefficient"].shape == (1, 32, 8400)
+        assert branch["semantic"].shape == (1, 80, 80, 80)  # P3/8 的语义辅助头
     assert out["one2many"]["proto"].requires_grad
     assert not out["one2one"]["proto"].requires_grad
+    assert out["one2many"]["semantic"].requires_grad
+    assert not out["one2one"]["semantic"].requires_grad
 
 
 def test_arch_resolution():

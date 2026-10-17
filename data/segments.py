@@ -1,5 +1,7 @@
 """实例分割标注：多边形解析 / 变换 / 栅格化（COCO 训练与验证共用，纯 numpy + cv2）
 
+按 Apache-2.0 项目约束：以下为按官方 converter/utils 的行为独立重写，未复制 AGPL 源码。
+
 口径对齐官方 ultralytics（`convert_coco` + `Format`）：
 - `segmentation` 多边形列表 -> 每段校验偶数长度、>=3 点、数值有限；多段按最近端点连接成一条；
 - RLE dict / 缺失 / 无效 -> 退回 bbox 矩形多边形（官方 converter 同款）；调用方统计 fallback；
@@ -32,31 +34,48 @@ def _valid_part(part):
     return arr.reshape(-1, 2)
 
 
-def merge_polygons(parts):
-    """多段多边形 -> 一条（最近端点连接；等价官方 merge_multi_segment 的语义）
+def _closest_pair(a, b):
+    """两组点中距离最近的一对下标（官方 min_index 口径）"""
+    d = ((a[:, None, :] - b[None, :, :]) ** 2).sum(-1)
+    return np.unravel_index(np.argmin(d), d.shape)
 
-    反复把下一条多边形的最近端点接到当前折线末端；必要时反转折线/多边形。
+
+def merge_polygons(parts):
+    """多段多边形 -> 一条（按官方 merge_multi_segment 的两轮连接口径重实现）
+
+    先把相邻段按最近点对记录连接下标，再正向/反向各走一遍拼成一条折线；
+    官方 converter 随后把返回的各段 concatenate，本函数直接返回拼接结果。
     """
+    if not parts:
+        return np.zeros((0, 2), np.float32)
     if len(parts) == 1:
-        return parts[0]
-    merged = parts[0].copy()
-    remaining = [p.copy() for p in parts[1:]]
-    while remaining:
-        best = None  # (dist2, part_idx, current_end, part_end)
-        for pi, poly in enumerate(remaining):
-            for ce, cp in ((0, merged[0]), (1, merged[-1])):
-                for pe, pp in ((0, poly[0]), (1, poly[-1])):
-                    d = float(((cp - pp) ** 2).sum())
-                    if best is None or d < best[0]:
-                        best = (d, pi, ce, pe)
-        _, pi, ce, pe = best
-        poly = remaining.pop(pi)
-        if ce == 0:  # 接在当前起点 -> 反转当前折线，保持"向后追加"的写法
-            merged = merged[::-1]
-        if pe == 1:  # 多边形从尾部接入 -> 反转它
-            poly = poly[::-1]
-        merged = np.concatenate([merged, poly], axis=0)
-    return merged
+        return np.asarray(parts[0], np.float32)
+    segments = [np.asarray(p, np.float32).reshape(-1, 2) for p in parts]
+    idx_list = [[] for _ in segments]
+    for i in range(1, len(segments)):
+        i1, i2 = _closest_pair(segments[i - 1], segments[i])
+        idx_list[i - 1].append(int(i1))
+        idx_list[i].append(int(i2))
+
+    paths = []
+    for k in range(2):
+        if k == 0:  # 正向：每段滚到连接点，首尾段整段保留，中间段取到下一个连接点
+            for i, idx in enumerate(idx_list):
+                if len(idx) == 2 and idx[0] > idx[1]:
+                    idx = idx[::-1]
+                    segments[i] = segments[i][::-1]
+                segments[i] = np.roll(segments[i], -idx[0], axis=0)
+                segments[i] = np.concatenate([segments[i], segments[i][:1]])
+                if i in (0, len(idx_list) - 1):
+                    paths.append(segments[i])
+                else:
+                    paths.append(segments[i][: idx[1] - idx[0] + 1])
+        else:  # 反向：只补中间段被截掉的尾部
+            for i in range(len(idx_list) - 1, -1, -1):
+                if i not in (0, len(idx_list) - 1):
+                    n = abs(idx_list[i][1] - idx_list[i][0])
+                    paths.append(segments[i][n:])
+    return np.concatenate(paths, axis=0).astype(np.float32)
 
 
 def annotation_polygon(ann):
@@ -136,21 +155,24 @@ def rasterize_segments(segments, h, w, mask_ratio=4, overlap=True):
     for poly in segments:
         full = np.zeros((h, w), np.uint8)
         if len(poly) >= 3:
-            pts = np.round(poly).astype(np.int32).reshape(-1, 1, 2)
+            # 官方 polygon2mask 直接 np.asarray(..., int32)（截断，不四舍五入）
+            pts = np.asarray(poly, dtype=np.int32).reshape(-1, 1, 2)
             cv2.fillPoly(full, [pts], 1)
         masks.append(cv2.resize(full, (mw, mh), interpolation=cv2.INTER_LINEAR))
 
     if not masks:
         if overlap:
-            return np.zeros((1, mh, mw), np.int32), np.zeros(0, np.int64)
+            dtype = np.uint8 if len(segments) <= 255 else np.int32
+            return np.zeros((1, mh, mw), dtype), np.zeros(0, np.int64)
         return np.zeros((0, mh, mw), np.uint8), None
 
     if not overlap:
         return np.stack(masks).astype(np.uint8), None
 
+    dtype = np.uint8 if len(segments) <= 255 else np.int32
     areas = np.array([int(m.sum()) for m in masks], np.int64)
     order = np.argsort(-areas, kind="stable")
-    out = np.zeros((1, mh, mw), np.int32)
+    out = np.zeros((1, mh, mw), dtype=dtype)
     for rank, idx in enumerate(order):
-        out[0] = np.maximum(out[0], masks[idx].astype(np.int32) * (rank + 1))
+        out[0] = np.maximum(out[0], masks[idx].astype(dtype) * (rank + 1))
     return out, order

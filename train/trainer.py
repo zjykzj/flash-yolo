@@ -45,7 +45,7 @@ def _pred_tensors(preds):
         for branch in preds:
             yield f"{branch}.boxes", preds[branch]["boxes"]
             yield f"{branch}.scores", preds[branch]["scores"]
-            for extra in ("mask_coefficient", "proto"):
+            for extra in ("mask_coefficient", "proto", "semantic"):
                 if extra in preds[branch]:
                     yield f"{branch}.{extra}", preds[branch][extra]
     else:
@@ -81,7 +81,7 @@ class Trainer:
     _LOSS_COLUMNS = {
         "box": ("box_loss", 3), "seg": ("seg_loss", 4), "cls": ("cls_loss", 4),
         "l1": ("l1_loss", 3), "o2m": ("o2m_loss", 2), "o2o": ("o2o_loss", 2),
-        "obj": ("obj_loss", 3),
+        "sem": ("sem_loss", 4), "obj": ("obj_loss", 3),
     }
 
     def __init__(self, cfg: TrainConfig, device=None, run_dir=None, resume=None, weights=None, spec=None):
@@ -168,6 +168,13 @@ class Trainer:
             if ckpt_cfg.get("cfg_path") != cur_cfg:
                 logger.warning(f"resume checkpoint was written with cfg_path={ckpt_cfg.get('cfg_path')!r}, "
                                f"now cfg_path={cur_cfg!r} — the model is rebuilt from the current config")
+            if self.task == "segment":
+                for key in ("mask_ratio", "overlap_mask", "copy_paste_mode"):
+                    old = ckpt_cfg.get(key)
+                    new = getattr(self.cfg, key)
+                    if old != new:
+                        logger.warning(f"resume checkpoint was written with {key}={old!r}, now {key}={new!r} "
+                                       f"— the segment target grid/augmentation changes mid-run")
             logger.info(f"resumed from {path} at epoch {self.start_epoch + 1} -> {self.run_dir}")
 
         self.accumulate = max(round(cfg.nbs / cfg.batch), 1)
@@ -369,7 +376,8 @@ class Trainer:
                     f"{self.cfg.lr0} -> {lr_end:.6f} · "
                     f"close_mosaic last {self.close_mosaic} epochs (from epoch {close_epoch}{scale_note})")
         if self.cfg.model in YOLO26_FAMILY:
-            seg = f" · seg BCE (gain {self.cfg.box_gain})" if self.task == "segment" else ""
+            seg = (f" · seg BCE (gain {self.cfg.box_gain}) · sem BCE-Dice (gain {self.cfg.box_gain})"
+                   if self.task == "segment" else "")
             logger.info(f"loss: box {self.cfg.box_gain} CIoU · cls {self.cfg.cls_gain} BCE · "
                         f"l1 {self.cfg.dfl_gain}{seg} · "
                         f"EMA {self.cfg.ema_decay} (tau {self.cfg.ema_tau})")
@@ -386,9 +394,9 @@ class Trainer:
         if self.task == "segment":
             logger.info(f"seg: mask_ratio {self.cfg.mask_ratio} · overlap_mask {self.cfg.overlap_mask} · "
                         f"COCO polygon annotations only (YOLO-seg rejected)")
-        if self.task == "segment" and self.cfg.copy_paste > 0:
-            logger.info("      copy_paste ignored: segmentation CopyPaste is not implemented in v1")
-        elif self.cfg.copy_paste > 0 and self.cfg.copy_paste_mode != "box":
+        if self.task == "segment" and self.cfg.copy_paste > 0 and self.cfg.copy_paste_mode != "flip":
+            logger.info("      copy_paste ignored: segmentation requires copy_paste_mode=flip")
+        elif self.task != "segment" and self.cfg.copy_paste > 0 and self.cfg.copy_paste_mode != "box":
             logger.info("      copy_paste ignored: 官方 CopyPaste 需要 instance segments，检测标签下恒为 no-op "
                         "（copy_paste_mode=box 可开启矩形贴块近似）")
         if self.cfg.save_period or self.cfg.diag_interval or self.cfg.aug_samples:

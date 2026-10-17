@@ -43,6 +43,16 @@ def test_recipe_file_n():
     print("  yolo26-coco-ft n 档配方正确")
 
 
+def test_seg_recipe():
+    """yolo26-seg-coco-ft：官方 seg ckpt 的 mask_ratio/overlap/copy_paste 口径显式落盘"""
+    cfg = load_train_config(TRAIN_CONFIG_PATH, recipe="yolo26-seg-coco-ft", scale="n")
+    assert cfg.model == "yolo26-seg"
+    assert cfg.mask_ratio == 1 and cfg.overlap_mask is True
+    assert cfg.copy_paste == 0.075 and cfg.copy_paste_mode == "flip"
+    assert cfg.epochs == 245 and cfg.box_gain == 5.63 and cfg.cls_gain == 0.56
+    print("  yolo26-seg-coco-ft n 档配方正确")
+
+
 def test_recipe_file_per_scale():
     """s/m/l/x：档位增量覆盖，未列字段继承 base；epochs 与官方表一致"""
     expect = {"s": 70, "m": 80, "l": 60, "x": 40}

@@ -84,7 +84,9 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - 掩码解码与官方 val 管线**逐像素一致**（`tests/test_seg_inference.py` 对拍）；
 - **训练中验证**（`train/validator.py` + `FastMetrics`）：同一轮同时算 Box 与 Mask，Mask 在
   `imgsz/mask_ratio` 网格上做快速近似（低分辨率 `process_mask_lowres`，不落盘掩码），best 选取
-  用官方 seg fitness = box mAP@[.5:.95] + mask mAP@[.5:.95]；正式数字仍以本节 pycocotools 为准；
+  用官方 seg fitness = box mAP@[.5:.95] + mask mAP@[.5:.95]；正式数字仍以本节 pycocotools 为准。
+  训练列 `sem` 是 semseg 辅助损失（BCE-Dice）；验证模式不返回 semantic，所以 `val_sem` 恒 0
+  （官方同口径）；
 - 开销：conf 0.001 下每图最多 300 检出，掩码解码是此后处理的大头——`process_mask` 按 8 张
   一批做（`_MASK_CHUNK`），让中间张量落进缓存：实测 p50 128ms -> 59ms/图，逐位不变。
   RLE 编码交给 pycocotools 的 C 实现（自写向量化版反而慢，见下）。

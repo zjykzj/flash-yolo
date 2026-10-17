@@ -218,6 +218,52 @@ def mosaic(img_loader, idx, n, hyp, rng, segments=None):
     return _ret(*_mosaic(img_loader, idx, n, hyp, rng, segments))
 
 
+def _bbox_ioa(boxes1, boxes2, eps=1e-7):
+    """intersection / area(boxes2)（官方 bbox_ioa 口径；boxes1 = 待粘贴实例）"""
+    if not len(boxes1) or not len(boxes2):
+        return np.zeros((len(boxes1), len(boxes2)), np.float32)
+    inter = (np.minimum(boxes1[:, None, 2], boxes2[None, :, 2])
+             - np.maximum(boxes1[:, None, 0], boxes2[None, :, 0])).clip(0) * \
+            (np.minimum(boxes1[:, None, 3], boxes2[None, :, 3])
+             - np.maximum(boxes1[:, None, 1], boxes2[None, :, 1])).clip(0)
+    area2 = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])
+    return inter / (area2[None, :] + eps)
+
+
+def copy_paste_seg(img, labels, segments, hyp, rng):
+    """官方 flip 模式 CopyPaste：把当前图像水平翻转后，按 p 比例粘贴与现有框 IoA<0.3 的实例
+
+    与官方 `CopyPaste(mode="flip")` 同口径（非 AGPL 代码移植，按行为重实现）：
+    - 待粘贴实例 = 当前实例水平翻转（同一张图的镜像）；
+    - 与现有框的最大 IoA < 0.30 的实例才可选，按最大 IoA 升序取前 round(p * N) 个；
+    - 用选中实例的多边形生成粘贴掩码，从翻转图像复制像素；
+    - 标签/多边形追加选中实例。
+    """
+    if not len(segments) or not len(labels) or hyp.copy_paste <= 0:
+        return img, labels, segments
+    H, W = img.shape[:2]
+    flipped = _flip_lr_segments(segments, W)
+    boxes2 = np.stack([polygon_bbox(p) for p in flipped]).astype(np.float32)
+    ioa = _bbox_ioa(boxes2, labels[:, 1:5])
+    eligible = np.nonzero((ioa < 0.30).all(1))[0]
+    if not len(eligible):
+        return img, labels, segments
+    max_ioa = ioa.max(1) if ioa.shape[1] else np.zeros(len(boxes2), np.float32)
+    order = eligible[np.argsort(max_ioa[eligible])]
+    n_sel = int(round(hyp.copy_paste * len(order)))
+    selected = order[:n_sel]
+    if not len(selected):
+        return img, labels, segments
+
+    paste = np.zeros((H, W), np.uint8)
+    for j in selected:
+        cv2.fillPoly(paste, [np.asarray(flipped[j], np.int32).reshape(-1, 1, 2)], 1)
+    src = img[:, ::-1]
+    img = np.where(paste[..., None].astype(bool), src, img)
+    labels = np.concatenate([labels, labels[selected]], axis=0).astype(np.float32)
+    return img, labels, segments + [flipped[j] for j in selected]
+
+
 def copy_paste(img, labels, img_loader, n, hyp, rng):
     """框级 CopyPaste 近似（copy_paste_mode="box" 时启用；官方检测口径为 no-op，见模块 docstring）
 
@@ -393,7 +439,10 @@ def augment(img, labels, img_loader, hyp, rng, idx, n, segments=None):
         img, labels, segments = _mosaic(img_loader, idx, n, hyp, rng, segments)
     else:
         img, labels, segments = _resize_long_side(img, labels, segments, S)
-    if not seg_on and hyp.copy_paste > 0 and hyp.copy_paste_mode == "box":
+    if seg_on:
+        if hyp.copy_paste > 0 and hyp.copy_paste_mode == "flip":
+            img, labels, segments = copy_paste_seg(img, labels, segments, hyp, rng)
+    elif hyp.copy_paste > 0 and hyp.copy_paste_mode == "box":
         img, labels = copy_paste(img, labels, img_loader, n, hyp, rng)
     img, labels, segments = _random_perspective(img, labels, hyp, rng, segments)
 

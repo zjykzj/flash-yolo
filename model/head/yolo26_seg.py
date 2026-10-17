@@ -31,9 +31,10 @@ class Proto26(nn.Module):
     （官方以固定 scale_factor 表达，保持动态 shape 导出友好）。
     解码：3×3 -> ConvTranspose2d(×2) -> 3×3 -> 1×1，输出 (B, nm, H/4, W/4)（640 输入 = 160²）。
 
-    semseg：官方 ckpt 携带的训练期辅助语义头。**官方训练从未使用它**
-    （官方 train_metrics["val/sem_loss"] 恒为 0），保留子模块只为 strict load 零映射；
-    本实现在前向里不计算它——推理零成本。将来若实现语义辅助损失再补分支。
+    semseg：官方训练期辅助语义头（P3 分辨率）。官方训练计算 BCE-Dice 语义损失
+    （`loss[4] *= box_gain`）；本实现训练模式返回 (proto, semantic)，由 ComputeLossSeg
+    计算，推理/验证/导出不返回 semantic（零成本）。`val/sem_loss == 0` 是验证模式不返回
+    semantic 所致，不代表未训练。
     """
 
     def __init__(self, ch=(), c_=256, c2=32, nc=80):
@@ -46,11 +47,15 @@ class Proto26(nn.Module):
         self.feat_fuse = Conv(ch[0], c_, 3)
         self.semseg = nn.Sequential(Conv(ch[0], c_, 3), Conv(c_, c_, 3), nn.Conv2d(c_, nc, 1))
 
-    def forward(self, x):
+    def forward(self, x, return_semantic=True):
         feat = x[0]
         for i, refine in enumerate(self.feat_refine):
             feat = feat + F.interpolate(refine(x[i + 1]), scale_factor=2 ** (i + 1), mode="nearest")
-        return self.cv3(self.cv2(self.upsample(self.cv1(self.feat_fuse(feat)))))
+        p = self.cv3(self.cv2(self.upsample(self.cv1(self.feat_fuse(feat)))))
+        # 官方训练期辅助语义头：仅训练模式返回 (proto, semantic)；推理/验证/导出零成本
+        if self.training and return_semantic:
+            return p, self.semseg(feat)
+        return p
 
 
 class Segment26(Detect):
@@ -60,7 +65,8 @@ class Segment26(Detect):
         eval（end2end）: ((B, max_det, 6 + nm), proto)
         eval（raw）    : ((B, 4 + nc + nm, N), proto)
         train          : 每分支 dict 追加 mask_coefficient 与 proto（o2o 分支 proto 走 detach，
-                         与特征 detach 同口径：梯度只经 o2m 流回原型）
+                         与特征 detach 同口径：梯度只经 o2m 流回原型）；semseg 辅助头
+                         （P3 分辨率）也只在训练模式返回，o2o 同样 detach
     """
 
     task = "segment"
@@ -104,8 +110,14 @@ class Segment26(Detect):
         """
         if proto is None:
             proto = self.proto(x)
+        if isinstance(proto, tuple):  # 训练期 Proto26 返回 (proto, semantic)
+            proto, semantic = proto
+        else:
+            semantic = None
         o2m = self._forward_head_seg(x, self.cv2, self.cv3, self.cv4)
         x_detached = [feat.detach() for feat in x]
         o2o = self._forward_head_seg(x_detached, self.one2one_cv2, self.one2one_cv3, self.one2one_cv4)
         o2m["proto"], o2o["proto"] = proto, proto.detach()
+        if semantic is not None:  # 与官方一致：o2o 的辅助语义分支 detach（梯度只经 o2m 回流）
+            o2m["semantic"], o2o["semantic"] = semantic, semantic.detach()
         return {"one2many": o2m, "one2one": o2o}

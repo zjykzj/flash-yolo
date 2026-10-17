@@ -8,6 +8,7 @@
 """
 
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from data.segments import annotation_polygon, polygon_bbox, rasterize_segments, 
 from utils.progress import ProgressBar
 
 __all__ = ["CocoDataset", "CocoTrainDataset", "parse_coco", "scan_split"]
+
+logger = logging.getLogger(__name__)
 
 
 def parse_coco(ann_file, status_line=None):
@@ -258,6 +261,9 @@ class CocoTrainDataset(TrainMixin):
         self.n_missing = res.stats.n_missing
         self.n_crowd_excluded = res.stats.n_crowd_excluded
         self.n_seg_fallback = res.stats.n_seg_fallback
+        if segment and self.n_seg_fallback:
+            logger.warning(f"{self.n_seg_fallback} segmentation annotations had no usable polygon "
+                           f"(RLE or missing) — using bbox rectangles for those instances")
         self.first_missing = res.stats.first_missing
         self.parse_time, self.scan_time = res.stats.parse_time, res.stats.scan_time
         self._corrupt = SharedCounter()  # worker 里读失败 +1；父进程用 n_corrupt 读

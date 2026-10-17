@@ -1,4 +1,4 @@
-"""单图 / 目录推理 + 可视化（pt / onnx；YOLO26 / YOLOv3-tiny）
+"""单图 / 目录推理 + 可视化（pt / onnx / trt；YOLO26 / YOLO26-seg / YOLOv3-tiny）
 
 用法:
     python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/traffic.jpg

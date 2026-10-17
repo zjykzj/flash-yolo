@@ -183,10 +183,12 @@ def test_train_smoke_seg(tmp_path):
     rows = list(csv_reader(run_dir / "results.csv"))
     assert len(rows) >= 2, f"results.csv 行数不足: {len(rows)}"
     assert "seg" in rows[0] and "val_seg" in rows[0], list(rows[0])
+    assert "sem" in rows[0] and "val_sem" in rows[0], list(rows[0])
     assert "P(M)" in rows[0] and "mAP@[.5:.95](M)" in rows[0], list(rows[0])
     seg = [float(r["seg"]) for r in rows]
     val_seg = [float(r["val_seg"]) for r in rows]
-    assert all(np.isfinite(v) and v >= 0 for v in seg + val_seg), f"seg 损失异常: {seg} {val_seg}"
+    sem = [float(r["sem"]) for r in rows]
+    assert all(np.isfinite(v) and v >= 0 for v in seg + val_seg + sem), f"seg/sem 损失异常: {seg} {sem}"
     assert all(np.isfinite(float(r["mAP@[.5:.95](M)"])) for r in rows)
     assert trainer.head.nc == 2, f"模型 nc 应跟随描述符: {trainer.head.nc}"
     from model.build import build_model

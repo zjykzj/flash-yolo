@@ -157,7 +157,7 @@ C2PSA / PSABlock / Attention）。
 |---|---|
 | `cv4` / `one2one_cv4` | 每级 3×3 conv stack -> `nm=32` mask 系数（`c4 = max(ch[0]//4, 32)`） |
 | `proto`（Proto26） | P4/P5 -> 1×1 投到 P3 通道 -> nearest 上采样 ×2/×4 相加 -> 3×3 -> ConvTranspose2d ×2 -> 3×3 -> 1×1，输出 (B, 32, H/4, W/4) |
-| `proto.semseg` | 训练期辅助语义头，**官方 ckpt 里存在但从未训练**（`train_metrics["val/sem_loss"] == 0.0`）：保留子模块只为 strict load 零映射，前向不计算（推理零成本） |
+| `proto.semseg` | 训练期辅助语义头：官方训练计算 BCE-Dice 语义损失（`loss[4] *= box_gain`）；本实现同样在训练期前向并在 `ComputeLossSeg` 中计算，推理/验证/导出不计算（零成本）。`val/sem_loss` 恒 0 是验证模式不返回 semantic 所致，不代表未训练 |
 
 - `npr`（yaml 256）随 width 缩放：n 档 64（官方 parse_model 同款 `make_divisible(min(npr, max_ch) * width)`）；
   `nm` 是任务常数不缩放。n 档合计 **3,126,280 参数 / 309 层**（与本工程 summary 逐位一致）。
@@ -174,8 +174,9 @@ C2PSA / PSABlock / Attention）。
 掩码增益 = `box_gain`（官方 `loss[1] *= hyp.box`）；o2m/o2o 的 proto 分别取自身输出（o2o 已
 detach），alpha 权重作用于整条分支。数据侧 COCO 多边形随几何增强变换，最终栅格化到
 `imgsz/mask_ratio`（默认 4，与 Proto26 同网格；`overlap_mask=True` 为面积降序实例索引图）。
+官方 semseg 辅助项（BCE + 多通道 Dice，`Proto26.semseg`，P3 分辨率）与 seg CopyPaste
+（flip 模式）都已实现；官方配方用 `yolo26-seg-coco-ft`（`mask_ratio=1` / `copy_paste_mode=flip`）。
 训练中验证同时算 Box + Mask（低分辨率快速近似），best fitness = box + mask mAP@[.5:.95]。
-官方 `semseg` 辅助语义项未实现（结构与现有 head 契约一致，见上表）。
 
 **验收**：
 

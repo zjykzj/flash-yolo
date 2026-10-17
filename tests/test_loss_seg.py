@@ -2,7 +2,7 @@
 
 固定种子构建 yolo26-seg（train 模式）与合成数据；GT 掩码由同一批框在 proto 网格上填充矩形。
 对比 overlap=True/False 两种掩码契约下 o2m / o2o 两分支的 box/cls/l1/seg 四项与分支总损失。
-官方 semseg 辅助项在本仓库未实现（Proto26 前向不产出 semantic），parity 只比较 seg 主项。
+官方 semseg 辅助项（BCE-Dice）与掩码主项一起做逐项 parity（Proto26 训练模式返回 semantic）。
 """
 
 from types import SimpleNamespace
@@ -70,12 +70,34 @@ def _rect_masks(targets, overlap):
     return torch.stack(rows)
 
 
-def _ref_batch(targets, masks):
+def _sem_masks(targets, masks, overlap):
+    """与官方 Format 同口径的语义类别图：overlap 用实例索引；非 overlap 取最小面积实例"""
+    mh, mw = masks.shape[-2:]
+    out = torch.zeros(BATCH, mh, mw, dtype=torch.float32)
+    for i in range(BATCH):
+        sel = targets[:, 0] == i
+        cls = targets[sel, 1].long()
+        if overlap:
+            lookup = torch.zeros(len(cls) + 1, dtype=torch.long)
+            lookup[1:] = cls
+            out[i] = lookup[masks[i].long()].float()
+        else:
+            m_i = masks[sel]
+            if m_i.numel():
+                areas = m_i.sum(dim=(1, 2))
+                weights = torch.where(m_i.bool(), areas[:, None, None], areas.max() + 1)
+                key = weights.min(0).indices
+                out[i] = (cls[key] * m_i.any(0)).float()
+    return out
+
+
+def _ref_batch(targets, masks, overlap):
     xywh = torch.stack([
         (targets[:, 2] + targets[:, 4]) / 2, (targets[:, 3] + targets[:, 5]) / 2,
         targets[:, 4] - targets[:, 2], targets[:, 5] - targets[:, 3],
     ], 1) / IMGSZ
-    return {"batch_idx": targets[:, 0], "cls": targets[:, 1:2], "bboxes": xywh, "masks": masks.float()}
+    return {"batch_idx": targets[:, 0], "cls": targets[:, 1:2], "bboxes": xywh,
+            "masks": masks.float(), "sem_masks": _sem_masks(targets, masks, overlap)}
 
 
 @pytest.mark.parametrize("overlap", [True, False])
@@ -83,7 +105,7 @@ def test_seg_loss_parity_vs_ultralytics(overlap):
     cfg = TrainConfig(overlap_mask=overlap, mask_ratio=MASK_RATIO)
     model, preds, targets = _case()
     masks = _rect_masks(targets, overlap)
-    batch = _ref_batch(targets, masks)
+    batch = _ref_batch(targets, masks, overlap)
     loss_fn = ComputeLossSeg(cfg, model.model[-1], torch.device("cpu"))
     loss_fn.set_alpha(0, cfg.epochs)
 
@@ -94,9 +116,11 @@ def test_seg_loss_parity_vs_ultralytics(overlap):
     for branch, kw, name in (("one2many", {"tal_topk": 10}, "o2m"),
                              ("one2one", {"tal_topk": 7, "tal_topk2": 1}, "o2o")):
         ref_loss_fn = v8SegmentationLoss(model, **kw)
+        proto_arg = ((preds[branch]["proto"], preds[branch]["semantic"])
+                     if "semantic" in preds[branch] else preds[branch]["proto"])
         ref_loss, ref_items = ref_loss_fn.loss(
             {"boxes": preds[branch]["boxes"], "scores": preds[branch]["scores"],
-             "mask_coefficient": preds[branch]["mask_coefficient"], "proto": preds[branch]["proto"],
+             "mask_coefficient": preds[branch]["mask_coefficient"], "proto": proto_arg,
              "feats": feats}, batch)
         _, it = loss_fn({branch: preds[branch]}, targets, BATCH, IMGSZ, masks=masks)
         assert _rel(it[name] * BATCH, ref_loss.sum().item()) < 1e-4, (name, it[name], ref_loss.sum().item())
@@ -105,7 +129,9 @@ def test_seg_loss_parity_vs_ultralytics(overlap):
         assert _rel(it["l1"] * cfg.dfl_gain, ref_items["l1_loss"].item()) < 1e-4
         assert _rel(it["seg"] * cfg.box_gain, ref_items["seg_loss"].item()) < 1e-4, \
             (name, it["seg"] * cfg.box_gain, ref_items["seg_loss"].item())
-        print(f"  {name} overlap={overlap}: seg={it['seg']:.6f} total={it[name]:.6f}")
+        assert _rel(it["sem"] * cfg.box_gain, ref_items["sem_loss"].item()) < 1e-4, \
+            (name, it["sem"] * cfg.box_gain, ref_items["sem_loss"].item())
+        print(f"  {name} overlap={overlap}: seg={it['seg']:.6f} sem={it['sem']:.6f} total={it[name]:.6f}")
 
 
 def test_seg_loss_gradients_reach_both_mask_heads():
@@ -122,6 +148,28 @@ def test_seg_loss_gradients_reach_both_mask_heads():
     assert head.cv4[0][0].conv.weight.grad is not None
     assert head.one2one_cv4[0][0].conv.weight.grad is not None
     assert head.proto.cv1.conv.weight.grad is not None
+    assert head.proto.semseg[0].conv.weight.grad is not None  # 官方 semseg 辅助项参与训练
+
+
+def test_semantic_target_rules():
+    """overlap: 实例 ID -> 类别；非 overlap: 覆盖像素的最小面积实例胜出（官方同口径）"""
+    cfg = TrainConfig(overlap_mask=True)
+    model, _, _ = _case()
+    fn = ComputeLossSeg(cfg, model.model[-1], torch.device("cpu"))
+    targets = torch.tensor([[0, 0, 0, 0, 10, 10], [0, 1, 5, 5, 15, 15]], dtype=torch.float32)
+    masks = torch.zeros(1, 4, 4, dtype=torch.uint8)
+    masks[0, :, :2] = 1
+    masks[0, :, 2:] = 2
+    t = fn._semantic_target(masks, targets, batch_size=1)
+    assert t[0, 0, 0, 0] == 1 and t[0, 1, 0, 3] == 1
+    # 非 overlap：大实例 class0 (3 列) 与小实例 class1 (2x2) 重叠；重叠处取小实例
+    cfg2 = TrainConfig(overlap_mask=False)
+    fn2 = ComputeLossSeg(cfg2, model.model[-1], torch.device("cpu"))
+    masks2 = torch.zeros(2, 4, 4, dtype=torch.uint8)
+    masks2[0, :, :3] = 1  # 12 px
+    masks2[1, 2:, 2:] = 1  # 4 px
+    t2 = fn2._semantic_target(masks2, targets, batch_size=1)
+    assert t2[0, 1, 2, 2] == 1 and t2[0, 0, 2, 2] == 0
 
 
 def test_seg_loss_empty_foreground_is_finite():

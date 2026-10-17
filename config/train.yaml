@@ -87,6 +87,7 @@ mosaic: 1.0
 mixup: 0.0
 copy_paste: 0.0
 copy_paste_mode: "off"  # off = 官方检测口径（标签无 segments 时 CopyPaste 恒为 no-op）| box = 矩形贴块近似
+                       # flip = 官方分割 CopyPaste（水平翻转当前图后按 p 比例粘贴实例）
                        # 必须带引号：yaml 1.1 会把裸 off 解析成布尔 False
 aug_scale: 0.5
 degrees: 0.0
