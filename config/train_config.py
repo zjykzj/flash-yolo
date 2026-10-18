@@ -70,8 +70,8 @@ class TrainConfig:
     lrf: float = 0.01
     momentum: float = 0.937
     weight_decay: float = 0.0005
-    muon_w: float = 0.528
-    sgd_w: float = 0.674
+    muon_w: float = 0.2  # released ultralytics default；官方 recipes 按 ckpt 记录覆盖（n 0.528）
+    sgd_w: float = 1.0  # 同上
     warmup_epochs: float = 3.0
     warmup_momentum: float = 0.8  # warmup 起始动量（官方默认 0.8，线性爬升到 momentum）
     cos_lr: bool = False

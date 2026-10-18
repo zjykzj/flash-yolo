@@ -5,7 +5,7 @@ import copy
 import torch
 import torch.nn as nn
 
-from model.build import DetectionModel
+from model.build import DetectionModel, build_model
 from config.train_config import TrainConfig
 from train.lr import cosine_lr, linear_lr, set_epoch_lr, step_lr, warmup_lr
 from train.optimizer import MuSGD, _ortho, build_param_groups
@@ -90,6 +90,24 @@ def test_build_param_groups():
             assert owner_of(p)["lr_mult"] == 3.0, f"{branch} 应 lr×3"
     n_muon = sum(len(g["params"]) for g in groups if g["muon"])
     print(f"  分组正确: {len(groups)} 组, muon 参数 {n_muon}, 可训参数 {n_trainable}")
+
+
+def test_build_param_groups_seg_semseg_lr3():
+    """YOLO26-seg：proto.semseg 与 cv3/one2one_cv3 一样进 lr×3（官方 boosted 集合）"""
+    model = build_model("yolo26-seg", "n", 640, nc=80)
+    head = model.model[-1]
+    groups = build_param_groups(model, TrainConfig(), head)
+
+    def owner_of(p):
+        return next(g for g in groups if any(p is q for q in g["params"]))
+
+    assert sum(len(g["params"]) for g in groups) == sum(
+        1 for p in model.parameters() if p.requires_grad)
+    for name, p in head.named_parameters():
+        boosted = name.startswith(("cv3.", "one2one_cv3.", "proto.semseg."))
+        expected = 3.0 if boosted else 1.0
+        assert owner_of(p)["lr_mult"] == expected, f"{name}: {owner_of(p)['lr_mult']} != {expected}"
+    print("  seg 分组正确: proto.semseg / cv3 / one2one_cv3 均 lr×3")
 
 
 def test_sgd_mode_groups_are_all_sgd():

@@ -17,6 +17,8 @@ def test_default_recipe():
     assert cfg.model == "yolo26"
     assert cfg.epochs == 100 and cfg.lr0 == 0.01 and cfg.lrf == 0.01
     assert cfg.nbs == 64 and cfg.momentum == 0.937 and cfg.weight_decay == 0.0005
+    # released ultralytics code 的 MuSGD 默认；官方 recipes 按 ckpt 记录覆盖
+    assert cfg.muon_w == 0.2 and cfg.sgd_w == 1.0
     assert cfg.box_gain == 7.5 and cfg.cls_gain == 0.5 and cfg.dfl_gain == 1.5 and cfg.obj_gain == 1.0
     assert cfg.mosaic == 1.0 and cfg.mixup == 0.0 and cfg.copy_paste == 0.0
     assert cfg.mask_ratio == 4 and cfg.overlap_mask is True

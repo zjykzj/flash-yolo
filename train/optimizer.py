@@ -27,17 +27,16 @@ def build_param_groups(model, cfg, head):
     - muon 组:    ndim in {2,4}（线性矩阵 / 4D 卷积核），带 weight decay
     - 无衰减组:   ndim==1（bias）或 *.bn.weight
     - 其余权重组: 带 decay 的非 Muon 参数（罕见 1D 权重）
-    - Detect.cv3 / one2one_cv3 参数 lr_mult=3（分类头微调加速）
+    - cv3 / one2one_cv3 / proto.semseg（以及 SemanticSegment）参数 lr_mult=3：
+      官方 build_optimizer 的 boosted 集合，分类头与分割辅助语义头微调加速
 
     `cfg.optimizer == "sgd"` 时 muon 全关：所有参数走纯 SGD 路径（darknet 口径复刻入口；
     与 MuSGD 的差别只在更新规则，分组/衰减/lr_mult 契约不变）。
     """
     head_ids = set()
-    for branch in ("cv3", "one2one_cv3"):
-        m = getattr(head, branch, None)
-        if m is not None:
-            for p in m.parameters():
-                head_ids.add(id(p))
+    for name, p in head.named_parameters():
+        if name.startswith(("cv3.", "one2one_cv3.", "proto.semseg.")) or "SemanticSegment" in name:
+            head_ids.add(id(p))
 
     buckets = {}
     for name, p in model.named_parameters():
@@ -93,11 +92,12 @@ class MuSGD(torch.optim.Optimizer):
         params: build_param_groups 产出的分组（每组带 muon/wd/lr_mult 键）
         lr: 基础学习率（各组实际 lr = lr * lr_mult）
         momentum: 两个动量缓冲共用
-        muon_w / sgd_w: 两更新分支的混合权重（官方 yolo26n: 0.528 / 0.674）
+        muon_w / sgd_w: 两更新分支的混合权重（released ultralytics 默认 0.2 / 1.0；
+        官方 yolo26n recipe 覆盖为 0.528 / 0.674）
         ns_iters: Newton-Schulz 迭代次数
     """
 
-    def __init__(self, params, lr, momentum=0.947, muon_w=0.528, sgd_w=0.674, nesterov=True, ns_iters=5):
+    def __init__(self, params, lr, momentum=0.947, muon_w=0.2, sgd_w=1.0, nesterov=True, ns_iters=5):
         defaults = dict(lr=lr, momentum=momentum, muon_w=muon_w, sgd_w=sgd_w, nesterov=nesterov, ns_iters=ns_iters)
         super().__init__(params, defaults)
 

@@ -18,8 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **High-resolution mask-loss memory**: at `mask_ratio=1` (the official seg recipe) the mask BCE is evaluated on GT-box slices instead of the full 640² grid — per-step loss peak 12.0 → 1.1 GB and training peak at 640/batch 1 27.3 → 1.9 GB (1.4 GB with AMP), matching the official loss within the existing parity tolerance.
 - **Seg recipe verified against official checkpoints**: `yolo26-seg-coco-ft` now records the per-scale `train_args` of all five released seg weights (m/l/x match the published table; s is an earlier baseline and n's augmentation differs) and starts from the `yolo26*-objv1-seg` weights instead of the detection O365 checkpoints.
 
+### Changed
+
+- **Default MuSGD blend matches the released ultralytics code**: `muon_w/sgd_w` now default to `0.2/1.0` instead of the n-stage recipe values (`0.528/0.674`); the official COCO/seg recipes keep their checkpoint-recorded per-scale values, so published-weight reproduction is unchanged.
+
 ### Fixed
 
+- **Seg semantic head learning rate**: `proto.semseg` (and `SemanticSegment`) now joins `cv3`/`one2one_cv3` in the 3× MuSGD parameter group, matching the official optimizer; previously the auxiliary head trained at 1×.
 - **Low-resolution mask-loss memory**: the default `mask_ratio=4` path now groups positives per image and reuses a `proto` view instead of retaining per-chunk gather copies — at 640/batch 32 the loss peak drops 9.5 → 1.7 GB, fixing OOM on dense COCO batches.
 
 ## [0.6.0] - 2026-10-15

@@ -49,8 +49,8 @@ lr0: 0.01
 lrf: 0.01
 momentum: 0.937
 weight_decay: 0.0005
-muon_w: 0.528      # Muon 更新权重（MuSGD 算法常量，非配方项，两档共用）
-sgd_w: 0.674       # SGD 更新权重（同上）
+muon_w: 0.2        # released ultralytics default；官方 recipes 按 ckpt 记录覆盖（yolo26 n: 0.528）
+sgd_w: 1.0         # 同上
 warmup_epochs: 3.0
 warmup_momentum: 0.8  # warmup 起始动量（官方默认；线性爬升到 momentum）
 cos_lr: false      # false = 线性衰减（cosine 的旧开关；lr_schedule 显式给 cosine/step 时以它为准）
