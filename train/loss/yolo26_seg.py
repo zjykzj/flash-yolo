@@ -20,11 +20,11 @@ from train.loss.yolo26_detect import ComputeLoss
 
 __all__ = ["ComputeLossSeg"]
 
-# 掩码损失分块预算：每块 gather 的 proto 约 4 * nm * mh * mw 字节
+# 掩码损失分块预算：每块的正样本预测约 4 * nm * mh * mw 字节（低分辨率路径）
 _MASK_LOSS_CHUNK_ELEMS = 32_000_000  # ~128 MiB float32
 # 高分辨率掩码网格（如官方 mask_ratio=1 @640 = 640²）改走「按 GT 框切片」：
-# 分块 gather 的 proto 副本会被 autograd 逐块保留（实测 B=1/P=200 约 10.5GB）。
-# 低分辨率（默认 mask_ratio=4 @640 = 160²）保留批量路径，吞吐与逐位行为不变。
+# 正样本的 proto 副本会被 autograd 逐块保留（实测 B=1/P=200 约 10.5GB）。
+# 低分辨率（默认 mask_ratio=4 @640 = 160²）走按图分组路径。
 _BOX_SLICE_MASK_ELEMS = 32_768
 
 
@@ -41,25 +41,38 @@ def _crop_mask_float(loss, boxes):
 
 def _mask_loss_batched(coeff_pos, proto, img_idx, gt_idx_pos, masks, mxyxy, area,
                        row_idx, nm, mh, mw, overlap):
-    """批量路径：分块 gather proto -> 全网格 BCE -> crop -> 按面积归一化
+    """低分辨率路径：按图分组 -> 整图正样本共享 proto 视图 -> 分块 BCE -> 按面积归一化
 
     返回 Σ(逐正样本损失)（未除正样本数）。mxyxy 为掩码网格坐标的 GT 框。
+
+    `proto[bi]` 是基本索引视图，autograd 只保留对 proto 的引用；旧实现用
+    `proto[img_idx[s:e]]`（高级索引）为每块复制 4*nm*mh*mw 字节，且这些副本会被
+    autograd 逐块保留到 backward。B=32/COCO 约 2500 正样本时这一项就占 8-10G：
+    batch 32 fp32 实测 loss 峰值 9.5G（改后 1.7G）。按图分组不改变任何逐样本项，
+    仅改变跨图求和的先后顺序。
     """
+    order = torch.argsort(img_idx, stable=True)
+    counts = torch.bincount(img_idx, minlength=proto.shape[0]).cpu().tolist()
     chunk = max(1, _MASK_LOSS_CHUNK_ELEMS // max(nm * mh * mw, 1))
     total = coeff_pos.new_zeros(())
-    n_pos = coeff_pos.shape[0]
-    for s in range(0, n_pos, chunk):
-        e = min(s + chunk, n_pos)
-        proto_c = proto[img_idx[s:e]]  # (c, nm, mh, mw)
-        pred = torch.bmm(coeff_pos[s:e].unsqueeze(1), proto_c.reshape(e - s, nm, -1))
-        pred = pred.squeeze(1).reshape(-1, mh, mw)
-        if overlap:
-            gt = (masks[img_idx[s:e]] == (gt_idx_pos[s:e] + 1)[:, None, None]).to(pred.dtype)
-        else:
-            gt = masks[row_idx[s:e]].to(pred.dtype)
-        loss = F.binary_cross_entropy_with_logits(pred, gt, reduction="none")
-        loss = _crop_mask_float(loss, mxyxy[s:e])
-        total = total + (loss.mean(dim=(1, 2)) / area[s:e]).sum()
+    off = 0
+    for bi, c in enumerate(counts):
+        c = int(c)
+        if c == 0:
+            continue
+        sel_img = order[off:off + c]
+        proto_i = proto[bi].reshape(nm, -1)  # 视图，不复制
+        for s in range(0, c, chunk):
+            sel = sel_img[s:s + chunk]
+            pred = (coeff_pos[sel] @ proto_i).reshape(-1, mh, mw)
+            if overlap:
+                gt = (masks[bi] == (gt_idx_pos[sel] + 1)[:, None, None]).to(pred.dtype)
+            else:
+                gt = masks[row_idx[sel]].to(pred.dtype)
+            loss = F.binary_cross_entropy_with_logits(pred, gt, reduction="none")
+            loss = _crop_mask_float(loss, mxyxy[sel])
+            total = total + (loss.mean(dim=(1, 2)) / area[sel]).sum()
+        off += c
     return total
 
 
