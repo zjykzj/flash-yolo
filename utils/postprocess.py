@@ -20,6 +20,8 @@ _STRIDES = (8, 16, 32)
 # mask 解码的分批大小（见 process_mask）：整批的中间张量随检出数线性膨胀，分批让每批的中间量
 # 落进缓存。实测（300 检出/图，p50）：不分批 128ms、8 张 59ms、16 张 64ms、32 张 117ms
 _MASK_CHUNK = 8
+# 低分辨率训练 val 的掩码解码批量：按像素预算自动取块（160² 时 300 检出可一次做完）
+_LOWRES_CHUNK_ELEMS = 32_000_000
 
 
 def make_anchors_np(shapes, strides, offset=0.5):
@@ -218,7 +220,7 @@ def process_mask(proto, coeffs, boxes, net_hw, ori_hw, ratio, pad):
     return out
 
 
-def process_mask_lowres(proto, coeffs, boxes, net_hw=None, chunk=_MASK_CHUNK):
+def process_mask_lowres(proto, coeffs, boxes, net_hw=None, chunk=0):
     """原型 + 系数 -> 原型网格分辨率的二值掩码（官方 `process_mask(upsample=False)` 口径）
 
     训练中验证用：只做 ① 系数 @ 原型 -> logits ② >0 二值化 ③ 按框裁剪（框缩放到掩码网格）。
@@ -239,6 +241,8 @@ def process_mask_lowres(proto, coeffs, boxes, net_hw=None, chunk=_MASK_CHUNK):
     nm, mh, mw = proto.shape
     if n == 0:
         return np.zeros((0, mh, mw), dtype=np.uint8)
+    if chunk <= 0:  # 低分辨率网格按像素预算自动取块；chunk=8 的旧默认在 160²/300 检出时约慢 2.5×
+        chunk = max(1, _LOWRES_CHUNK_ELEMS // max(mh * mw, 1))
     p = torch.from_numpy(np.ascontiguousarray(proto, dtype=np.float32)).reshape(nm, -1)
     c = torch.from_numpy(np.ascontiguousarray(coeffs, dtype=np.float32))
     b = torch.from_numpy(np.ascontiguousarray(boxes, dtype=np.float32))

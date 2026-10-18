@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Default MuSGD blend matches the released ultralytics code**: `muon_w/sgd_w` now default to `0.2/1.0` instead of the n-stage recipe values (`0.528/0.674`); the official COCO/seg recipes keep their checkpoint-recorded per-scale values, so published-weight reproduction is unchanged.
+- **Faster training-time mask validation**: `process_mask_lowres` now sizes its chunk from a 32M-pixel budget instead of 8 masks; on coco-tiny val (1000 images) the validator drops 37.3 → 28.9 s with byte-identical masks and metrics.
 
 ### Fixed
 

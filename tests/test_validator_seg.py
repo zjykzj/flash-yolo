@@ -26,6 +26,21 @@ def test_process_mask_lowres_matches_official():
     assert np.array_equal(ours, ref), f"{np.count_nonzero(ours != ref)} differing pixels"
 
 
+def test_process_mask_lowres_auto_chunk_matches_explicit():
+    """自动像素预算分块与任意显式 chunk 逐像素一致（只改执行批次，不改结果）"""
+    torch.manual_seed(1)
+    proto = torch.randn(32, 20, 20)
+    coeff = torch.randn(9, 32)
+    boxes = torch.tensor([[0, 0, 40, 40], [5, 5, 70, 70], [12, 8, 60, 50],
+                          [3, 3, 78, 78], [20, 20, 79, 79], [1, 1, 30, 30],
+                          [10, 20, 50, 60], [25, 5, 75, 55], [6, 6, 66, 66]],
+                         dtype=torch.float32)
+    auto = process_mask_lowres(proto.numpy(), coeff.numpy(), boxes.numpy(), (80, 80))
+    for chunk in (1, 8, 64):
+        ref = process_mask_lowres(proto.numpy(), coeff.numpy(), boxes.numpy(), (80, 80), chunk=chunk)
+        assert np.array_equal(auto, ref), f"chunk={chunk}"
+
+
 def test_process_mask_lowres_empty():
     out = process_mask_lowres(np.zeros((32, 20, 20), np.float32), np.zeros((0, 32), np.float32),
                               np.zeros((0, 4), np.float32), (80, 80))
