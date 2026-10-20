@@ -53,6 +53,7 @@ muon_w: 0.2        # released ultralytics default；官方 recipes 按 ckpt 记�
 sgd_w: 1.0         # 同上
 warmup_epochs: 3.0
 warmup_momentum: 0.8  # warmup 起始动量（官方默认；线性爬升到 momentum）
+warmup_bias_lr: 0.0   # 官方默认 0.1（bias 从该值下降到 lr0）；0 = 历史行为（bias 与其它组同步从 0 爬升）
 cos_lr: false      # false = 线性衰减（cosine 的旧开关；lr_schedule 显式给 cosine/step 时以它为准）
 lr_schedule: linear  # linear | cosine | step（step = darknet 台阶：lr_step_fracs 处各 ×gamma）
 lr_step_fracs: [0.8, 0.9]

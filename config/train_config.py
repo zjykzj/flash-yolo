@@ -74,6 +74,7 @@ class TrainConfig:
     sgd_w: float = 1.0  # 同上
     warmup_epochs: float = 3.0
     warmup_momentum: float = 0.8  # warmup 起始动量（官方默认 0.8，线性爬升到 momentum）
+    warmup_bias_lr: float = 0.0  # warmup 起始 bias lr（官方默认 0.1；0 = 历史行为，bias 与其它组同步从 0 爬升）
     cos_lr: bool = False
     lr_schedule: str = "linear"  # linear | cosine | step（step = darknet 台阶：lr_step_fracs 处各 ×gamma；
                                  # cosine 亦可用 cos_lr=true 触发；step 优先）

@@ -35,6 +35,7 @@ _INT_FIELDS = ["epochs", "batch", "nbs", "imgsz", "workers", "seed", "close_mosa
                "limit", "ns_iters", "ema_tau", "topk", "topk_o2o", "topk2",
                "stop_after", "save_period", "keep_periodic", "diag_interval", "aug_samples", "mask_ratio"]
 _FLOAT_FIELDS = ["lr0", "lrf", "momentum", "weight_decay", "muon_w", "sgd_w", "warmup_epochs", "warmup_momentum",
+                 "warmup_bias_lr",
                  "lr_step_gamma", "box_gain", "cls_gain", "dfl_gain", "obj_gain", "tal_alpha", "tal_beta",
                  "prog_alpha_init", "prog_alpha_final", "stal_s_min", "stal_s_ref", "ema_decay",
                  "multi_scale", "mosaic", "mixup", "copy_paste", "aug_scale", "degrees", "shear", "translate",

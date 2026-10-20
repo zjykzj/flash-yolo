@@ -11,6 +11,49 @@ from train.lr import cosine_lr, linear_lr, set_epoch_lr, step_lr, warmup_lr
 from train.optimizer import MuSGD, _ortho, build_param_groups
 
 
+def test_bias_group_flag():
+    """分组契约：非 muon 且名字含 "bias" 的参数单独标记（warmup_bias_lr 只作用于它）"""
+    model = DetectionModel(scale="n")
+    groups = build_param_groups(model, TrainConfig(), model.model[-1])
+
+    def owner_of(p):
+        return next(g for g in groups if any(p is q for q in g["params"]))
+
+    for name, p in model.named_parameters():
+        muon = p.ndim in (2, 4)
+        expected = (not muon) and ("bias" in name)
+        assert owner_of(p)["bias"] == expected, f"{name}: bias={owner_of(p)['bias']} != {expected}"
+        if expected:
+            assert owner_of(p)["wd"] == 0.0
+
+
+def test_warmup_bias_lr_matches_official_interp():
+    """bias 组 warmup：从 warmup_bias_lr 线性下降到目标 lr；其余组从 0 爬升（官方 np.interp 口径）"""
+    class _Opt:
+        pass
+
+    opt = _Opt()
+    opt.param_groups = [
+        {"params": [], "lr": 0.0, "lr_mult": 1.0, "bias": False},
+        {"params": [], "lr": 0.0, "lr_mult": 1.0, "bias": True},
+        {"params": [], "lr": 0.0, "lr_mult": 3.0, "bias": True},
+    ]
+    base, wb, frac = 0.0054, 0.08114, 0.4
+    set_epoch_lr(opt, base, warmup_t=frac * 1.0, warmup_epochs=1.0, warmup_bias_lr=wb)
+    assert abs(opt.param_groups[0]["lr"] - base * frac) < 1e-12
+    assert abs(opt.param_groups[1]["lr"] - (wb + (base - wb) * frac)) < 1e-12
+    assert abs(opt.param_groups[2]["lr"] - (wb + (base * 3 - wb) * frac)) < 1e-12
+
+    # warmup 结束：所有组回到目标 lr（bias 无特殊）
+    set_epoch_lr(opt, base, warmup_t=1.0, warmup_epochs=1.0, warmup_bias_lr=wb)
+    assert abs(opt.param_groups[1]["lr"] - base) < 1e-12
+    assert abs(opt.param_groups[2]["lr"] - base * 3) < 1e-12
+
+    # 未启用（None / 0）时 bias 与其它组一样从 0 爬升（历史行为）
+    set_epoch_lr(opt, base, warmup_t=0.0, warmup_epochs=1.0, warmup_bias_lr=None)
+    assert abs(opt.param_groups[1]["lr"]) < 1e-12
+
+
 def test_ns_relaxed_orthogonality():
     """NS5 松弛正交化：奇异值落在经验收敛区间 [0.5, 1.5]（x 原始方向 scale），迭代稳定"""
     torch.manual_seed(0)

@@ -33,7 +33,6 @@
 #   cls_w: n 2.74 / s 2.0 / m,l,x 3.48   —— o2o 分类损失额外权重
 #   o2m:   n,s 1.0 / m,l,x 0.705         —— ProgLoss 初始权重（本仓库用 0.8）
 #   erasing 0.4 · auto_augment randaugment · cutmix/perspective（m 档非 0，本仓库忽略）
-#   warmup_bias_lr: n 0.081 / s 0.1 / m,l,x 0.057（本仓库未实现）
 #   amp: 官方 true；本仓库 default 为 false（微调可显式 --amp）
 #
 # 用法：python scripts/train.py --recipe yolo26-seg-coco-ft --scale n \
@@ -54,6 +53,7 @@ base:
   weight_decay: 0.00064
   warmup_epochs: 1.0
   warmup_momentum: 0.658
+  warmup_bias_lr: 0.08114  # n 档记录值（bias 从该 lr 下降；官方默认 0.1）
   muon_w: 0.528        # 实验分支参数：n 档记录值
   sgd_w: 0.674
   topk: 8              # n 档 o2m 分配 top-k（released code 默认 10）
@@ -83,6 +83,7 @@ scale_overrides:
     weight_decay: 0.0007
     warmup_epochs: 1.0
     warmup_momentum: 0.8
+    warmup_bias_lr: 0.1
     muon_w: 0.5
     sgd_w: 0.5
     topk: 10
@@ -110,6 +111,7 @@ scale_overrides:
     weight_decay: 0.00027
     warmup_epochs: 0.987
     warmup_momentum: 0.541
+    warmup_bias_lr: 0.05684
     muon_w: 0.436
     sgd_w: 0.479
     topk: 5

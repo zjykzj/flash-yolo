@@ -29,7 +29,7 @@ from model.build import ARCHS, YOLO26_FAMILY, arch_display_name, arch_task, buil
 from train.checkpoint import load_resume, save_best_last, save_periodic, save_resume
 from train.ema import ModelEMA
 from train.loss import build_loss
-from train.lr import cosine_lr, linear_lr, set_epoch_lr, step_lr, warmup_lr, warmup_momentum
+from train.lr import cosine_lr, linear_lr, set_epoch_lr, step_lr, warmup_momentum
 from train.optimizer import MuSGD, build_param_groups
 from train.validator import VAL_HEADER, VAL_HEADER_SEG, format_val_row, validate
 from utils.logger import bold, log_file_only
@@ -480,10 +480,13 @@ class Trainer:
                     imgs, targets = batch
                     masks = None
                 t = epoch + bi / max(n_batch - 1, 1)
-                lr_base = warmup_lr(t, self.cfg.warmup_epochs) * self._sched_lr(t)
+                # warmup 由 set_epoch_lr 按组施加：非 bias 0 爬升；bias 从 warmup_bias_lr 下降
+                lr_base = self._sched_lr(t)
                 # warmup 期间动量线性爬升（官方训练循环同口径；之后恒为 cfg.momentum）
                 mom = warmup_momentum(t, self.cfg.warmup_epochs, self.cfg.momentum, self.cfg.warmup_momentum)
-                set_epoch_lr(self.optimizer, lr_base, momentum=mom)
+                set_epoch_lr(self.optimizer, lr_base, momentum=mom,
+                             warmup_t=t, warmup_epochs=self.cfg.warmup_epochs,
+                             warmup_bias_lr=self.cfg.warmup_bias_lr)
                 lr_last = self.optimizer.param_groups[0]["lr"]
 
                 # 增强抽样可视化：首个 / close_mosaic 后首个 / 末轮各存一张网格图

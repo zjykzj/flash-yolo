@@ -25,7 +25,8 @@ def build_param_groups(model, cfg, head):
     """参数分组（官方 yolo26n 配方口径）
 
     - muon 组:    ndim in {2,4}（线性矩阵 / 4D 卷积核），带 weight decay
-    - 无衰减组:   ndim==1（bias）或 *.bn.weight
+    - bias 组:    非 Muon 且名字含 "bias"（单独成组，warmup 期走 warmup_bias_lr 下降曲线）
+    - 无衰减组:   ndim==1（BN 等）或 *.bn.weight
     - 其余权重组: 带 decay 的非 Muon 参数（罕见 1D 权重）
     - cv3 / one2one_cv3 / proto.semseg（以及 SemanticSegment）参数 lr_mult=3：
       官方 build_optimizer 的 boosted 集合，分类头与分割辅助语义头微调加速
@@ -44,14 +45,16 @@ def build_param_groups(model, cfg, head):
             continue
         lr_mult = 3.0 if id(p) in head_ids else 1.0
         muon = p.ndim in (2, 4) and getattr(cfg, "optimizer", "musgd") != "sgd"
-        wd = 0.0 if (p.ndim == 1 or name.endswith(".bn.weight")) else cfg.weight_decay
-        key = (muon, wd, lr_mult)
+        # 官方 build_optimizer：muon 判定在前；非 muon 的 bias 单独一组（warmup_bias_lr 只作用于它）
+        is_bias = (not muon) and "bias" in name
+        wd = 0.0 if (is_bias or p.ndim == 1 or name.endswith(".bn.weight")) else cfg.weight_decay
+        key = (muon, wd, lr_mult, is_bias)
         buckets.setdefault(key, []).append(p)
 
     groups = []
-    for (muon, wd, lr_mult), params in sorted(buckets.items()):
+    for (muon, wd, lr_mult, is_bias), params in sorted(buckets.items()):
         groups.append(
-            {"params": params, "muon": muon, "wd": wd, "lr_mult": lr_mult}
+            {"params": params, "muon": muon, "wd": wd, "lr_mult": lr_mult, "bias": is_bias}
         )
     return groups
 
