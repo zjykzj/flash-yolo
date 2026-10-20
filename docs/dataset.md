@@ -50,7 +50,7 @@ val:   {images: images/val}
   （磁盘上不存在，已剔除并告警）、`n_crowd_excluded`（仅训练侧非 0）。
 - 坏图**惰性处理**：扫描期不逐张 decode；`load_image` 读失败时计数 + 告警，训练不中断
   （train 侧返回空白画布 + 空标签，val 侧保留 GT 记漏检）。
-- **实例分割训练**（`--model yolo26-seg`）额外读取 `segmentation`：多边形列表会合并多段并
+- **实例分割训练**（`--model yolo26-seg` / `flash-yolo-seg`）额外读取 `segmentation`：多边形列表会合并多段并
   在增强后栅格化为 GT 掩码；RLE dict / 缺失 / 非法 segmentation 退回 bbox 矩形（计数并告警），
   全部退回时直接报错。框由多边形包围盒导出（官方口径）。YOLO-seg txt 同样支持（见 §4）。
 
@@ -64,7 +64,7 @@ val:   {images: images/val}
 - 像素 GT 依赖图尺寸：`load_image(idx)` 记录 (h,w) 之后 `targets()` / `gt_dict()` 才可用
   （评估循环天然满足该顺序；自己写脚本时先取 GT 会得到明确报错提示）。
 - 无 crowd 概念（转换即丢弃）。
-- **分割标签**（`--model yolo26-seg`）：
+- **分割标签**（`--model yolo26-seg` / `flash-yolo-seg`）：
   - 多边形行 `cls x1 y1 x2 y2 ...`（归一化，>=3 点）；框由多边形外接框导出；
   - 5 列 bbox 行按矩形回退（混合标注允许，计入 `n_seg_fallback` 并在扫描行显示）；
   - 检测解析器遇到 >5 列会报错 `polygon labels require a segmentation dataset/model`；

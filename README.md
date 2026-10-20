@@ -88,11 +88,15 @@ Instance segmentation is supported end to end as well:
 python scripts/train.py --data coco --model yolo26-seg --name seg-coco --batch 64 --workers 16
 # official COCO-stage recipe (needs Objects365 seg initialization, 365 -> 80 classes):
 python scripts/train.py --data coco --recipe yolo26-seg-coco-ft --weights <objv1-seg.safetensors>
+# the repo's own architecture as a segmentation model (same backbone/neck, Segment26 head):
+python scripts/train.py --data coco --model flash-yolo-seg --name flash-seg --batch 32 --workers 8
 ```
 
 Segmentation training accepts COCO json polygons or YOLO-seg txt; the resulting checkpoint then
 evaluates with Box + Mask tables, exports a two-output ONNX/TensorRT graph, and infers masks
-through the same three engines. Details: [docs/train.md](docs/train.md).
+through the same three engines. Flash-YOLO-seg is 2.53M parameters / 7.6 GFLOPs @640 —
+structure and commands in [docs/flash-yolo-seg-spec.md](docs/flash-yolo-seg-spec.md);
+general details in [docs/train.md](docs/train.md).
 
 ### Evaluate — formal pycocotools numbers
 
@@ -186,7 +190,7 @@ never imports ultralytics).
 ```
 assets/    demo images (traffic.jpg / baseball.jpg + rendered detections; provenance in assets/README.md)
 config/    inference/eval defaults (inference.py) + model structures (models/yolo26.yaml,
-           models/flash-yolo.yaml)
+           models/yolo26-seg.yaml, models/flash-yolo.yaml, models/flash-yolo-seg.yaml)
            + dataset descriptors (datasets/<name>.yaml + spec.py loader; local/ = gitignored
            machine paths) + training config (train.yaml + TrainConfig in train_config.py
            + recipes/: yolo26-coco-ft, yolo26-o365-pt)

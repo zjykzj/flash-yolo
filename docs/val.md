@@ -63,7 +63,7 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - **NMS**：o2m 头 + 类感知 NMS，通常高 ~0.9 点、略慢（官方 40.9）。
 - yolov3-tiny 只有一条"解码 + obj×cls + NMS"路径，`--nms` / `--raw` 对它直接报错。
 
-## 5. 分割（yolo26-seg）
+## 5. 分割（yolo26-seg / flash-yolo-seg）
 
 分割权重（`--weights weights/yolo26n-seg.safetensors`）自动走双表口径：同一份结果分别按
 **框 IoU（Box）** 与 **掩码 IoU（Mask）** 评估，与官方发布的 Box/Mask 双表一致。

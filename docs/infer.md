@@ -21,7 +21,7 @@ python scripts/infer.py --weights weights/yolo26n.engine --engine trt --image im
 python scripts/infer.py --weights runs/train/my-run/weights/best.safetensors \
     --data mydataset --image img.jpg
 
-# 分割权重：自动识别 arch（yolo26-seg），可视化叠加实例掩码
+# 分割权重：自动识别 arch（yolo26-seg / flash-yolo-seg），可视化叠加实例掩码
 python scripts/infer.py --weights weights/yolo26n-seg.safetensors --image assets/traffic.jpg
 
 # 分割训练产物：metadata 自带 arch/nc/names/imgsz，直接推理（无需 --data）

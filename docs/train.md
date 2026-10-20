@@ -22,6 +22,8 @@ python scripts/train.py --data coco --model yolov3-tiny-silu --name v3s --imgsz 
 
 # 实例分割（COCO json 多边形或 YOLO-seg txt 多边形；bbox 行按矩形回退）
 python scripts/train.py --data coco --model yolo26-seg --name seg --mask-ratio 4
+# flash-yolo 的分割变体（单档 flash，不要传 --scale；结构见 flash-yolo-seg-spec.md）
+python scripts/train.py --data coco --model flash-yolo-seg --name flash-seg --mask-ratio 4
 ```
 
 ## 2. 配方（recipe）
@@ -75,8 +77,8 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--data` | —（必填） | 描述符（见 `dataset.md`） |
 | `--name` | 空 → `runs/train/train` | run 目录：`--name foo` → `runs/train/train-foo`；目录已存在自动加序号 |
 | `--recipe` | 内置 default | 配方名（`config/recipes/<name>.yaml`）或 `.yaml` 路径 |
-| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `flash-yolo` / `yolov3-tiny` / `yolov3-tiny-silu`（算子替换版） |
-| `--scale` | `n` | yolo26 系（含 yolo26-seg）档位 n/s/m/l/x；其他架构固定 |
+| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu`（算子替换版） |
+| `--scale` | `n` | yolo26 系（含 yolo26-seg）档位 n/s/m/l/x；其他架构固定（flash-yolo / flash-yolo-seg 单档 flash） |
 | `--mask-ratio` | 4 | 分割 GT 掩码下采样倍率（`imgsz/mask_ratio`）；4 = Proto26 分辨率，1 = 官方 seg ckpt 记录的全分辨率 |
 | `--overlap-mask` / `--no-overlap-mask` | true | 分割 GT：每图实例索引图（官方默认）vs 每实例二值掩码 |
 | `--cfg` | — | 模型 yaml 覆盖（自定义结构 / 筛选变体） |
@@ -181,7 +183,7 @@ python scripts/bench_io.py --data coco --loader-only
    `scripts/eval.py`（见 `val.md`）。
 4. **val 损失不可与训练损失直接比**（增强分布 / EMA vs raw / BN 模式三重差异），只做趋势。
 5. 训练日志的损失列名由损失函数 `item_keys` 派生：yolo26 为 `box/cls/l1/o2m/o2o`，
-   yolo26-seg 为 `box/seg/cls/l1/o2m/o2o/sem`，yolov3-tiny 为 `box/obj/cls`。
+   yolo26-seg / flash-yolo-seg 为 `box/seg/cls/l1/o2m/o2o/sem`，yolov3-tiny 为 `box/obj/cls`。
 6. 换输入尺寸（非 640）**从零训练**时，模型先验偏置按训练 imgsz 计算（`bias_init(imgsz)`）；
    有锚模型（v3）则要先用 `compute_anchors.py` 重聚类（锚点不随 imgsz 缩放）。
 7. **分割训练接受 COCO json 与 YOLO-seg txt**：COCO 的 RLE/缺失 segmentation、YOLO 的
