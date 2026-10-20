@@ -16,7 +16,8 @@ from model.head import Detect, Segment26, V3Detect
 
 __all__ = ["DetectionModel", "build_model", "build_yolo26", "build_yolo26_seg", "build_yolov3_tiny",
            "arch_display_name", "arch_task", "ARCHS", "YOLO26_FAMILY", "YOLO26_CONFIG_PATH",
-           "YOLO26_SEG_CONFIG_PATH", "V3_CONFIG_PATH", "V3_SILU_CONFIG_PATH", "FLASH_CONFIG_PATH"]
+           "YOLO26_SEG_CONFIG_PATH", "V3_CONFIG_PATH", "V3_SILU_CONFIG_PATH", "FLASH_CONFIG_PATH",
+           "FLASH_SEG_CONFIG_PATH"]
 
 
 class Concat(nn.Module):
@@ -59,6 +60,8 @@ V3_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / 
 # v3-tiny 算子替换版（LeakyReLU -> SiLU，其余逐行同构；见该 yaml 头部注释）
 V3_SILU_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolov3-tiny-silu.yaml"
 FLASH_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "flash-yolo.yaml"
+# 分割版：backbone+neck 与 flash-yolo.yaml 逐行相同，只换最后一行 Segment26（与 yolo26-seg 同构）
+FLASH_SEG_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "flash-yolo-seg.yaml"
 
 # 架构注册表：name -> yaml 路径 + 默认档位 + 展示名模板 + 任务（detect|segment）
 # task 是"任务轴"：引擎/后处理/评估按它分派（差异处加参数，不复制链路），不在各处比 arch 名字。
@@ -70,10 +73,12 @@ ARCHS = {
     "yolov3-tiny-silu": {"cfg": V3_SILU_CONFIG_PATH, "default_scale": "tiny", "display": "YOLOv3-tiny-SiLU",
                          "task": "detect"},
     "flash-yolo": {"cfg": FLASH_CONFIG_PATH, "default_scale": "flash", "display": "Flash-YOLO", "task": "detect"},
+    "flash-yolo-seg": {"cfg": FLASH_SEG_CONFIG_PATH, "default_scale": "flash",
+                       "display": "Flash-YOLO-seg", "task": "segment"},
 }
 
 # yolo26 系头（Detect/Segment26 双分支 / E2E，含 flash-yolo 与分割版）：--nms/--raw 门控与解码分派按此判定
-YOLO26_FAMILY = {"yolo26", "yolo26-seg", "flash-yolo"}
+YOLO26_FAMILY = {"yolo26", "yolo26-seg", "flash-yolo", "flash-yolo-seg"}
 
 
 def arch_display_name(arch, scale):

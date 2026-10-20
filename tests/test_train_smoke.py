@@ -207,6 +207,37 @@ def test_train_smoke_seg(tmp_path):
     print(f"  [seg] 冒烟通过: seg {seg[0]:.3f} -> {seg[-1]:.3f} · val_seg {val_seg[0]:.3f} -> {val_seg[-1]:.3f}")
 
 
+def test_train_smoke_flash_seg(tmp_path):
+    """Flash-YOLO-seg：固定档 flash，分割损失/Box+Mask 验证/权重 metadata 全链路"""
+    data = _make_mini_coco(tmp_path, seg=True)
+    cfg = TrainConfig(
+        data=str(data), model="flash-yolo-seg", epochs=2, batch=4, nbs=4, imgsz=320, workers=0,
+        val_epochs=1, val_limit=8, limit=0, amp=False, mask_ratio=4, overlap_mask=True,
+        mosaic=0.5, mixup=0.0, copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0,
+    )
+    torch.manual_seed(0)
+    run_dir = tmp_path / "run-flash-seg"
+    trainer = Trainer(cfg, device="cpu", run_dir=run_dir)
+    trainer.train()
+
+    assert cfg.scale == "flash"  # 固定档：Trainer 自动归一化，--scale 不适用
+    rows = list(csv_reader(run_dir / "results.csv"))
+    assert len(rows) >= 2, f"results.csv 行数不足: {len(rows)}"
+    for key in ("seg", "val_seg", "sem", "val_sem", "P(M)", "mAP@[.5:.95](M)"):
+        assert key in rows[0], (key, list(rows[0]))
+    losses = [float(r["seg"]) for r in rows] + [float(r["val_seg"]) for r in rows]
+    assert all(np.isfinite(v) and v >= 0 for v in losses), losses
+    assert trainer.head.nc == 2
+
+    from model.build import build_model
+    from model.weights import load_meta, load_weights
+    wm = load_meta(run_dir / "weights" / "best.safetensors")
+    assert wm["arch"] == "flash-yolo-seg" and wm["scale"] == "flash" and wm["nc"] == 2, wm
+    model = build_model("flash-yolo-seg", nc=2)
+    load_weights(model, run_dir / "weights" / "best.safetensors", strict=True)
+    print(f"  [flash-seg] 冒烟通过: seg {losses[0]:.3f} -> {losses[-1]:.3f}")
+
+
 def test_train_smoke_seg_yolo(tmp_path):
     """YOLO-seg txt：多边形行 -> 图像/掩码加载、分割损失、Box+Mask 验证、产物全链路"""
     data = _make_mini_yolo(tmp_path, seg=True)

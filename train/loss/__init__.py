@@ -17,6 +17,7 @@ _LOSS_BY_ARCH = {
     "yolo26": ComputeLoss,
     "flash-yolo": ComputeLoss,
     "yolo26-seg": ComputeLossSeg,
+    "flash-yolo-seg": ComputeLossSeg,
     "yolov3-tiny": ComputeLossV3,
     "yolov3-tiny-silu": ComputeLossV3,
 }

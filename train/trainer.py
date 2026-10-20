@@ -632,7 +632,7 @@ class Trainer:
             self._write_meta()
         if self.val_enabled:  # 正式口径评估提示（best.safetensors 仅在有验证时落盘）
             extra = f" --model {self.cfg.model}" if self.cfg.model != "yolo26" else ""
-            if self.task == "segment":  # 分割档位可由 metadata 解析；显式给出便于旧权重/改名场景
+            if self.task == "segment" and arch_has_scale(self.cfg.model):  # 固定档架构（flash）不写 --scale
                 extra += f" --scale {self.cfg.scale}"
             logger.info(f"official eval: python scripts/eval.py --weights {self.run_dir / 'weights' / 'best.safetensors'} "
                         f"--data {self.spec.source}{extra}")
