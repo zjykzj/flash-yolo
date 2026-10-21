@@ -114,12 +114,30 @@ def _clip_segments(segments, w, h):
             for p in segments]
 
 
-def _affine_segments(segments, M):
+def _affine_segments(segments, M, perspective=False):
+    """多边形逐点变换；perspective=True 时按齐次坐标除以第三维（官方 apply_segments 口径）"""
     out = []
     for p in segments:
-        q = p @ M[:2, :2].T + M[:2, 2]
+        hom = np.concatenate([p, np.ones((len(p), 1), np.float32)], 1)
+        q = hom @ M.T
+        if perspective:
+            q = q[:, :2] / q[:, 2:3]
+        else:
+            q = q[:, :2]
         out.append(q.astype(np.float32))
     return out
+
+
+def _transform_boxes(corners, M, perspective=False):
+    """(M, 4, 2) 角点 -> 变换后外接框；perspective 时齐次归一化（官方 apply_bboxes 口径）"""
+    hom = np.concatenate([corners, np.ones(corners.shape[:2] + (1,), np.float32)], 2)
+    q = hom @ M.T
+    if perspective:
+        q = q[..., :2] / q[..., 2:3]
+    else:
+        q = q[..., :2]
+    return np.stack([q[:, :, 0].min(1), q[:, :, 1].min(1),
+                     q[:, :, 0].max(1), q[:, :, 1].max(1)], 1).astype(np.float32)
 
 
 def _flip_lr_segments(segments, W):
@@ -306,6 +324,11 @@ def _random_perspective(img, labels, hyp, rng, segments):
     shear_y = float(np.tan(rng.uniform(-hyp.shear, hyp.shear) * np.pi / 180))
     tx = float(rng.uniform(0.5 - hyp.translate, 0.5 + hyp.translate)) * S
     ty = float(rng.uniform(0.5 - hyp.translate, 0.5 + hyp.translate)) * S
+    # 透视项只在开启时抽样：perspective=0 不消耗 RNG，历史 run 的随机流逐位不变
+    px = py = 0.0
+    if hyp.perspective:
+        px = float(rng.uniform(-hyp.perspective, hyp.perspective))
+        py = float(rng.uniform(-hyp.perspective, hyp.perspective))
 
     C = np.eye(3, dtype=np.float32)  # 画布中心 -> 原点
     C[0, 2], C[1, 2] = -w / 2, -h / 2
@@ -315,9 +338,14 @@ def _random_perspective(img, labels, hyp, rng, segments):
     Sh[0, 1], Sh[1, 0] = shear_x, shear_y
     T = np.eye(3, dtype=np.float32)  # 平移到输出画布 (0.5±translate)*S
     T[0, 2], T[1, 2] = tx, ty
-    M = T @ Sh @ R @ C  # 官方顺序 T @ S @ R @ P @ C（P = I）
+    P = np.eye(3, dtype=np.float32)  # 透视（官方 P[2,0]=x / P[2,1]=y）
+    P[2, 0], P[2, 1] = px, py
+    M = T @ Sh @ R @ P @ C  # 官方顺序 T @ S @ R @ P @ C
 
-    out = cv2.warpAffine(img, M[:2], (S, S), borderValue=(BORDER,) * 3)
+    if hyp.perspective:
+        out = cv2.warpPerspective(img, M, (S, S), borderValue=(BORDER,) * 3)
+    else:
+        out = cv2.warpAffine(img, M[:2], (S, S), borderValue=(BORDER,) * 3)
     pre = labels[:, 1:5] * g if len(labels) else np.zeros((0, 4), np.float32)  # 官方 box1
 
     if segments is None:
@@ -328,14 +356,12 @@ def _random_perspective(img, labels, hyp, rng, segments):
         corners = np.stack(
             [lbs[:, 1:3], np.stack([lbs[:, 3], lbs[:, 2]], 1), lbs[:, 3:5], np.stack([lbs[:, 1], lbs[:, 4]], 1)], 1
         )  # (M, 4, 2)
-        new_c = corners @ M[:2, :2].T + M[:2, 2]
-        new = np.stack([new_c[:, :, 0].min(1), new_c[:, :, 1].min(1),
-                        new_c[:, :, 0].max(1), new_c[:, :, 1].max(1)], 1).astype(np.float32)
+        new = _transform_boxes(corners, M, bool(hyp.perspective))
         keep = _box_candidates(pre, _clip_boxes(new, S, S))
         return out, np.concatenate([lbs[:, :1], new], 1)[keep], None
 
     # 分割：多边形逐点仿射 -> clip -> 框由多边形包围盒导出（官方 area_thr=0.01）
-    polys = _clip_segments(_affine_segments(segments, M), S, S)
+    polys = _clip_segments(_affine_segments(segments, M, bool(hyp.perspective)), S, S)
     boxes = (np.stack([polygon_bbox(p) for p in polys]).astype(np.float32)
              if polys else np.zeros((0, 4), np.float32))
     keep = _box_candidates(pre, boxes, area_thr=0.01) if len(boxes) else np.zeros(0, bool)
@@ -344,9 +370,10 @@ def _random_perspective(img, labels, hyp, rng, segments):
 
 
 def random_perspective(img, labels, hyp, rng, segments=None):
-    """随机仿射（旋转/各向同性缩放/x-y 剪切/平移）-> S×S
+    """随机仿射/透视（旋转/各向同性缩放/x-y 剪切/透视/平移）-> S×S
 
-    M = T @ S @ R @ C（官方 _compute_affine_matrix；perspective 项为单位阵）；
+    M = T @ S @ R @ P @ C（官方 _compute_affine_matrix）；perspective=0 时 P=I、
+    走 warpAffine 且不抽样（历史随机流逐位不变），>0 时走 warpPerspective。
     旋转缩放绕当前画布中心，平移量以**输出尺寸** S 为单位。
     segments 给定时返回三元组；框由变换后的多边形包围盒导出，过滤用 area_thr=0.01。
     """

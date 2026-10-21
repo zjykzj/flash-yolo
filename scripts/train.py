@@ -38,7 +38,8 @@ _FLOAT_FIELDS = ["lr0", "lrf", "momentum", "weight_decay", "muon_w", "sgd_w", "w
                  "warmup_bias_lr",
                  "lr_step_gamma", "box_gain", "cls_gain", "dfl_gain", "obj_gain", "tal_alpha", "tal_beta",
                  "prog_alpha_init", "prog_alpha_final", "stal_s_min", "stal_s_ref", "ema_decay",
-                 "multi_scale", "mosaic", "mixup", "copy_paste", "aug_scale", "degrees", "shear", "translate",
+                 "multi_scale", "mosaic", "mixup", "copy_paste", "aug_scale", "degrees", "shear",
+                 "perspective", "translate",
                  "fliplr", "flipud", "hsv_h", "hsv_s", "hsv_v", "bgr"]
 _STR_FIELDS = ["copy_paste_mode"]
 

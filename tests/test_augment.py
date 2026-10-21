@@ -7,6 +7,7 @@
 - HSV 在 HSV 空间（hue 加性、sat/val 乘性、lut_sat[0]=0）
 """
 
+import cv2
 import numpy as np
 import torch
 
@@ -49,6 +50,52 @@ def test_perspective_identity_invariant():
     out_img, out_labels = random_perspective(img, labels, hyp, np.random.default_rng(0))
     np.testing.assert_allclose(out_labels, labels, atol=1e-3)
     print("  恒等透视标签不变:", out_labels.tolist())
+
+
+def test_perspective_matrix_and_geometry():
+    """透视：P 矩阵参与 M，图像走 warpPerspective，框/多边形按齐次坐标归一化"""
+    S = 64
+    hyp = _identity_hyp(imgsz=S, perspective=0.002)
+    img = _img(size=S, value=30)
+    labels = np.array([[0, 20, 20, 44, 44]], np.float32)
+    segs = [np.array([[20, 20], [44, 20], [44, 44], [20, 44]], np.float32)]
+    # center=False -> 所有 uniform 取下界：angle 0 / g 1 / shear 0 / px=py=-0.05 / tx=ty=0.5S
+    out_img, out_labels, out_segs = random_perspective(
+        img, labels, hyp, _StubRNG(center=False), segs)
+
+    C = np.eye(3, dtype=np.float32); C[0, 2], C[1, 2] = -S / 2, -S / 2
+    P = np.eye(3, dtype=np.float32); P[2, 0] = P[2, 1] = -0.002
+    T = np.eye(3, dtype=np.float32); T[0, 2], T[1, 2] = S / 2, S / 2
+    M = T @ P @ C
+    expected_img = cv2.warpPerspective(img, M, (S, S), borderValue=(114, 114, 114))
+    np.testing.assert_array_equal(out_img, expected_img)
+
+    corners = np.array([[20, 20], [44, 20], [44, 44], [20, 44]], np.float32)
+    hom = np.concatenate([corners, np.ones((4, 1), np.float32)], 1)
+    q = hom @ M.T
+    q = np.clip(q[:, :2] / q[:, 2:3], 0, S)  # 与 _clip_segments 同口径
+    expected_box = np.array([q[:, 0].min(), q[:, 1].min(), q[:, 0].max(), q[:, 1].max()], np.float32)
+    assert out_segs[0].shape == (4, 2)
+    np.testing.assert_allclose(out_segs[0], q, atol=1e-4)
+    np.testing.assert_allclose(out_labels[0, 1:], expected_box, atol=1e-4)
+
+
+def test_perspective_zero_keeps_rng_stream():
+    """perspective=0 不抽样（历史 run 的随机流逐位不变）"""
+    calls = []
+
+    class _CountRNG(_StubRNG):
+        def uniform(self, lo, hi=None, size=None):
+            calls.append((lo, hi))
+            return super().uniform(lo, hi, size)
+
+    hyp = _identity_hyp(imgsz=64)
+    random_perspective(_img(size=64), np.zeros((0, 5), np.float32), hyp, _CountRNG(center=False))
+    assert len(calls) == 6  # angle, g, shear_x, shear_y, tx, ty
+    calls.clear()
+    hyp = _identity_hyp(imgsz=64, perspective=0.02)
+    random_perspective(_img(size=64), np.zeros((0, 5), np.float32), hyp, _CountRNG(center=False))
+    assert len(calls) == 8
 
 
 def test_fliplr_exact_mirror():

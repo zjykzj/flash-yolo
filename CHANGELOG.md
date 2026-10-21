@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **COCO RLE segmentation annotations**: RLE masks (compressed strings or counts lists) are now decoded to contour polygons for training and validation instead of falling back to bbox rectangles; damaged RLE still falls back and is counted, and the scan line reports how many were decoded.
 - **Segmentation polygon labels from infer**: segmentation checkpoints now write normalized polygon rows to `labels/*.txt` (external contour, multi-part merged, fewer than 3 points skipped) matching the official `save_txt` format, instead of box rows.
 - **Official segmentation comparison**: `scripts/compare_official.py` now handles segmentation checkpoints, decoding the dual output (detections + mask coefficients, prototypes) and reporting Box/Mask tables; on the same 200-image subset it matches `scripts/eval.py` to four decimals.
+- **Perspective augmentation**: `perspective` joins the affine transform via the official P matrix (`warpPerspective` plus homogeneous box/polygon projection); it defaults to 0, where the RNG stream and outputs stay bit-identical, and only consumes two extra random draws when enabled.
 
 ### Changed
 

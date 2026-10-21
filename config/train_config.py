@@ -113,6 +113,7 @@ class TrainConfig:
     aug_scale: float = 0.5  # 仿射缩放增益（与模型档位 scale 字段区分）
     degrees: float = 0.0
     shear: float = 0.0
+    perspective: float = 0.0
     translate: float = 0.1
     fliplr: float = 0.5
     flipud: float = 0.0

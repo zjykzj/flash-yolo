@@ -93,6 +93,7 @@ copy_paste_mode: "off"  # off = 官方检测口径（标签无 segments 时 Copy
 aug_scale: 0.5
 degrees: 0.0
 shear: 0.0
+perspective: 0.0
 translate: 0.1
 fliplr: 0.5
 flipud: 0.0
