@@ -28,7 +28,8 @@ def main():
     logger = get_logger(__name__)
     parser = argparse.ArgumentParser(description="download official weights (AGPL-3.0)")
     parser.add_argument("--model", default="yolo26n",
-                        help="model name (yolo26n/s/m/l/x | yolo26n-seg | yolov3-tiny)")
+                        help="model name (yolo26n/s/m/l/x | yolo26n/s/m/l/x-seg | "
+                             "yolo26n/s/m/l/x-objv1-seg | yolov3-tiny)")
     parser.add_argument("--version", default="v8.4.0", help="ultralytics release version tag (yolo26 .pt only)")
     parser.add_argument("--dir", default="weights", help="save directory")
     args = parser.parse_args()

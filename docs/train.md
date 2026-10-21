@@ -96,9 +96,15 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--optimizer` | `musgd` | `musgd` = Muon+SGD 混合（官方 yolo26 口径）；`sgd` = 全参数走 SGD 路径（darknet 口径复刻：配 `--momentum 0.9 --no-nesterov --lr0 0.001` + 台阶 LR） |
 | `--nesterov` / `--no-nesterov` | true | SGD 分支的 Nesterov 修正；darknet 的更新是 heavy-ball，复刻时用 `--no-nesterov` |
 | `--obj-iou-target` | false | v3 系 IoU-aware objectness（参考 zjykzj/YOLOv3）：正样本 obj 目标 = IoU(预测框, 责任 GT)、权重 ×5；false = darknet 硬目标 0/1 |
-| `--close-mosaic` | 10 | 最后 N 轮关 mosaic/mixup/copy_paste（自动 `min(N, epochs//5)`） |
+| `--close-mosaic` | 10 | 最后 N 轮关 mosaic/mixup/cutmix/copy_paste（自动 `min(N, epochs//5)`） |
 | `--multi-scale` | 0.0 | 输入尺寸抖动 ±r（ultralytics 口径，按 32 量化） |
 | `--copy-paste-mode` | `off` | `off` / `box`（检测矩形贴块近似）/ `flip`（官方分割 CopyPaste） |
+| `--perspective` | 0.0 | 透视畸变幅度（官方 P 矩阵；0 = 关闭且不消耗 RNG） |
+| `--cutmix` | 0.0 | CutMix 概率（官方语义：候选切块避开已有目标，实例裁剪后拼接） |
+| `--cls-w` | 1.0 | o2o 分类项额外权重（官方 ckpt 记录参数；1.0 = released 代码行为） |
+| `--freeze` | 0 | 冻结前 N 层（model.0..N-1，冻结层 BN 保持 eval） |
+| `--single-cls` | false | 单类训练：标签全部映射到 0，模型 nc=1（评估配 `--single-cls`） |
+| `--plots` / `--no-plots` | true | 训练结束写 results/PR/混淆矩阵（需 matplotlib；缺失自动跳过） |
 | `--channels-last` | true | NHWC 训练（cuDNN 反向快 ~33%）；推理/导出不受影响 |
 | `--stop-after` | 0 | 只跑前 N 轮（lr/close_mosaic 仍按 `epochs` 调度 → 可与全长 run 逐轮对齐） |
 | `--val-epochs` | 1 | 0 = 全程不验证（冒烟）；`--val-limit` 限制验证图数 |
@@ -178,7 +184,7 @@ python scripts/bench_io.py --data coco --loader-only
 
 1. **`--amp` 从零训练必炸**（fp16 在 640² 从零 + BN eps=0.001 的组合下第 1 轮内 NaN）。默认
    fp32；微调可以试 `--amp`。
-2. **`--close-mosaic` 是"最后 N 轮"**，不是"从第 N 轮开始"；取值会自动 `min(N, epochs//5)`，
+2. **`--close-mosaic` 是"最后 N 轮"**（关闭 mosaic/mixup/cutmix/copy_paste），不是"从第 N 轮开始"；取值会自动 `min(N, epochs//5)`，
    短跑时小心它把 mosaic 全程关掉（`--close-mosaic 999` 这种写法等于全程关）。
 3. **`best.safetensors` 由训练中快速指标（FastMetrics）选取**，只用于挑权重；对外数字一律走
    `scripts/eval.py`（见 `val.md`）。

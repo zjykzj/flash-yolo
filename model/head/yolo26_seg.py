@@ -8,8 +8,8 @@
 原型单独一路返回——调用方按 `(outputs, proto)` 取值。
 E2E 的两阶段 top-k 复用 Detect._e2e_postprocess（唯一实现），系数按同一次选择取回。
 
-尚未实现的部分（见开发计划）：mask 损失（BCE + 原型组合）与训练期 mask 指标；
-本文件只负责结构与前向契约。
+掩码损失在 `train/loss/yolo26_seg.py`、训练期 Box+Mask 指标在 `train/validator.py`
+（本文件只负责结构与前向契约）。semseg 辅助头仅训练期返回，验证/导出不计算。
 """
 
 import copy

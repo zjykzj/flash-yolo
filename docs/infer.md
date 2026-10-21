@@ -35,6 +35,7 @@ python scripts/infer.py --weights runs/train/seg/weights/best.safetensors --imag
 | `--engine` | `pt` | `pt` / `onnx` / `trt`（trt 需已构建的 `.engine`） |
 | `--conf` | **0.25** | 置信度阈值（注意：**eval 的默认是 0.001**，两者用途不同） |
 | `--nms` | off | o2m + NMS 路径（yolo26 专属；v3 会报错） |
+| `--agnostic-nms` | off | 跨类 NMS（需同时给 `--nms`；E2E 路径会报错） |
 | `--model` / `--scale` | 从文件名推断 | 架构/档位（推不出时报错要求显式给） |
 | `--output` | `runs/predict/predictN/` | 单图：输出文件路径；目录模式：输出目录 |
 | `--data` | COCO 标签 | 只用 `names` + `nc`（不读图片） |

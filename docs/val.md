@@ -61,6 +61,8 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 
 - **E2E（默认）**：o2o 头、无 NMS，输出 (B,300,6)。官方 40.1 就是这条路径。
 - **NMS**：o2m 头 + 类感知 NMS，通常高 ~0.9 点、略慢（官方 40.9）。
+  加 `--agnostic-nms` 改为跨类抑制（同类框仍按分数保留最高者；E2E 路径没有 NMS，该开关会报错）。
+- **单类模型**：用 `--single-cls` 把数据集 GT 类别映射到 0（模型 metadata 的 nc 必须为 1）。
 - yolov3-tiny 只有一条"解码 + obj×cls + NMS"路径，`--nms` / `--raw` 对它直接报错。
 
 ## 5. 分割（yolo26-seg / flash-yolo-seg）
