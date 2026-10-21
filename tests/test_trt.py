@@ -1,7 +1,8 @@
-"""TensorRT engine：构建 / 加载 / 与 PyTorch 数值对拍（fp32 raw 输出；fp16 引擎对拍 half 模型）。
+"""TensorRT engine：构建 / 加载 / 与 PyTorch 数值对拍（fp32 raw 输出；fp16 引擎对拍 half 模型；
+分割双输出 raw 对拍）。
 
 需要 tensorrt（可选依赖）与 CUDA——缺任一则整文件跳过。
-engine 构建约 1 分钟（flash-yolo @320）。
+engine 构建约 1 分钟（flash-yolo / flash-yolo-seg @320）。
 """
 
 import numpy as np
@@ -67,6 +68,34 @@ def test_trt_fp16_engine_matches_half_pytorch(tmp_path):
     diff = float(np.abs(out - ref).max())
     print(f"  fp16: engine vs torch-half 误差 {diff:.2e}")
     np.testing.assert_allclose(out, ref, atol=1e-2, rtol=1e-3)
+
+
+def test_trt_seg_dual_output_matches_pytorch(tmp_path):
+    """分割引擎双输出（检测 raw + 原型）与 PyTorch 对拍，契约与 pt/onnx 一致"""
+    torch.manual_seed(0)
+    model = build_model("flash-yolo-seg", None, 320, nc=80)
+    model.model[-1].end2end = False  # raw：避开 E2E top-k 的次序/平局问题
+    model.eval()
+    x = torch.zeros(1, 3, 320, 320)
+    with torch.no_grad():
+        ref_det, ref_proto = model(x)
+    ref_det, ref_proto = ref_det[0].numpy(), ref_proto[0].numpy()  # 剥批：与引擎契约一致
+
+    onnx_path = tmp_path / "seg.onnx"
+    with torch.no_grad():
+        torch.onnx.export(model, x, str(onnx_path), input_names=["images"],
+                          output_names=["output0", "output1"], opset_version=18, dynamo=False)
+    engine_path = tmp_path / "seg.engine"
+    build_trt_engine(onnx_path, engine_path, fp16=False)
+
+    eng = TRTEngine(engine_path, model="flash-yolo-seg", end2end=False, imgsz=320)
+    out = eng._forward(x)
+    assert isinstance(out, tuple) and len(out) == 2, type(out)
+    det, proto = out
+    assert det.shape == ref_det.shape, (det.shape, ref_det.shape)
+    assert proto.shape == ref_proto.shape, (proto.shape, ref_proto.shape)
+    np.testing.assert_allclose(det, ref_det, atol=2e-3, rtol=1e-3)
+    np.testing.assert_allclose(proto, ref_proto, atol=2e-3, rtol=1e-3)
 
 
 def test_trt_fp16_build_rejects_fp32_onnx(tmp_path):
