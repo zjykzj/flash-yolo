@@ -21,9 +21,11 @@ class PtEngine(BaseEngine):
     {nc, imgsz, anchors...}；旧权重没有 metadata 则完全按历史行为（imgsz 640 / 模型 yaml 的 nc）。
     """
 
-    def __init__(self, weights, scale="n", end2end=True, device=None, nc=None, model="yolo26", imgsz=None):
+    def __init__(self, weights, scale="n", end2end=True, device=None, nc=None, model="yolo26", imgsz=None,
+                 agnostic_nms=False):
         self.device = resolve_device(device)
         self.mask_device = self.device  # 掩码解码跟随模型设备（CUDA 下 300 检出 48ms -> 2.6ms）
+        self.agnostic_nms = bool(agnostic_nms)  # 仅 NMS 路径生效（E2E 图内无 NMS）
         self.scale = scale
         self.arch = model
         self.task = arch_task(model)

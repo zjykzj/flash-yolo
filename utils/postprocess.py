@@ -76,7 +76,8 @@ def decode_raw(raw, nc=80, shapes=None, strides=None):
     return dbox.T, scores.T
 
 
-def nms_per_image(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, max_det=MAX_DET, extra=None):
+def nms_per_image(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, max_det=MAX_DET, extra=None,
+                  agnostic=False):
     """按类 NMS（单图，xyxy 输入）——类感知贪心 + 早停
 
     候选按分数全局降序逐框处理；跨类用坐标偏移隔离（跨类 IoU 恒 0，等价于逐类独立 NMS），
@@ -105,7 +106,8 @@ def nms_per_image(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, 
     dt = np.result_type(boxes.dtype, score_map.dtype, np.float32)
     scores = score_map[cand, cls]
     order = np.argsort(scores)[::-1]
-    max_wh = float(np.abs(boxes).max()) + 1.0  # 类偏移量：不同类的框平移后恒不相交
+    # 类偏移量：不同类的框平移后恒不相交；agnostic=True 时去掉偏移（跨类互相抑制）
+    max_wh = 0.0 if agnostic else float(np.abs(boxes).max()) + 1.0
     kept_boxes = np.zeros((max_det, 4), dtype=dt)
     kept_scores = np.zeros(max_det, dtype=dt)
     kept_cls = np.zeros(max_det, dtype=np.int64)
@@ -128,7 +130,8 @@ def nms_per_image(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, 
     return (det, extra[kept_idx[:m]]) if extra is not None else det
 
 
-def non_max_suppression(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, max_det=MAX_DET, extra=None):
+def non_max_suppression(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_THRES, max_det=MAX_DET, extra=None,
+                        agnostic=False):
     """按类 NMS（与官方 val 口径：conf 0.001 / iou 0.7 / 每图最多 300）
 
     Args:
@@ -140,7 +143,7 @@ def non_max_suppression(boxes, score_map, conf_thres=CONF_THRES, iou_thres=IOU_T
         extra 为空：boxes (M, 4) xyxy, scores (M,), class_ids (M,) int
         extra 给定时：再加一个 extra_kept (M, K)
     """
-    det = nms_per_image(xywh2xyxy(boxes), score_map, conf_thres, iou_thres, max_det, extra)
+    det = nms_per_image(xywh2xyxy(boxes), score_map, conf_thres, iou_thres, max_det, extra, agnostic=agnostic)
     if extra is not None:
         det, extra_kept = det
         return det[:, :4], det[:, 4], det[:, 5].astype(np.int64), extra_kept

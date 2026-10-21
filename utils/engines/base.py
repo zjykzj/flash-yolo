@@ -55,7 +55,7 @@ class Detections:
 
 
 def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres, arch="yolo26", imgsz=None,
-                   task="detect", mask_device=None):
+                   task="detect", mask_device=None, agnostic_nms=False):
     """引擎输出 -> Detections（原图坐标）
 
     imgsz：o2m 原始输出的网格形状按它推（[(S//8)², (S//16)², (S//32)²]；640 -> 80/40/20，
@@ -88,9 +88,11 @@ def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres, a
         boxes, score_map = decode_raw(out[: 4 + nc], shapes=shapes)
         if task == "segment":
             boxes, scores, cls, coeff = non_max_suppression(
-                boxes, score_map, conf_thres or CONF_THRES, iou_thres, MAX_DET, extra=out[4 + nc:].T)
+                boxes, score_map, conf_thres or CONF_THRES, iou_thres, MAX_DET, extra=out[4 + nc:].T,
+                agnostic=agnostic_nms)
         else:
-            boxes, scores, cls = non_max_suppression(boxes, score_map, conf_thres or CONF_THRES, iou_thres, MAX_DET)
+            boxes, scores, cls = non_max_suppression(boxes, score_map, conf_thres or CONF_THRES, iou_thres, MAX_DET,
+                                                     agnostic=agnostic_nms)
     masks = None
     if task == "segment":
         masks = process_mask(proto, coeff, boxes, (imgsz or IMGSZ, imgsz or IMGSZ), (h, w), ratio, pad,
@@ -127,6 +129,7 @@ class BaseEngine:
         t2 = time.perf_counter()
         dets = _to_detections(out, self.end2end, ratio, pad, image_bgr.shape[:2], conf_thres, iou_thres,
                               arch=self.arch, imgsz=self.imgsz, task=self.task,
-                              mask_device=getattr(self, "mask_device", None))
+                              mask_device=getattr(self, "mask_device", None),
+                              agnostic_nms=getattr(self, "agnostic_nms", False))
         t3 = time.perf_counter()
         return dets, {"preprocess": (t1 - t0) * 1e3, "inference": (t2 - t1) * 1e3, "postprocess": (t3 - t2) * 1e3}

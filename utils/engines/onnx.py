@@ -23,7 +23,8 @@ class OnnxEngine(BaseEngine):
     （改尺寸要重新导出），图内 shape 不可知（全动态导出）时用显式值或 640。
     """
 
-    def __init__(self, onnx_path, scale="n", end2end=True, model="yolo26", imgsz=None):
+    def __init__(self, onnx_path, scale="n", end2end=True, model="yolo26", imgsz=None, agnostic_nms=False):
+        self.agnostic_nms = bool(agnostic_nms)  # 仅 NMS 路径生效
         self.scale = scale
         self.arch = model
         self.task = arch_task(model)

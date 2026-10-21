@@ -84,6 +84,8 @@ def main():
     parser.add_argument("--engine", choices=["pt", "onnx", "trt"], default="pt")
     parser.add_argument("--conf", type=float, default=0.25, help="confidence threshold")
     parser.add_argument("--nms", action="store_true", help="use o2m+NMS path (yolo26 only)")
+    parser.add_argument("--agnostic-nms", dest="agnostic_nms", action="store_true",
+                        help="class-agnostic NMS (only with --nms; default: per-class suppression)")
     parser.add_argument("--model", default=None, choices=sorted(ARCHS),
                         help="architecture (default: inferred from the weights filename)")
     parser.add_argument(
@@ -128,6 +130,8 @@ def main():
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
     if arch not in YOLO26_FAMILY and args.nms:
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
+    if args.agnostic_nms and not args.nms:
+        parser.error("--agnostic-nms only affects the NMS path — pass --nms as well")
 
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 内部同一规则，构建后以 engine.imgsz 为准）
     imgsz = resolve_imgsz(args.weights, args.imgsz)
@@ -151,7 +155,8 @@ def main():
     # ② 模型（arch/scale 已在前段解析）
     end2end = not args.nms
     engine_cls = {"pt": PtEngine, "onnx": OnnxEngine, "trt": TRTEngine}[args.engine]
-    kwargs = {"end2end": end2end, "scale": scale, "model": arch, "imgsz": args.imgsz}
+    kwargs = {"end2end": end2end, "scale": scale, "model": arch, "imgsz": args.imgsz,
+              "agnostic_nms": args.agnostic_nms}
     if args.engine == "pt":
         kwargs["device"] = args.device
         kwargs["nc"] = nc  # onnx 图内置类别数，只有 pt 引擎需要重建头

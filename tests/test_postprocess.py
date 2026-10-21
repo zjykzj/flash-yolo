@@ -78,6 +78,17 @@ def test_class_isolation():
     print("  类隔离正确（同框不同类均保留）")
 
 
+def test_agnostic_nms_suppresses_cross_class():
+    """agnostic=True：跨类同框互相抑制（保留高分）；默认类感知保留两个"""
+    boxes = np.array([[0, 0, 10, 10], [0, 0, 10, 10]], np.float32)
+    score_map = np.array([[0.9, 0.0], [0.0, 0.8]], np.float32)
+    det = nms_per_image(boxes, score_map, conf_thres=0.5, iou_thres=0.5)
+    assert len(det) == 2 and set(det[:, 5].astype(int)) == {0, 1}
+    det = nms_per_image(boxes, score_map, conf_thres=0.5, iou_thres=0.5, agnostic=True)
+    assert len(det) == 1 and int(det[0, 5]) == 0 and abs(float(det[0, 4]) - 0.9) < 1e-6
+    print("  agnostic NMS 跨类抑制正确")
+
+
 def test_max_det_and_empty():
     """max_det 截断 / 按分降序 / 全部低于 conf / max_det=0 的边界"""
     rng = np.random.default_rng(2)

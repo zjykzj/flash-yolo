@@ -74,7 +74,7 @@ class TRTEngine(BaseEngine):
     tensorrt 是可选依赖：懒加载，未安装时报 ImportError。
     """
 
-    def __init__(self, engine_path, scale="n", end2end=True, model="yolo26", imgsz=None):
+    def __init__(self, engine_path, scale="n", end2end=True, model="yolo26", imgsz=None, agnostic_nms=False):
         try:
             import tensorrt as trt
         except ImportError as e:
@@ -85,6 +85,7 @@ class TRTEngine(BaseEngine):
             raise RuntimeError("TensorRT engine requires a CUDA device")
         self._trt = trt
         self.mask_device = torch.device("cuda")  # 掩码解码走 GPU（与引擎同设备）
+        self.agnostic_nms = bool(agnostic_nms)  # 仅 NMS 路径生效
         self.scale = scale
         self.arch = model
         self.task = arch_task(model)

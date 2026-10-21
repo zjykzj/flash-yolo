@@ -81,6 +81,8 @@ def main():
     parser.add_argument("--scale", default=None,
                         help="model scale (yolo26 family: n/s/m/l/x; default: weights metadata / filename)")
     parser.add_argument("--nms", action="store_true", help="use o2m+NMS path (yolo26 only; default E2E NMS-free)")
+    parser.add_argument("--agnostic-nms", dest="agnostic_nms", action="store_true",
+                        help="class-agnostic NMS (only with --nms; default: per-class suppression)")
     parser.add_argument("--conf", type=float, default=CONF_THRES, help=f"confidence threshold (default {CONF_THRES})")
     parser.add_argument("--iou", type=float, default=IOU_THRES, help=f"NMS IoU threshold (default {IOU_THRES})")
     parser.add_argument("--max-det", type=int, default=MAX_DET)
@@ -109,6 +111,8 @@ def main():
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
     if arch not in YOLO26_FAMILY and args.nms:
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
+    if args.agnostic_nms and not args.nms:
+        parser.error("--agnostic-nms only affects the NMS path — pass --nms as well")
 
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 构建后以 engine.imgsz 为准，onnx 取图内 shape）
     imgsz = resolve_imgsz(args.weights, args.imgsz)
@@ -129,7 +133,8 @@ def main():
     #    （两者的"参数量"不是同一个量，见 engine.summary_line）
     end2end = not args.nms
     engine_cls = {"pt": PtEngine, "onnx": OnnxEngine, "trt": TRTEngine}[args.engine]
-    kwargs = {"end2end": end2end, "scale": scale, "model": arch, "imgsz": args.imgsz}
+    kwargs = {"end2end": end2end, "scale": scale, "model": arch, "imgsz": args.imgsz,
+              "agnostic_nms": args.agnostic_nms}
     if args.engine == "pt":
         kwargs["device"] = args.device
     with redirect_prints(logger):
