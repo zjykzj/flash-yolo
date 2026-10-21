@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bias warmup learning rate**: `warmup_bias_lr` now follows the official training loop — bias parameter groups start at the configured value and decay to the target lr while other groups ramp from zero; `yolo26-seg-coco-ft` records the per-scale checkpoint values. Defaults to 0, so existing runs are unchanged.
 - **Flash-YOLO-seg**: a segmentation variant of Flash-YOLO (`--model flash-yolo-seg`) reuses the identical backbone/neck with the `Segment26` head, so it trains, validates (Box+Mask), exports, and infers through the existing seg pipeline; 2,528,248 parameters / 7.6 GFLOPs at 640.
 - **COCO RLE segmentation annotations**: RLE masks (compressed strings or counts lists) are now decoded to contour polygons for training and validation instead of falling back to bbox rectangles; damaged RLE still falls back and is counted, and the scan line reports how many were decoded.
+- **Segmentation polygon labels from infer**: segmentation checkpoints now write normalized polygon rows to `labels/*.txt` (external contour, multi-part merged, fewer than 3 points skipped) matching the official `save_txt` format, instead of box rows.
 
 ### Changed
 

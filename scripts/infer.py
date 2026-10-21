@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
 import cv2
+import numpy as np
 import torch
 
 from config import __version__
@@ -26,6 +27,7 @@ from model.weights import arch_has_scale, load_meta, resolve_arch_scale, resolve
 from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_params, setup_logging
 from utils.paths import increment_path
+from utils.postprocess import masks_to_segments
 from utils.visualize import draw_detections
 
 # 控制台立刻可用；文件日志等 run 目录确定后挂（见 attach_file_log）
@@ -41,6 +43,29 @@ def _collect_images(source):
     if p.is_dir():
         return sorted(f for f in p.iterdir() if f.suffix.lower() in _IMG_EXTS)
     return [p]
+
+
+def _label_lines(dets, task, w_img, h_img):
+    """推理结果 -> YOLO txt 行：分割写归一化多边形，检测写归一化框
+
+    分割口径与官方 `save_txt` 一致：每条掩码取外轮廓（多段合并），少于 3 点的实例跳过
+    （不退回框——官方同样不写该行）；坐标归一化到原图，`%g` 精度。
+    """
+    if task == "segment" and dets.masks is not None:
+        lines = []
+        for cid, seg in zip(dets.class_ids, masks_to_segments(dets.masks)):
+            if len(seg) < 3:
+                continue
+            coords = (seg / np.array([w_img, h_img], np.float32)).reshape(-1)
+            lines.append(f"{int(cid)} " + " ".join(f"{v:g}" for v in coords))
+        return lines
+    lines = []
+    for box, cid in zip(dets.boxes, dets.class_ids):
+        x1, y1, x2, y2 = box
+        xc, yc = (x1 + x2) / 2 / w_img, (y1 + y2) / 2 / h_img
+        w, h = (x2 - x1) / w_img, (y2 - y1) / h_img
+        lines.append(f"{int(cid)} {xc:.6f} {yc:.6f} {w:.6f} {h:.6f}")
+    return lines
 
 
 def _summary(image_path, image, dets, pipeline_ms, idx, total, names):
@@ -158,14 +183,10 @@ def main():
         out_path = run_dir / path.name
         draw_detections(image, dets, names, save_path=str(out_path))
 
-        # YOLO 格式标签：labels/<同名>.txt，每行 cls xc yc w h（归一化 0-1）
+        # YOLO 格式标签：labels/<同名>.txt；分割写多边形行，检测写 cls xc yc w h（均归一化）
         h_img, w_img = image.shape[:2]
         with open(labels_dir / (path.stem + ".txt"), "w", encoding="utf-8") as f:
-            for box, cid in zip(dets.boxes, dets.class_ids):
-                x1, y1, x2, y2 = box
-                xc, yc = (x1 + x2) / 2 / w_img, (y1 + y2) / 2 / h_img
-                w, h = (x2 - x1) / w_img, (y2 - y1) / h_img
-                f.write(f"{int(cid)} {xc:.6f} {yc:.6f} {w:.6f} {h:.6f}\n")
+            f.writelines(line + "\n" for line in _label_lines(dets, engine.task, w_img, h_img))
 
         pipeline_ms = sum(tseg.values())
         logger.info(_summary(path, image, dets, pipeline_ms, idx, len(images), names))

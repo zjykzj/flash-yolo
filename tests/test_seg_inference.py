@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from utils.postprocess import nms_per_image, process_mask
+from utils.postprocess import masks_to_segments, nms_per_image, process_mask
 
 ROOT = Path(__file__).resolve().parent.parent
 SAFE_PATH = ROOT / "weights" / "yolo26n-seg.safetensors"
@@ -27,6 +27,43 @@ def _letterbox_prep(imgsz=640):
 
 
 # ---- 纯 numpy 口径（不需权重）----
+
+
+def test_masks_to_segments_contours_and_merge():
+    """单连通 -> 一条外轮廓；多连通 -> 合并成一条；空掩码 -> 空数组"""
+    masks = np.zeros((3, 40, 60), np.uint8)
+    masks[0, 5:20, 5:25] = 1
+    masks[1, 4:12, 4:15] = 1
+    masks[1, 25:35, 40:55] = 1
+    segs = masks_to_segments(masks)
+    assert len(segs) == 3
+    assert segs[0].shape[1] == 2 and len(segs[0]) >= 4
+    x0, y0 = segs[0].min(0)
+    x1, y1 = segs[0].max(0)
+    assert (x0, y0, x1, y1) == (5, 5, 24, 19)  # 像素中心轮廓
+    # 两段合并后的多边形跨越两个连通域
+    assert segs[1][:, 0].max() >= 50 and segs[1][:, 1].min() <= 5
+    assert len(segs[1]) >= 8
+    assert segs[2].shape == (0, 2)
+
+
+def test_label_lines_seg_polygon():
+    """分割推理标签写归一化多边形（少于 3 点跳过），检测路径保持框格式"""
+    from scripts.infer import _label_lines
+    from utils.engines import Detections
+
+    masks = np.zeros((2, 20, 20), np.uint8)
+    masks[0, 2:10, 4:12] = 1
+    dets = Detections(np.array([[4, 2, 12, 10], [0, 0, 5, 5]], np.float32),
+                      np.array([0.9, 0.8], np.float32), np.array([3, 7]), masks)
+    lines = _label_lines(dets, "segment", 20, 20)
+    assert len(lines) == 1  # 空掩码实例不写行
+    parts = lines[0].split()
+    assert int(parts[0]) == 3 and len(parts) >= 7 and (len(parts) - 1) % 2 == 0
+    coords = np.array([float(v) for v in parts[1:]])
+    assert coords.min() >= 0 and coords.max() <= 1
+    box_lines = _label_lines(dets, "detect", 20, 20)
+    assert len(box_lines) == 2 and len(box_lines[0].split()) == 5
 
 
 def test_nms_per_image_carries_extra():

@@ -11,7 +11,7 @@ from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from utils.iou import box_iou
 
 __all__ = ["decode_raw", "non_max_suppression", "nms_per_image", "v3_detections", "scale_boxes",
-           "process_mask", "process_mask_lowres"]
+           "process_mask", "process_mask_lowres", "masks_to_segments"]
 
 # 三个检测层特征图尺寸（640 输入）：P3/P4/P5
 _LEVEL_SHAPES = [(80, 80), (40, 40), (20, 20)]
@@ -255,6 +255,30 @@ def process_mask_lowres(proto, coeffs, boxes, net_hw=None, chunk=0):
         masks = (c[i:j] @ p).reshape(-1, mh, mw)
         masks = _crop_mask((masks > 0).to(torch.uint8), b[i:j])
         out[i:j] = masks.numpy()
+    return out
+
+
+def masks_to_segments(masks):
+    """(N, H, W) 二值掩码 -> 每条掩码的外轮廓多边形 (K,2) float32（原图坐标）
+
+    与官方 `save_txt` 的掩码标签口径一致：`cv2.findContours(RETR_EXTERNAL)` 取外轮廓，
+    多连通域按最近点合并成一条；不足 3 点的轮廓返回空数组（调用方跳过该实例）。
+    轮廓点是像素中心——由它导出的框可能比掩码外接框小 1px，但不影响标签语义。
+    """
+    import cv2
+
+    from data.segments import merge_polygons
+
+    out = []
+    for mask in np.ascontiguousarray(masks, dtype=np.uint8):
+        contours = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+        parts = [c.reshape(-1, 2).astype(np.float32) for c in contours if len(c) >= 3]
+        if not parts:
+            out.append(np.zeros((0, 2), np.float32))
+        elif len(parts) == 1:
+            out.append(parts[0])
+        else:
+            out.append(merge_polygons(parts))
     return out
 
 

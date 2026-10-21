@@ -58,8 +58,9 @@ Labels        -> runs/predict/predict21/labels
 - 模型行：`YOLO26n · 260 layers · 2,572,280 params · E2E (NMS-free) · engine pt`
   （onnx/trt 显示的是部署口径：文件大小 + 输入/输出 shape）。
 - **分割权重**：可视化图额外叠加半透明实例掩码（`Detections.masks`，(N, H, W) uint8 @原图分辨率，
-  由 `process_mask` 解码，与官方 val 管线逐像素一致）。**labels/*.txt 仍是框**（YOLO 格式的
-  多边形标签未实现）——掩码目前只用于可视化与评估。
+  由 `process_mask` 解码，与官方 val 管线逐像素一致）。`labels/*.txt` 写**归一化多边形行**
+  `cls x1 y1 x2 y2 ...`：每条掩码取外轮廓、多连通域按最近点合并，少于 3 点的实例跳过
+  （与官方 `save_txt` 同口径）；检测权重仍写 `cls xc yc w h`。
 
 ## 3. 引擎选择
 
