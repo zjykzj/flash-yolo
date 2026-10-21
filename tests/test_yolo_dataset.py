@@ -53,6 +53,20 @@ def test_label_parse_and_pixel_roundtrip(tmp_path):
     print("  归一化 -> 像素 GT 往返正确:", box)
 
 
+def test_single_cls_remaps_yolo_labels(tmp_path):
+    """single_cls：YOLO 标签先按原 nc 解析，再全部映射到 0；评估侧同步"""
+    root, img_dir, lbl_dir, spec_file = _make_yolo(tmp_path)
+    (lbl_dir / "000000.txt").write_text("1 0.5 0.5 0.25 0.25\n")
+    spec = load_dataset(str(spec_file))
+    ds = build_train_dataset(TrainConfig(), spec, "train", single_cls=True)
+    assert ds.names == {0: "item"} and ds.n_categories == 1
+    assert all((labs[:, 0] == 0).all() for labs in ds.labels_norm if len(labs))
+    va = build_eval_dataset(spec, "val", single_cls=True)
+    va.load_image(0)
+    assert all(c == 0 for _, c in va.targets(0))
+    assert va.gt_dict()["categories"] == [{"id": 0, "name": "item"}]
+
+
 def test_parse_label_file_errors(tmp_path):
     p = tmp_path / "bad.txt"
     p.write_text("0 0.5 0.5 0.25 0.25 0.1\n")  # 6 列 = 预测格式/分割，检测解析器拒绝
