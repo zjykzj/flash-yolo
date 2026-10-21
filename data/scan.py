@@ -12,7 +12,8 @@ __all__ = ["ScanStats", "ScanResult", "scan_summary"]
 #   n_missing: 磁盘上不存在（已从图片清单剔除）；n_backgrounds: 无框图片
 #   n_crowd_excluded: 被剔除的 iscrowd=1 标注数（仅 COCO 训练侧非 0；YOLO 恒 0）
 ScanStats = namedtuple("ScanStats", "n_missing n_backgrounds n_crowd_excluded "
-                                    "n_instances parse_time scan_time first_missing n_seg_fallback",
+                                    "n_instances parse_time scan_time first_missing n_seg_fallback "
+                                    "n_seg_rle",
                        defaults=(0,))
 
 # 扫描结果：labels 仅训练侧非 None（build_labels=True / YOLO 训练集恒建）；
@@ -29,6 +30,7 @@ def scan_summary(ds, extra=""):
     """
     crowd = f"crowd {ds.n_crowd_excluded} excluded · " if ds.n_crowd_excluded else ""
     fallback = f"seg fallback {ds.n_seg_fallback} (bbox rect) · " if getattr(ds, "n_seg_fallback", 0) else ""
+    rle = f"seg RLE {ds.n_seg_rle} decoded · " if getattr(ds, "n_seg_rle", 0) else ""
     parse = f"parse {ds.parse_time:.1f}s + " if ds.parse_time else ""
-    return (f"       └ {ds.n_instances} instances · {ds.n_categories} categories · {crowd}{fallback}"
+    return (f"       └ {ds.n_instances} instances · {ds.n_categories} categories · {crowd}{rle}{fallback}"
             f"{parse}scan {ds.scan_time:.1f}s{extra}")

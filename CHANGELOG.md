@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Seg recipe verified against official checkpoints**: `yolo26-seg-coco-ft` now records the per-scale `train_args` of all five released seg weights (m/l/x match the published table; s is an earlier baseline and n's augmentation differs) and starts from the `yolo26*-objv1-seg` weights instead of the detection O365 checkpoints.
 - **Bias warmup learning rate**: `warmup_bias_lr` now follows the official training loop — bias parameter groups start at the configured value and decay to the target lr while other groups ramp from zero; `yolo26-seg-coco-ft` records the per-scale checkpoint values. Defaults to 0, so existing runs are unchanged.
 - **Flash-YOLO-seg**: a segmentation variant of Flash-YOLO (`--model flash-yolo-seg`) reuses the identical backbone/neck with the `Segment26` head, so it trains, validates (Box+Mask), exports, and infers through the existing seg pipeline; 2,528,248 parameters / 7.6 GFLOPs at 640.
+- **COCO RLE segmentation annotations**: RLE masks (compressed strings or counts lists) are now decoded to contour polygons for training and validation instead of falling back to bbox rectangles; damaged RLE still falls back and is counted, and the scan line reports how many were decoded.
 
 ### Changed
 

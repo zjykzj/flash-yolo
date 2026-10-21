@@ -17,7 +17,7 @@ import numpy as np
 
 from data.loader import SharedCounter, TrainMixin
 from data.scan import ScanResult, ScanStats
-from data.segments import (annotation_polygon, polygon_bbox, rasterize_segments_multi,
+from data.segments import (annotation_polygon, annotation_polygon_ex, polygon_bbox, rasterize_segments_multi,
                            transform_polygons, clip_polygons)
 from utils.progress import ProgressBar
 
@@ -61,7 +61,8 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
     训练侧 drop_crowd+build_labels（标签 (M,5) [cls,x1,y1,x2,y2] 原图像素坐标）；
     验证侧两者都不开（保留 crowd、不建标签，只计数——与官方 val 口径一致）。
     build_segments=True（分割训练）：标签框改由多边形包围盒导出，并保存合并后的多边形；
-    RLE/缺失 segmentation 退回 bbox 矩形并计入 n_seg_fallback（全部 fallback 直接报错）。
+    RLE segmentation 解码为轮廓多边形（计入 n_seg_rle）；RLE 损坏/缺失/非法多边形才退回
+    bbox 矩形并计入 n_seg_fallback（全部 fallback 直接报错）。
     缺图（官方 train2017 图片集比标注少 1 张的兜底）从 images 中剔除并计数。
     """
     prefix = f"{label}:".ljust(7)  # `train: ` / `val:   ` 对齐
@@ -79,7 +80,7 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
     t_scan = time.monotonic()
     kept, labels = [], [] if build_labels else None
     segments = [] if build_segments else None
-    n_missing = n_bg = n_crowd = n_instances = n_seg_fallback = 0
+    n_missing = n_bg = n_crowd = n_instances = n_seg_fallback = n_seg_rle = 0
     first_missing = None
     for i, img in enumerate(images, 1):
         anns = by_image.get(img["id"], [])
@@ -93,7 +94,7 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
             if build_segments:
                 lbs, img_segs, n_valid = [], [], 0
                 for a in anns:
-                    poly, fallback = annotation_polygon(a)
+                    poly, kind = annotation_polygon_ex(a)
                     if poly is None:
                         continue
                     box = polygon_bbox(poly)
@@ -102,7 +103,8 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
                     if build_labels:
                         lbs.append([cat_id_to_idx[a["category_id"]], *box])
                     img_segs.append(poly)
-                    n_seg_fallback += fallback
+                    n_seg_fallback += kind == "bbox"
+                    n_seg_rle += kind == "rle"
                     n_valid += 1
                 if build_labels:
                     labels.append(np.array(lbs, np.float32).reshape(-1, 5) if lbs else np.zeros((0, 5), np.float32))
@@ -126,11 +128,11 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
         bar.close()  # 换行保留定格行（与训练/验证条同约定）
     if build_segments and n_instances and n_seg_fallback == n_instances:
         raise ValueError(
-            f"segmentation training requires polygon annotations, but all {n_instances} annotations "
-            f"in {ann_file} fell back to bbox rectangles (RLE or missing segmentation) — "
+            f"segmentation training requires usable masks, but all {n_instances} annotations "
+            f"in {ann_file} fell back to bbox rectangles (invalid RLE or missing segmentation) — "
             f"check the dataset descriptor / annotation format")
     stats = ScanStats(n_missing, n_bg, n_crowd, n_instances,
-                      parse_time, time.monotonic() - t_scan, first_missing, n_seg_fallback)
+                      parse_time, time.monotonic() - t_scan, first_missing, n_seg_fallback, n_seg_rle)
     return ScanResult(kept, labels, by_image, cat_id_to_idx, names, stats, segments)
 
 
@@ -280,9 +282,10 @@ class CocoTrainDataset(TrainMixin):
         self.n_missing = res.stats.n_missing
         self.n_crowd_excluded = res.stats.n_crowd_excluded
         self.n_seg_fallback = res.stats.n_seg_fallback
+        self.n_seg_rle = res.stats.n_seg_rle
         if segment and self.n_seg_fallback:
             logger.warning(f"{self.n_seg_fallback} segmentation annotations had no usable polygon "
-                           f"(RLE or missing) — using bbox rectangles for those instances")
+                           f"(invalid RLE or missing) — using bbox rectangles for those instances")
         self.first_missing = res.stats.first_missing
         self.parse_time, self.scan_time = res.stats.parse_time, res.stats.scan_time
         self._corrupt = SharedCounter()  # worker 里读失败 +1；父进程用 n_corrupt 读

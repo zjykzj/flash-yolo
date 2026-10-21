@@ -51,8 +51,9 @@ val:   {images: images/val}
 - 坏图**惰性处理**：扫描期不逐张 decode；`load_image` 读失败时计数 + 告警，训练不中断
   （train 侧返回空白画布 + 空标签，val 侧保留 GT 记漏检）。
 - **实例分割训练**（`--model yolo26-seg` / `flash-yolo-seg`）额外读取 `segmentation`：多边形列表会合并多段并
-  在增强后栅格化为 GT 掩码；RLE dict / 缺失 / 非法 segmentation 退回 bbox 矩形（计数并告警），
-  全部退回时直接报错。框由多边形包围盒导出（官方口径）。YOLO-seg txt 同样支持（见 §4）。
+  在增强后栅格化为 GT 掩码；**RLE dict 会解码成轮廓多边形**（压缩字符串与 counts 列表都支持，
+  扫描行计入 `seg RLE N decoded`）；只有 RLE 损坏 / 缺失 / 非法 segmentation 才退回 bbox 矩形
+  （计数并告警），全部退回时直接报错。框由多边形包围盒导出（官方口径）。YOLO-seg txt 同样支持（见 §4）。
 
 ## 4. YOLO txt 格式
 
@@ -84,8 +85,8 @@ vs 0.4024（yolo）；训练侧统计逐项相等（crowd 训练侧双方都剔�
    加载链路（或 `python scripts/train.py --data <desc> --epochs 1 --val-epochs 0` 冒烟）；
 4. 锚点（仅含 `anchors` 段的模型）：先跑 `python scripts/compute_anchors.py --data <desc>`
    看 verdict（见 `yolov3-tiny-spec.md`）——COCO 形状以外的新数据分布才需要重聚类。
-5. 分割：COCO json 的每个实例需要 `segmentation` 多边形（RLE 会退回 bbox 矩形并在扫描行
-   计数）；YOLO 侧用多边形行或 bbox 回退行；`mask_ratio` 必须整除 `imgsz`
+5. 分割：COCO json 的每个实例需要 `segmentation` 多边形或 RLE（RLE 解码为轮廓，损坏时退回
+   bbox 矩形并在扫描行计数）；YOLO 侧用多边形行或 bbox 回退行；`mask_ratio` 必须整除 `imgsz`
    （默认 4；640 -> 160 与 Proto26 同网格）。
 
 ## 6. 小数据集循环（分钟级迭代）

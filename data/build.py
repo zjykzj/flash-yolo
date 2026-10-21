@@ -38,7 +38,8 @@ def build_train_dataset(cfg, spec, role="train", augment=True, limit=0, progress
                         task="detect"):
     """训练集（按 spec.format 分派）；cfg 供增强/尺寸使用（duck-typing）
 
-    task="segment"：COCO json（多边形/RLE 回退）与 YOLO txt（多边形行，bbox 行矩形回退）
+    task="segment"：COCO json（多边形 / RLE 解码 / 损坏时 bbox 回退）与 YOLO txt
+    （多边形行，bbox 行矩形回退）
     都支持；两种格式最终都走同一条 (imgs, targets, masks) 训练契约。
     """
     _check_paths(spec, role)

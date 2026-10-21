@@ -16,8 +16,9 @@ import cv2
 import numpy as np
 
 __all__ = [
-    "annotation_polygon", "merge_polygons", "polygon_bbox", "rectangle_from_bbox",
-    "transform_polygons", "clip_polygons", "rasterize_segments", "rasterize_segments_multi",
+    "annotation_polygon", "annotation_polygon_ex", "decode_rle", "rle_polygon", "merge_polygons",
+    "polygon_bbox", "rectangle_from_bbox", "transform_polygons", "clip_polygons",
+    "rasterize_segments", "rasterize_segments_multi",
 ]
 
 
@@ -78,14 +79,99 @@ def merge_polygons(parts):
     return np.concatenate(paths, axis=0).astype(np.float32)
 
 
-def annotation_polygon(ann):
-    """一条 COCO annotation -> (polygon (K,2) float32 | None, used_fallback: bool)
+def _rle_counts_from_string(s):
+    """COCO 压缩 RLE counts 字符串 -> run-length 列表（cocoapi `rleFrString` 口径）
 
-    - 多边形 segmentation：返回合并后的多边形，fallback=False；
-    - RLE / 缺失 / 无效：若 bbox 有效，返回 bbox 矩形，fallback=True；
-    - bbox 也无效：返回 (None, False)。
+    5 bit 一组、0x20 为续位；差值编码（从第 3 个 count 起累加前前项），
+    最高位 0x10 为符号位。非法/截断字符串抛 ValueError，由调用方回退 bbox。
+    """
+    counts, p, n = [], 0, len(s)
+    while p < n:
+        x, k, more = 0, 0, 1
+        while more:
+            if p >= n:
+                raise ValueError("truncated RLE counts")
+            c = ord(s[p]) - 48
+            if not 0 <= c <= 63:
+                raise ValueError("invalid RLE counts character")
+            x |= (c & 0x1F) << (5 * k)
+            more = c & 0x20
+            p += 1
+            k += 1
+            if not more and (c & 0x10):
+                x |= -1 << (5 * k)
+        if len(counts) > 2:
+            x += counts[-2]
+        counts.append(x)
+    return counts
+
+
+def decode_rle(segmentation):
+    """COCO RLE dict -> (h, w) uint8 掩码（纯 numpy；支持压缩字符串与 counts 列表）
+
+    counts 从背景(0)开始交替，按**列优先**（Fortran order）铺回图像——与 cocoapi 一致。
+    结构/长度/字符非法时抛 ValueError，由 `annotation_polygon_ex` 统一回退 bbox。
+    """
+    if not isinstance(segmentation, dict):
+        raise ValueError("RLE segmentation must be a dict")
+    size = segmentation.get("size")
+    if not isinstance(size, (list, tuple)) or len(size) != 2:
+        raise ValueError("RLE 'size' must be [h, w]")
+    h, w = int(size[0]), int(size[1])
+    if h <= 0 or w <= 0:
+        raise ValueError(f"invalid RLE size {h}x{w}")
+    counts = segmentation.get("counts")
+    if isinstance(counts, str):
+        counts = _rle_counts_from_string(counts)
+    elif isinstance(counts, (list, tuple)):
+        counts = [int(c) for c in counts]
+    else:
+        raise ValueError("RLE 'counts' must be a string or a list")
+    if any(c < 0 for c in counts):
+        raise ValueError("negative RLE count")
+    if sum(counts) != h * w:
+        raise ValueError(f"RLE counts sum {sum(counts)} != {h}x{w}")
+    flat = np.zeros(h * w, np.uint8)
+    pos = 0
+    for i, c in enumerate(counts):
+        if i & 1:
+            flat[pos:pos + c] = 1
+        pos += c
+    return flat.reshape((h, w), order="F")
+
+
+def rle_polygon(segmentation):
+    """COCO RLE dict -> 多边形 (K,2) float32 | None（空掩码返回 None）
+
+    RLE 本质是掩码：解码后取外轮廓，再按既有多段合并口径连成一条多边形
+    （多连通域会像官方 converter 一样用最近点连接，面积近似而非逐像素等价）。
+    轮廓点是像素中心，因此由它导出的框可能比标注 bbox 小 1px；栅格化回掩码与
+    RLE 解码结果逐像素一致（单连通域，回归测试覆盖）。
+    """
+    mask = decode_rle(segmentation)
+    contours = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+    parts = [c.reshape(-1, 2).astype(np.float32) for c in contours if len(c) >= 3]
+    if not parts:
+        return None
+    merged = merge_polygons(parts)
+    return merged.astype(np.float32) if len(merged) >= 3 else None
+
+
+def annotation_polygon_ex(ann):
+    """一条 COCO annotation -> (polygon | None, kind)
+
+    kind 取值：
+    - "polygon"：`segmentation` 为多边形列表（合并多段）；
+    - "rle"：`segmentation` 为 RLE dict 且成功解码（空掩码时 polygon 为 None）；
+    - "bbox"：RLE/多边形缺失或非法，退回 bbox 矩形；
+    - None：bbox 也无效。
     """
     seg = ann.get("segmentation")
+    if isinstance(seg, dict):
+        try:
+            return rle_polygon(seg), "rle"
+        except (ValueError, TypeError, cv2.error):
+            pass  # 损坏的 RLE：与缺失 segmentation 同口径，退回 bbox
     parts = []
     if isinstance(seg, (list, tuple)):
         for part in seg:
@@ -95,13 +181,22 @@ def annotation_polygon(ann):
         if parts:
             merged = merge_polygons(parts)
             if len(merged) >= 3:
-                return merged.astype(np.float32), False
+                return merged.astype(np.float32), "polygon"
     bbox = ann.get("bbox")
     if bbox is not None and len(bbox) >= 4:
         x, y, w, h = (float(v) for v in bbox[:4])
         if w > 0 and h > 0 and np.isfinite([x, y, w, h]).all():
-            return rectangle_from_bbox((x, y, w, h)), True
-    return None, False
+            return rectangle_from_bbox((x, y, w, h)), "bbox"
+    return None, None
+
+
+def annotation_polygon(ann):
+    """一条 COCO annotation -> (polygon (K,2) float32 | None, used_fallback: bool)
+
+    兼容旧调用：fallback 仅在退回 bbox 矩形时为 True；RLE 成功解码按正式标注处理。
+    """
+    poly, kind = annotation_polygon_ex(ann)
+    return poly, kind == "bbox"
 
 
 def rectangle_from_bbox(bbox):

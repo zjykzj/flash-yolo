@@ -12,8 +12,8 @@ from data.augment import augment, flip_lr, letterbox_train, resize_long_side
 from data.build import build_train_dataset
 from data.coco import CocoDataset, CocoTrainDataset
 from data.loader import collate_fn
-from data.segments import (annotation_polygon, merge_polygons, rasterize_segments,
-                           rasterize_segments_multi)
+from data.segments import (annotation_polygon, annotation_polygon_ex, decode_rle, merge_polygons,
+                           rasterize_segments, rasterize_segments_multi, rle_polygon)
 from config.datasets import load_dataset
 
 SIZE = 64
@@ -57,6 +57,76 @@ def test_annotation_polygon_and_merge():
     assert fallback and poly.shape == (4, 2)
     # 无 bbox 的非法标注 -> None
     assert annotation_polygon({"segmentation": []}) == (None, False)
+
+
+def _pycoco_rle(mask):
+    """掩码 -> COCO RLE dict（压缩 counts；仅测试用 pycocotools 编码）"""
+    mask_utils = pytest.importorskip("pycocotools.mask")
+    rle = mask_utils.encode(np.asfortranarray(mask.astype(np.uint8)))
+    rle["counts"] = rle["counts"].decode()
+    return {"size": list(mask.shape), "counts": rle["counts"]}
+
+
+def test_rle_decode_matches_pycocotools_and_uncompressed():
+    """压缩字符串 / counts 列表两种 RLE 都与 cocoapi 解码逐像素一致"""
+    pytest.importorskip("pycocotools.mask")
+    h, w = 48, 64
+    mask = np.zeros((h, w), np.uint8)
+    cv2.rectangle(mask, (5, 7), (40, 30), 1, -1)
+    cv2.circle(mask, (50, 35), 8, 1, -1)
+    seg = _pycoco_rle(mask)
+    assert np.array_equal(decode_rle(seg), mask)
+    # 非压缩 counts 列表：4x4、第一列全 1（列优先计数 -> [0, 4, 12]）
+    plain = {"size": [4, 4], "counts": [0, 4, 12]}
+    expected = np.zeros((4, 4), np.uint8)
+    expected[:, 0] = 1
+    assert np.array_equal(decode_rle(plain), expected)
+    # 非法输入明确报错（由 annotation_polygon_ex 回退）
+    for bad in ({"size": [4, 4], "counts": [0, 3]}, {"size": [0, 4], "counts": []},
+                {"size": [4, 4], "counts": "!!"}, {"counts": [0, 16]}):
+        with pytest.raises((ValueError, TypeError)):
+            decode_rle(bad)
+
+
+def test_annotation_rle_polygon_fidelity():
+    """RLE -> 轮廓多边形：单连通 IoU >= 0.99；多连通按官方 merge 口径 >= 0.95"""
+    pytest.importorskip("pycocotools.mask")
+    h, w = 64, 64
+    cases = []
+    rect = np.zeros((h, w), np.uint8)
+    rect[8:40, 8:40] = 1
+    cases.append(rect)
+    circle = np.zeros((h, w), np.uint8)
+    cv2.circle(circle, (32, 32), 18, 1, -1)
+    cases.append(circle)
+    multi = np.zeros((h, w), np.uint8)
+    multi[4:20, 4:20] = 1
+    multi[40:60, 40:60] = 1
+    cases.append(multi)
+    for mask in cases:
+        ann = _ann(1, 1, _pycoco_rle(mask), bbox=[0, 0, w, h])
+        poly, kind = annotation_polygon_ex(ann)
+        assert kind == "rle" and poly is not None and len(poly) >= 3
+        assert annotation_polygon(ann)[1] is False  # RLE 不算 fallback
+        raster, _ = rasterize_segments([poly], h, w, mask_ratio=1, overlap=False)
+        inter = np.logical_and(raster[0], mask).sum()
+        union = np.logical_or(raster[0], mask).sum()
+        assert inter / union >= (0.95 if mask is multi else 0.99)
+
+
+def test_scan_decodes_rle_without_fallback(tmp_path):
+    """扫描侧：有效 RLE 计入 n_seg_rle、不触发 bbox fallback，标签框由解码掩码导出"""
+    pytest.importorskip("pycocotools.mask")
+    mask = np.zeros((SIZE, SIZE), np.uint8)
+    mask[8:40, 8:40] = 1
+    desc, _ = _make_dataset(tmp_path, [_ann(1, 1, _pycoco_rle(mask), bbox=[8, 8, 32, 32])])
+    ds = build_train_dataset(TrainConfig(imgsz=SIZE), load_dataset(desc), "train",
+                             augment=False, task="segment")
+    assert ds.n_seg_rle == 1 and ds.n_seg_fallback == 0
+    assert len(ds.segments[0]) == 1
+    img, labels, segments = ds.load_image(0)
+    # 轮廓点是像素中心：框与标注 bbox 最多差 1px（掩码栅格化本身逐像素一致）
+    assert labels.shape == (1, 5) and np.allclose(labels[0, 1:], [8, 8, 40, 40], atol=1.0)
 
 
 def test_scan_and_sample_contract(tmp_path):
