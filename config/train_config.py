@@ -58,6 +58,7 @@ class TrainConfig:
 
     # 训练产物（复盘/调优用，默认全开——关掉它们等于放弃事后分析能力）
     save_period: int = 20  # 每 N 轮存 weights/epochNNN.safetensors（保留最近 keep_periodic 个）
+    plots: bool = True  # 训练结束画 results/PR/混淆矩阵（matplotlib 缺失时自动跳过）
     keep_periodic: int = 3
     diag_interval: int = 50  # 每 N 个优化步写一行 diag/train_diag.csv（0 = 关闭）
     aug_samples: int = 8  # 首个 / close_mosaic 后 / 末轮各存一张增强抽样网格图（每张 N 个样本）

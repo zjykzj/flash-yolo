@@ -158,6 +158,80 @@ class FastMetrics:
                 tp = np.zeros((len(d_scores), len(_IOU_THRESHOLDS)), bool)
             self.mask_by_class[c].append((d_scores, tp))
 
+    def pr_curve(self, task="detect", iou_thr=0.5):
+        """逐类 PR 曲线（IoU=0.5）：{class_id: (recall, precision, ap)}，仅含有 GT 的类
+
+        与 compute() 同一套「每图每类 top-100 + 全局分数排序 + 101 点插值」口径；
+        task="segment" 时用 update_mask 累积的逐类 tp 记录（框/掩码两套独立匹配）。
+        """
+        thr_idx = int(np.argmin(np.abs(_IOU_THRESHOLDS - iou_thr)))
+        n_gt_by_cls = (np.bincount(np.concatenate(self.gt_cls), minlength=self.nc)
+                       if self.n_images and len(self.gt_cls) else np.zeros(self.nc, np.int64))
+        records = {c: [] for c in range(self.nc)}
+        if task == "segment":
+            for c in range(self.nc):
+                records[c] = list(self.mask_by_class[c])
+        else:
+            for i in range(self.n_images):
+                for c in np.unique(self.det_cls[i]):
+                    c = int(c)
+                    m = self.det_cls[i] == c
+                    order = np.argsort(-self.det_scores[i][m])[:_MAX_DETS]
+                    d_scores = self.det_scores[i][m][order]
+                    m_gt = self.gt_cls[i] == c
+                    if m_gt.any():
+                        tp = _greedy_match_all_thr(
+                            box_iou_matrix(self.det_boxes[i][m][order], self.gt_boxes[i][m_gt]), d_scores)
+                    else:
+                        tp = np.zeros((len(d_scores), len(_IOU_THRESHOLDS)), bool)
+                    records[c].append((d_scores, tp))
+        out = {}
+        for c, recs in records.items():
+            n_gt = int(n_gt_by_cls[c])
+            if n_gt == 0 or not recs:
+                continue
+            scores = np.concatenate([s for s, _ in recs])
+            tp = np.concatenate([t[:, thr_idx] for _, t in recs])
+            order = np.argsort(-scores, kind="stable")
+            tp = tp[order]
+            fp = ~tp
+            tp_cum, fp_cum = np.cumsum(tp), np.cumsum(fp)
+            recall = tp_cum / n_gt
+            precision = tp_cum / np.maximum(tp_cum + fp_cum, 1)
+            ap = _ap_from_tp_fp(tp, fp, n_gt)
+            out[c] = (np.concatenate(([0.0], recall)), np.concatenate(([1.0], precision)), float(ap))
+        return out
+
+    def confusion_matrix(self, conf=0.25, iou_thres=0.45):
+        """框混淆矩阵 (nc+1, nc+1)：行 = GT、列 = 预测，末行/列 = 背景
+
+        官方 DetectionValidator 口径：检测按分数降序遍历，与未匹配 GT 中 IoU 最大者匹配
+        （IoU >= 0.45 记入对应格），否则记背景预测；最后未匹配 GT 记背景列。
+        """
+        nc = self.nc
+        m = np.zeros((nc + 1, nc + 1), np.int64)
+        for i in range(self.n_images):
+            boxes, scores, cls = self.det_boxes[i], self.det_scores[i], self.det_cls[i]
+            gt_boxes, gt_cls = self.gt_boxes[i], self.gt_cls[i]
+            matched_gt = np.zeros(len(gt_cls), bool)
+            if len(boxes):
+                iou = box_iou_matrix(boxes, gt_boxes) if len(gt_boxes) else np.zeros((len(boxes), 0))
+                for k in np.argsort(-scores):
+                    if scores[k] < conf:
+                        continue
+                    if len(gt_boxes):
+                        candidates = np.where(~matched_gt)[0]
+                        if len(candidates):
+                            j = int(candidates[np.argmax(iou[k, candidates])])
+                            if iou[k, j] >= iou_thres:
+                                m[gt_cls[j], cls[k]] += 1
+                                matched_gt[j] = True
+                                continue
+                    m[nc, cls[k]] += 1
+            for j in np.where(~matched_gt)[0]:
+                m[gt_cls[j], nc] += 1
+        return m
+
     def compute(self):
         """COCO 口径近似指标"""
         if self.n_images == 0:

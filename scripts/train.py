@@ -60,6 +60,9 @@ def main():
                         help="model yaml path override (custom structure; screening/experiment variants)")
     parser.add_argument("--recipe", default=None, help="recipe name (config/recipes/<name>.yaml) or a .yaml path; "
                                                        "default = the built-in baseline (config/train.yaml values)")
+    parser.add_argument("--plots", action=argparse.BooleanOptionalAction, default=None,
+                        help="write results/PR/confusion-matrix plots at the end of training "
+                             "(default: yaml `plots`, true; needs matplotlib)")
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=None,
                         help="mixed precision fp16+GradScaler (default: yaml `amp`, false; from-scratch "
                              "training NaNs — intended for --weights finetune)")

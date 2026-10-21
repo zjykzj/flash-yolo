@@ -17,6 +17,27 @@ def test_perfect_detections():
     print("  完美检测全指标为 1")
 
 
+def test_pr_curve_and_confusion_matrix():
+    """PR 曲线逐类可算；混淆矩阵按类无关 IoU 匹配（行 GT / 列预测 / 末位背景）"""
+    m = FastMetrics(nc=2)
+    m.update(
+        np.array([[0, 0, 10, 10], [20, 20, 30, 30], [20, 20, 30, 30]],
+                 np.float32),
+        np.array([0.9, 0.8, 0.5], np.float32), np.array([0, 1, 0]),
+        np.array([[0, 0, 10, 10], [20, 20, 30, 30]], np.float32), np.array([0, 1]),
+    )
+    curves = m.pr_curve()
+    assert set(curves) == {0, 1}
+    for recall, precision, ap in curves.values():
+        assert len(recall) == len(precision) and recall[0] == 0.0 and precision[0] == 1.0
+        assert 0.0 <= ap <= 1.0 and recall[-1] > 0
+    cm = m.confusion_matrix()
+    assert cm.shape == (3, 3) and cm.sum() == 3
+    # GT0 <- pred0；GT1 <- pred1；第三个检测已被 GT1 占用 -> 背景预测
+    assert cm[0, 0] == 1 and cm[1, 1] == 1 and cm[2, 0] == 1
+    print("  PR/混淆矩阵口径正确:", cm.tolist())
+
+
 def test_no_detections():
     """有 GT 无检测：全部指标为 0"""
     m = FastMetrics(nc=1)

@@ -117,6 +117,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `results.csv` | 逐轮训练损失 + 训练中指标 + **val 损失**（val_box/val_cls/val_l1/val_o2m/val_o2o）；分割另有 `seg`/`val_seg`、`sem`/`val_sem` 与 `P(M)/R(M)/mAP50(M)/mAP@[.5:.95](M)`（`val_sem` 在验证模式恒 0，官方同口径） |
 | `diag/train_diag.csv` | 每 `diag_interval` 步：**裁剪前**梯度范数、分组 lr、损失分解 |
 | `samples/*.png` | 增强抽样网格（首轮 / 关 mosaic 后 / 末轮各一张，肉眼校验增强口径） |
+| `results.png` · `PR_curve.png` · `confusion_matrix*.png` | 训练结束报告（`--no-plots` 关闭；matplotlib 缺失时自动跳过）：损失/mAP 曲线、IoU=0.5 逐类 PR、conf 0.25 / IoU 0.45 的混淆矩阵 |
 | `meta.json` | 环境（git commit / torch / CUDA / GPU）+ 解析后的完整配置快照 |
 | `run.log` | 该 run 的控制台 + 文件日志 |
 | `resume.pt` | 续训状态 |

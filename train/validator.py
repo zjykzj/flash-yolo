@@ -61,7 +61,7 @@ def _gt_boxes_letterbox_to_original(gt_lb, ratio, pad, h, w):
 
 
 def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn=None, imgsz=IMGSZ,
-             task="detect", mask_ratio=4, overlap_mask=True):
+             task="detect", mask_ratio=4, overlap_mask=True, return_metrics=False):
     """EMA 模型（已 eval）在数据集上评估
 
     前向按 batch 合并（逐图 batch-1 前向是验证侧的主要开销），后处理/指标逐图不变；
@@ -85,7 +85,7 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
         result = metrics.compute()
         if loss_fn is not None:
             result["loss"] = dict.fromkeys(loss_keys, 0.0)
-        return result
+        return (result, metrics) if return_metrics else result
 
     bar = ProgressBar(n, desc=format_val_row(seg=is_seg))
     t0 = time.monotonic()
@@ -175,4 +175,4 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
     bar.close()
     if loss_fn is not None:
         result["loss"] = {k: v / max(n_batches, 1) for k, v in loss_sums.items()}
-    return result
+    return (result, metrics) if return_metrics else result

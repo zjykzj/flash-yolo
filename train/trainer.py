@@ -101,6 +101,7 @@ class Trainer:
         self.run_dir = Path(run_dir)
         self.best_fitness = -1.0  # 首次验证必存 best（mAP 为 0 时也落盘）
         self.start_epoch = 0
+        self._last_val_metrics = None  # 末次验证的 FastMetrics（训练结束画 PR/混淆矩阵）
         self._n_corrupt_seen = 0  # 惰性 corrupt 累计（每 epoch 读一次数据集里的共享计数）
 
         # ① 环境 + 超参快照：在建模型、解析数据集之前打印（启动白屏只剩 import 时间）
@@ -228,9 +229,12 @@ class Trainer:
         if self.val_dataset is None:
             self.val_dataset = build_eval_dataset(self.spec, "val", task=self.task)
         # loss_fn 同传：val 损失与训练损失同实现（复用同一次 backbone/neck 前向）
-        return validate(ema_model, self.val_dataset, self.device, limit=self.cfg.val_limit,
-                        loss_fn=self.loss_fn, imgsz=self.cfg.imgsz, task=self.task,
-                        mask_ratio=self.cfg.mask_ratio, overlap_mask=self.cfg.overlap_mask)
+        metrics, metrics_obj = validate(
+            ema_model, self.val_dataset, self.device, limit=self.cfg.val_limit,
+            loss_fn=self.loss_fn, imgsz=self.cfg.imgsz, task=self.task,
+            mask_ratio=self.cfg.mask_ratio, overlap_mask=self.cfg.overlap_mask, return_metrics=True)
+        self._last_val_metrics = metrics_obj  # 训练结束后的 PR/混淆矩阵图用
+        return metrics
 
     # ---- 产物 ----
     def _write_diag(self, epoch, bi, gnorm, items, loss):
@@ -628,6 +632,10 @@ class Trainer:
         n_epochs = min(self.stop_after, self.cfg.epochs) - self.start_epoch
         logger.info(f"training done -> {self.run_dir} · {n_epochs} epoch{'s' if n_epochs != 1 else ''} "
                     f"completed in {fmt_elapsed(elapsed_total)}")
+        if self.cfg.plots:
+            from utils.plots import write_training_report
+            write_training_report(self.run_dir, self.results_csv, self._last_val_metrics,
+                                  self.spec.names, self.task)
         if self._n_corrupt_seen:  # 惰性 corrupt 汇总（启动时的 meta.json 里还是 0，重写一次补上）
             logger.warning(f"{self._n_corrupt_seen} unreadable images replaced by blank samples during the run")
             self._write_meta()
