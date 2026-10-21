@@ -29,10 +29,11 @@
 #    以对齐官方物理 batch。batch 是机器相关值，命令行给，不写进配方。
 #    close_mosaic 由 Trainer 按 min(N, epochs//5) 缩放：x 档 40 轮 -> 实际最后 8 轮。
 #
-# 官方记录但本仓库未实现的参数（实验分支/额外增强，仅供留档）：
-#   cls_w: n 2.74 / s 2.0 / m,l,x 3.48   —— o2o 分类损失额外权重
-#   o2m:   n,s 1.0 / m,l,x 0.705         —— ProgLoss 初始权重（本仓库用 0.8）
-#   erasing 0.4 · auto_augment randaugment · cutmix/perspective（m 档非 0，本仓库忽略）
+# 官方实验分支参数（已实现并写入配方）：
+#   cls_w: n 2.74 / s 2.0 / m,l,x 3.48   —— o2o 分类损失额外权重（--cls-w）
+#   o2m:   n,s 1.0 / m,l,x 0.705         —— ProgLoss 初值（本仓库字段 prog_alpha_init）
+#   cutmix/perspective: 仅 m 档非 0（0.00082 / 0.00074），其余 0
+#   erasing 0.4 · auto_augment randaugment：**分类任务专用**，检测/分割管线不消费（N/A）
 #   amp: 官方 true；本仓库 default 为 false（微调可显式 --amp）
 #
 # 用法：python scripts/train.py --recipe yolo26-seg-coco-ft --scale n \
@@ -57,6 +58,10 @@ base:
   muon_w: 0.528        # 实验分支参数：n 档记录值
   sgd_w: 0.674
   topk: 8              # n 档 o2m 分配 top-k（released code 默认 10）
+  prog_alpha_init: 1.0     # 官方 o2m 初值（n 档）
+  cls_w: 2.7371            # 官方 o2o 分类权重（n 档）
+  cutmix: 0.0
+  perspective: 0.0
   box_gain: 5.628
   cls_gain: 0.561
   dfl_gain: 9.039
@@ -87,6 +92,10 @@ scale_overrides:
     muon_w: 0.5
     sgd_w: 0.5
     topk: 10
+    prog_alpha_init: 1.0
+    cls_w: 2.0
+    cutmix: 0.0
+    perspective: 0.0
     box_gain: 7.5
     cls_gain: 0.5
     dfl_gain: 6.0
@@ -115,6 +124,10 @@ scale_overrides:
     muon_w: 0.436
     sgd_w: 0.479
     topk: 5
+    prog_alpha_init: 0.70518
+    cls_w: 3.48357
+    cutmix: 0.00082
+    perspective: 0.00074
     box_gain: 9.832
     cls_gain: 0.649
     dfl_gain: 0.958
@@ -142,6 +155,10 @@ scale_overrides:
     muon_w: 0.436
     sgd_w: 0.479
     topk: 5
+    prog_alpha_init: 0.70518
+    cls_w: 3.48357
+    cutmix: 0.0
+    perspective: 0.0
     box_gain: 9.832
     cls_gain: 0.649
     dfl_gain: 0.958
@@ -169,6 +186,10 @@ scale_overrides:
     muon_w: 0.436
     sgd_w: 0.479
     topk: 5
+    prog_alpha_init: 0.70518
+    cls_w: 3.48357
+    cutmix: 0.0
+    perspective: 0.0
     box_gain: 9.832
     cls_gain: 0.649
     dfl_gain: 0.958

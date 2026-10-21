@@ -58,6 +58,8 @@ def test_seg_recipe():
     # n-seg ckpt 与检测表不同：mixup/degrees/shear/bgr 都是 0
     assert cfg.mixup == 0.0 and cfg.degrees == 0.0 and cfg.shear == 0.0 and cfg.bgr == 0.0
     assert cfg.muon_w == 0.528 and cfg.sgd_w == 0.674 and cfg.topk == 8
+    assert cfg.prog_alpha_init == 1.0 and cfg.cls_w == 2.7371
+    assert cfg.cutmix == 0.0 and cfg.perspective == 0.0
     print("  yolo26-seg-coco-ft n 档配方正确")
 
 
@@ -69,6 +71,7 @@ def test_seg_recipe_per_scale():
     assert s.topk == 10 and s.box_gain == 7.5 and s.cls_gain == 0.5 and s.dfl_gain == 6.0
     assert s.mixup == 0.05 and s.copy_paste == 0.15 and s.aug_scale == 0.9
     assert s.translate == 0.1 and s.fliplr == 0.5 and s.hsv_s == 0.7 and s.close_mosaic == 5
+    assert s.prog_alpha_init == 1.0 and s.cls_w == 2.0 and s.cutmix == 0.0 and s.perspective == 0.0
     for scale, epochs, cp in (("m", 80, 0.304), ("l", 60, 0.404), ("x", 40, 0.404)):
         cfg = load_train_config(TRAIN_CONFIG_PATH, recipe="yolo26-seg-coco-ft", scale=scale)
         assert cfg.epochs == epochs and cfg.copy_paste == cp, f"{scale}: {cfg.epochs}/{cfg.copy_paste}"
@@ -77,6 +80,9 @@ def test_seg_recipe_per_scale():
         assert cfg.topk == 5 and cfg.box_gain == 9.832 and cfg.cls_gain == 0.649 and cfg.dfl_gain == 0.958
         assert cfg.mixup == 0.427 and cfg.aug_scale == 0.95
         assert cfg.translate == 0.275 and cfg.fliplr == 0.304
+        assert cfg.prog_alpha_init == 0.70518 and cfg.cls_w == 3.48357
+        assert cfg.cutmix == (0.00082 if scale == "m" else 0.0)
+        assert cfg.perspective == (0.00074 if scale == "m" else 0.0)
         assert cfg.mask_ratio == 1 and cfg.overlap_mask is True and cfg.copy_paste_mode == "flip"
     print("  yolo26-seg-coco-ft s/m/l/x 分档配方正确")
 
