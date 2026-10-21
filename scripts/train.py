@@ -33,7 +33,8 @@ logger = get_logger(__name__)
 # TrainConfig 可调字段按类型分组（argparse 默认 None -> 不覆盖 yaml）
 _INT_FIELDS = ["epochs", "batch", "nbs", "imgsz", "workers", "seed", "close_mosaic", "val_epochs", "val_limit",
                "limit", "ns_iters", "ema_tau", "topk", "topk_o2o", "topk2",
-               "stop_after", "save_period", "keep_periodic", "diag_interval", "aug_samples", "mask_ratio"]
+               "stop_after", "save_period", "keep_periodic", "diag_interval", "aug_samples", "mask_ratio",
+               "freeze"]
 _FLOAT_FIELDS = ["lr0", "lrf", "momentum", "weight_decay", "muon_w", "sgd_w", "warmup_epochs", "warmup_momentum",
                  "warmup_bias_lr",
                  "lr_step_gamma", "box_gain", "cls_gain", "cls_w", "dfl_gain", "obj_gain", "tal_alpha", "tal_beta",

@@ -75,6 +75,29 @@ def set_deterministic(enabled):
         torch.utils.deterministic.fill_uninitialized_memory = True
 
 
+def freeze_layers(model, n):
+    """冻结前 n 层（model.0 .. model.n-1）并返回实际冻结层数
+
+    官方口径：按层索引冻结参数，冻结层的 BatchNorm 保持 eval（不更新 running stats）。
+    注意 `model.train()` 会把 BN 重新置为 train 模式，训练每个 epoch 需再调用
+    `set_frozen_bn_eval`（Trainer 在每轮 `model.train()` 之后自动重放）。
+    """
+    n = max(0, min(int(n), len(model.model)))
+    for i in range(n):
+        for p in model.model[i].parameters():
+            p.requires_grad = False
+    set_frozen_bn_eval(model, n)
+    return n
+
+
+def set_frozen_bn_eval(model, n):
+    """冻结层 BN 置 eval（model.train() 之后重放；n=0 时无操作）"""
+    for i in range(max(0, min(int(n), len(model.model)))):
+        for m in model.model[i].modules():
+            if isinstance(m, torch.nn.BatchNorm2d):
+                m.eval()
+
+
 class Trainer:
     """检测训练器（架构由 cfg.model 选择；--weights 初始化微调 / --resume 断点续训）"""
 
@@ -123,6 +146,9 @@ class Trainer:
             model.to(memory_format=torch.channels_last)
         self.model = model
         self.head = model.model[-1]
+        self._freeze_n = freeze_layers(model, cfg.freeze) if cfg.freeze else 0
+        if self._freeze_n:
+            logger.info(f"freeze: first {self._freeze_n} layer(s) frozen (BN stays in eval)")
 
         # 随权重走的模型参数（写入 best/last/epochN 的 safetensors header；读取侧可选消费，
         # 缺失不影响加载——见 model/weights.py::load_meta）
@@ -466,6 +492,8 @@ class Trainer:
             if hasattr(self.loss_fn, "set_alpha"):  # ProgLoss 仅 yolo26 有
                 self.loss_fn.set_alpha(epoch, self.cfg.epochs)
             self.model.train()
+            if self._freeze_n:  # model.train() 会把冻结层 BN 重新置为 train，逐轮重放
+                set_frozen_bn_eval(self.model, self._freeze_n)
             self._opt_step = 0  # 诊断行按优化步计数（accum 边界对齐）
 
             dl = self._dataloader(epoch)

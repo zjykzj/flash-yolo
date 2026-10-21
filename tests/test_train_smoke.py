@@ -90,6 +90,25 @@ def _make_mini_yolo(tmp_path, n_img=32, size=320, seg=False):
     return desc
 
 
+def test_train_smoke_freeze(tmp_path):
+    """--freeze：前 N 层参数不更新，冻结层 BN 在训练后仍是 eval 模式"""
+    data = _make_mini_coco(tmp_path, n_img=8, size=160)
+    cfg = TrainConfig(
+        data=str(data), epochs=1, batch=4, nbs=4, imgsz=160, workers=0,
+        val_epochs=0, limit=0, amp=False, mosaic=0.0, mixup=0.0, cutmix=0.0, copy_paste=0.0,
+        close_mosaic=0, warmup_epochs=0.0, aug_samples=0, plots=False, freeze=3,
+    )
+    trainer = Trainer(cfg, device="cpu", run_dir=tmp_path / "run-freeze")
+    frozen = [p.detach().clone() for p in trainer.model.model[0].parameters()]
+    trainable_before = [p.detach().clone() for p in trainer.model.model[5].parameters()]
+    assert all(not p.requires_grad for p in trainer.model.model[0].parameters())
+    assert all(p.requires_grad for p in trainer.model.model[5].parameters())
+    trainer.train()
+    assert all(torch.equal(a, b) for a, b in zip(frozen, trainer.model.model[0].parameters()))
+    assert any(not torch.equal(a, b) for a, b in zip(trainable_before, trainer.model.model[5].parameters()))
+    assert not trainer.model.model[0].bn.training
+
+
 @pytest.mark.parametrize("fmt", ["coco", "yolo"])
 def test_train_smoke(tmp_path, fmt):
     """3 epoch 迷你数据集：损失下降、检查点齐全、验证出指标（两种标注格式同一条路径）"""

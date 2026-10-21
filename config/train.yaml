@@ -38,6 +38,7 @@ overlap_mask: true # true = 每图一张实例索引图（官方默认）；fals
 # ---- 训练产物（复盘/调优用）----
 save_period: 20    # 每 N 轮存 weights/epochNNN.safetensors（保留最近 keep_periodic 个，可中途分叉实验；0 = 关）
 plots: true        # 训练结束画 results.png / PR_curve.png / confusion_matrix*.png（需 matplotlib）
+freeze: 0          # 冻结前 N 层（model.0..N-1；冻结层 BN 保持 eval）
 keep_periodic: 3
 diag_interval: 50  # 每 N 个优化步写一行 diag/train_diag.csv（梯度范数/分组 lr/损失分解；0 = 关）
 aug_samples: 8     # 首个 / close_mosaic 后 / 末轮各存一张增强抽样网格图（每张 N 个样本）到 samples/（0 = 关）
