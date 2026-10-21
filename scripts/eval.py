@@ -41,7 +41,7 @@ from data.build import build_eval_dataset
 from data.scan import scan_summary
 from eval.coco_evaluator import CocoEvaluator
 from model.build import ARCHS, YOLO26_FAMILY, arch_display_name, arch_task
-from model.weights import arch_has_scale, resolve_arch_scale, resolve_imgsz
+from model.weights import arch_has_scale, load_meta, resolve_arch_scale, resolve_imgsz
 from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_file_only, log_params, redirect_prints, setup_logging
 from utils.paths import increment_path
@@ -72,6 +72,8 @@ def main():
     parser.add_argument("--weights", required=True, help=".safetensors or .onnx weights")
     parser.add_argument("--data", required=True,
                         help="dataset descriptor: a name in config/datasets/ (local/ wins) or a .yaml path")
+    parser.add_argument("--single-cls", dest="single_cls", action="store_true",
+                        help="evaluate a single-class checkpoint: remap GT classes to 0 (model nc must be 1)")
     parser.add_argument("--split", default="val", help="role to evaluate (a key in the descriptor: train/val/...)")
     parser.add_argument("--engine", choices=["pt", "onnx", "trt"], default="pt")
     parser.add_argument("--model", default=None, choices=sorted(ARCHS),
@@ -140,7 +142,12 @@ def main():
     # ③ 数据集：扫描行与训练日志同语法（静态提示 + 进度条 + `└` 汇总）
     # 注意不包 redirect_prints：提示行是裸 print、进度条写的是构造时捕获的 sys.stdout，
     # 包进去会一起被抓成 DEBUG 日志（INFO 级别下凭空消失）
-    dataset = build_eval_dataset(spec, args.split, progress=True, task=arch_task(arch))
+    if args.single_cls:
+        nc_meta = load_meta(args.weights).get("nc")
+        if nc_meta not in (None, 1):
+            parser.error(f"--single-cls expects an nc=1 checkpoint, but {args.weights} declares nc={nc_meta}")
+    dataset = build_eval_dataset(spec, args.split, progress=True, task=arch_task(arch),
+                                 single_cls=args.single_cls)
     logger.info(scan_summary(dataset))
     # 进度条只走控制台（UI 元素不进 logger），文件日志里另落一行同等信息
     log_file_only(f"{args.split}: {len(dataset)} images · {dataset.n_backgrounds} backgrounds · "

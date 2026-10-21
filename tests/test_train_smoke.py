@@ -90,6 +90,23 @@ def _make_mini_yolo(tmp_path, n_img=32, size=320, seg=False):
     return desc
 
 
+def test_train_smoke_single_cls(tmp_path):
+    """--single-cls：模型 nc=1、metadata names=["item"]、训练/验证全链路可跑"""
+    data = _make_mini_coco(tmp_path, n_img=8, size=160)
+    cfg = TrainConfig(
+        data=str(data), epochs=1, batch=4, nbs=4, imgsz=160, workers=0,
+        val_epochs=1, val_limit=4, limit=0, amp=False, mosaic=0.0, mixup=0.0, cutmix=0.0,
+        copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0, aug_samples=0, plots=False,
+        single_cls=True,
+    )
+    trainer = Trainer(cfg, device="cpu", run_dir=tmp_path / "run-single")
+    assert trainer.head.nc == 1
+    trainer.train()
+    from model.weights import load_meta
+    wm = load_meta(trainer.run_dir / "weights" / "best.safetensors")
+    assert wm["nc"] == 1 and wm["names"] == ["item"], wm
+
+
 def test_train_smoke_freeze(tmp_path):
     """--freeze：前 N 层参数不更新，冻结层 BN 在训练后仍是 eval 模式"""
     data = _make_mini_coco(tmp_path, n_img=8, size=160)

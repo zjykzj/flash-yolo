@@ -6,6 +6,7 @@
 import csv
 import logging
 import os
+from dataclasses import replace
 import random
 import sys
 import time
@@ -110,7 +111,9 @@ class Trainer:
 
     def __init__(self, cfg: TrainConfig, device=None, run_dir=None, resume=None, weights=None, spec=None):
         self.cfg = cfg
-        self.spec = spec or load_dataset(cfg.data)  # 描述符：nc 与角色路径的唯一来源
+        self.data_spec = spec or load_dataset(cfg.data)  # 描述符：角色路径与原始类别表的来源
+        # 单类训练：模型头/掩码 metadata 用 nc=1，数据侧仍按原始类别表解析后再映射到 0
+        self.spec = replace(self.data_spec, names={0: "item"}) if cfg.single_cls else self.data_spec
         self.task = arch_task(cfg.model)  # detect | segment（数据/损失/验证的任务轴）
         if self.task == "segment" and (cfg.mask_ratio < 1 or cfg.imgsz % cfg.mask_ratio):
             raise ValueError(f"mask_ratio={cfg.mask_ratio} must be >=1 and divide imgsz={cfg.imgsz}")
@@ -253,7 +256,8 @@ class Trainer:
     def _validate(self):
         ema_model = self.ema.eval_model()
         if self.val_dataset is None:
-            self.val_dataset = build_eval_dataset(self.spec, "val", task=self.task)
+            self.val_dataset = build_eval_dataset(self.data_spec, "val", task=self.task,
+                                                  single_cls=self.cfg.single_cls)
         # loss_fn 同传：val 损失与训练损失同实现（复用同一次 backbone/neck 前向）
         metrics, metrics_obj = validate(
             ema_model, self.val_dataset, self.device, limit=self.cfg.val_limit,
@@ -361,11 +365,13 @@ class Trainer:
         只打一行静态提示）+ 单趟扫描 ≈2.6s（进度条覆盖这一段）。
         """
         logger.info("")
-        self.dataset = build_train_dataset(self.cfg, self.spec, "train", augment=True,
-                                           limit=self.cfg.limit, progress=True, task=self.task)
+        self.dataset = build_train_dataset(self.cfg, self.data_spec, "train", augment=True,
+                                           limit=self.cfg.limit, progress=True, task=self.task,
+                                           single_cls=self.cfg.single_cls)
         self._log_split("train", self.dataset)
         if self.val_enabled:
-            self.val_dataset = build_eval_dataset(self.spec, "val", progress=True, task=self.task)
+            self.val_dataset = build_eval_dataset(self.data_spec, "val", progress=True, task=self.task,
+                                                  single_cls=self.cfg.single_cls)
             self._log_split("val", self.val_dataset,
                             extra=f" · limit {self.cfg.val_limit}" if self.cfg.val_limit else "")
         else:

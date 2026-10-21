@@ -165,7 +165,7 @@ def _polygon_area(poly):
 
 
 def scan_labels(src, images, labels_dir, nc, label="train", limit=0, progress=False, progress_file=None,
-                build_segments=False):
+                build_segments=False, single_cls=False):
     """单趟扫描（对标 data/coco.py::scan_split）
 
     build_segments=False -> (kept_images, labels_norm, ScanStats)；
@@ -200,6 +200,9 @@ def scan_labels(src, images, labels_dir, nc, label="train", limit=0, progress=Fa
                 n_seg_fallback += nfb
             else:
                 lbs = parse_label_file(lp, nc) if lp is not None else np.zeros((0, 5), np.float32)
+            if single_cls and len(lbs):  # 单类：所有标签类别映射到 0
+                lbs = lbs.copy()
+                lbs[:, 0] = 0
             n_hits += lp is not None
             kept.append(img)
             labels.append(lbs)
@@ -231,21 +234,24 @@ class YoloDataset:
     """
 
     def __init__(self, images_src, labels_dir, names, label="val", progress=False, progress_file=None,
-                 segment=False):
+                 segment=False, single_cls=False):
         self.images_src = Path(images_src)
         self.labels_dir = Path(labels_dir)
         self.label = label
-        self.names = dict(names)
+        self.single_cls = bool(single_cls)
+        self.names = {0: "item"} if self.single_cls else dict(names)
         self.segment = bool(segment)
 
+        n_label_classes = len(names)  # 原始类别数：single_cls 时解析仍按原 nc 校验，之后再映射到 0
         if self.segment:
             self.images, self.labels_norm, self.segments_norm, stats = scan_labels(
-                self.images_src, list_images(self.images_src), self.labels_dir, len(self.names),
-                label=label, progress=progress, progress_file=progress_file, build_segments=True)
+                self.images_src, list_images(self.images_src), self.labels_dir, n_label_classes,
+                label=label, progress=progress, progress_file=progress_file, build_segments=True,
+                single_cls=self.single_cls)
         else:
             self.images, self.labels_norm, stats = scan_labels(
-                self.images_src, list_images(self.images_src), self.labels_dir, len(self.names),
-                label=label, progress=progress, progress_file=progress_file)
+                self.images_src, list_images(self.images_src), self.labels_dir, n_label_classes,
+                label=label, progress=progress, progress_file=progress_file, single_cls=self.single_cls)
             self.segments_norm = None
         self.n_instances = stats.n_instances
         self.n_categories = len(self.names)
@@ -358,7 +364,7 @@ class YoloTrainDataset(TrainMixin):
     """YOLO 训练集：load_image 返回 (BGR, 像素标签)，其余（增强/corrupt 计数）在 TrainMixin"""
 
     def __init__(self, cfg, images_src, labels_dir, names, label="train", augment=True, limit=0,
-                 progress=False, progress_file=None, segment=False):
+                 progress=False, progress_file=None, segment=False, single_cls=False):
         self.cfg = cfg
         self.use_augment = augment
         self.segment = bool(segment)
@@ -366,17 +372,20 @@ class YoloTrainDataset(TrainMixin):
         self.images_src = Path(images_src)
         self.labels_dir = Path(labels_dir)
         self.label = label
-        self.names = dict(names)
+        self.single_cls = bool(single_cls)
+        self.names = {0: "item"} if self.single_cls else dict(names)
 
+        n_label_classes = len(names)  # single_cls 时解析仍按原 nc 校验，之后映射到 0
         if self.segment:
             self.images, self.labels_norm, self.segments_norm, stats = scan_labels(
-                self.images_src, list_images(self.images_src), self.labels_dir, len(self.names),
+                self.images_src, list_images(self.images_src), self.labels_dir, n_label_classes,
                 label=label, limit=limit, progress=progress, progress_file=progress_file,
-                build_segments=True)
+                build_segments=True, single_cls=self.single_cls)
         else:
             self.images, self.labels_norm, stats = scan_labels(
-                self.images_src, list_images(self.images_src), self.labels_dir, len(self.names),
-                label=label, limit=limit, progress=progress, progress_file=progress_file)
+                self.images_src, list_images(self.images_src), self.labels_dir, n_label_classes,
+                label=label, limit=limit, progress=progress, progress_file=progress_file,
+                single_cls=self.single_cls)
             self.segments_norm = None
         self.n_instances = stats.n_instances
         self.n_categories = len(self.names)

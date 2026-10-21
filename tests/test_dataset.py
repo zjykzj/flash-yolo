@@ -90,6 +90,23 @@ def test_category_mapping_consistent_with_train_and_eval(tmp_path):
     print("  类别映射与描述符 names 一致", ds.cat_id_to_idx)
 
 
+def test_single_cls_remaps_both_sides(tmp_path):
+    """single_cls：训练/评估标签类别都映射到 0，names/nc 变为单类，GT callable 同步重映射"""
+    data_dir = _make_fixture(tmp_path)
+    spec = _descriptor(data_dir, tmp_path)
+    tr = build_train_dataset(TrainConfig(), spec, "train", single_cls=True)
+    va = build_eval_dataset(spec, "val", single_cls=True)
+    assert tr.names == va.names == {0: "item"}
+    assert tr.n_categories == va.n_categories == 1
+    assert all((lab[:, 0] == 0).all() for lab in tr.labels if len(lab))
+    assert all(c == 0 for _, c in va.targets(0))
+    gt = va.gt_source()
+    d = gt()
+    assert d["categories"] == [{"id": 0, "name": "item"}]
+    assert d["annotations"] and all(a["category_id"] == 0 for a in d["annotations"])
+    print("  single_cls 训练/评估映射正确")
+
+
 def test_names_mismatch_with_json_raises(tmp_path):
     """描述符 names 与 json categories 不一致 -> 数据集构建即报错（报首个不一致下标）"""
     data_dir = _make_fixture(tmp_path)

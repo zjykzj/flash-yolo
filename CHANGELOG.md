@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **GPU mask decoding**: `process_mask` runs on the engine's device when CUDA is available and produces bit-identical masks, cutting COCO seg post-processing from 48 to 19 ms/image and end-to-end eval from 102 to 66 ms/image on a 200-image check.
 - **Training report plots**: runs now write `results.png`, `PR_curve.png` and confusion-matrix images at the end of training from the last validation's FastMetrics (`--no-plots` disables; matplotlib is optional and missing installs only skip the report).
 - **Freeze layers**: `--freeze N` freezes the first N layers and keeps their BatchNorm in eval mode, excluding them from the optimizer; the default 0 leaves training unchanged.
+- **Single-class training**: `--single-cls` remaps every label and GT to class 0 and builds an nc=1 model named `item`; `eval.py --single-cls` applies the same remap for COCO and YOLO datasets, and the default leaves multi-class runs unchanged.
 
 ### Changed
 

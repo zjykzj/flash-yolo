@@ -35,7 +35,7 @@ def _check_names(spec, ds):
 
 
 def build_train_dataset(cfg, spec, role="train", augment=True, limit=0, progress=False, progress_file=None,
-                        task="detect"):
+                        task="detect", single_cls=False):
     """训练集（按 spec.format 分派）；cfg 供增强/尺寸使用（duck-typing）
 
     task="segment"：COCO json（多边形 / RLE 解码 / 损坏时 bbox 回退）与 YOLO txt
@@ -47,15 +47,17 @@ def build_train_dataset(cfg, spec, role="train", augment=True, limit=0, progress
     if spec.format == "coco":
         ds = CocoTrainDataset(cfg, r.ann, r.images, label=role, augment=augment, limit=limit,
                               progress=progress, progress_file=progress_file,
-                              segment=(task == "segment"))
-        _check_names(spec, ds)
+                              segment=(task == "segment"), single_cls=single_cls)
+        if not single_cls:  # 单类时描述符 nc 与数据类别数故意不同（模型头为 1 类）
+            _check_names(spec, ds)
         return ds
     return YoloTrainDataset(cfg, r.images, r.labels, spec.names, label=role, augment=augment,
                             limit=limit, progress=progress, progress_file=progress_file,
-                            segment=(task == "segment"))
+                            segment=(task == "segment"), single_cls=single_cls)
 
 
-def build_eval_dataset(spec, role="val", progress=False, progress_file=None, task="detect"):
+def build_eval_dataset(spec, role="val", progress=False, progress_file=None, task="detect",
+                       single_cls=False):
     """评估集（按 spec.format 分派）；--limit 由调用方对评估循环切片（口径与既有 eval 一致）
 
     task="segment" 时 YOLO 侧额外保留多边形（seg_val / gt_dict 的 pycocotools segmentation）。
@@ -63,8 +65,10 @@ def build_eval_dataset(spec, role="val", progress=False, progress_file=None, tas
     _check_paths(spec, role)
     r = spec.role(role)
     if spec.format == "coco":
-        ds = CocoDataset(r.ann, r.images, label=role, progress=progress, progress_file=progress_file)
-        _check_names(spec, ds)
+        ds = CocoDataset(r.ann, r.images, label=role, progress=progress, progress_file=progress_file,
+                         single_cls=single_cls)
+        if not single_cls:
+            _check_names(spec, ds)
         return ds
     return YoloDataset(r.images, r.labels, spec.names, label=role, progress=progress,
-                       progress_file=progress_file, segment=(task == "segment"))
+                       progress_file=progress_file, segment=(task == "segment"), single_cls=single_cls)

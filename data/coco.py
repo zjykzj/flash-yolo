@@ -51,7 +51,7 @@ def parse_coco(ann_file, status_line=None):
 
 
 def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels=False,
-               build_segments=False, progress=False, progress_file=None):
+               build_segments=False, progress=False, progress_file=None, single_cls=False):
     """解析 ann json + 单趟扫描 -> ScanResult
 
     exists 检查 / crowd 剔除 / 逐图标签构造合并进同一个循环：本机 118k 图实测扫描段 ≈2.6s，
@@ -81,6 +81,7 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
     kept, labels = [], [] if build_labels else None
     segments = [] if build_segments else None
     n_missing = n_bg = n_crowd = n_instances = n_seg_fallback = n_seg_rle = 0
+    cls_of = (lambda a: 0) if single_cls else (lambda a: cat_id_to_idx[a["category_id"]])
     first_missing = None
     for i, img in enumerate(images, 1):
         anns = by_image.get(img["id"], [])
@@ -101,7 +102,7 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
                     if box[2] <= box[0] or box[3] <= box[1]:
                         continue
                     if build_labels:
-                        lbs.append([cat_id_to_idx[a["category_id"]], *box])
+                        lbs.append([cls_of(a), *box])
                     img_segs.append(poly)
                     n_seg_fallback += kind == "bbox"
                     n_seg_rle += kind == "rle"
@@ -113,7 +114,7 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
                 n_bg += n_valid == 0
             else:
                 if build_labels:
-                    lbs = [[cat_id_to_idx[a["category_id"]], *a["bbox"][:2],
+                    lbs = [[cls_of(a), *a["bbox"][:2],
                             a["bbox"][0] + a["bbox"][2], a["bbox"][1] + a["bbox"][3]] for a in anns]
                     labels.append(np.array(lbs, np.float32).reshape(-1, 5) if lbs else np.zeros((0, 5), np.float32))
                 n_instances += len(anns)
@@ -139,15 +140,20 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
 class CocoDataset:
     """按图片索引读取一个 COCO 角色的图片与标注（val/评估口径：保留 crowd、不建标签）"""
 
-    def __init__(self, ann_file, img_dir, label="val", progress=False, progress_file=None):
+    def __init__(self, ann_file, img_dir, label="val", progress=False, progress_file=None,
+                 single_cls=False):
         self.ann_file = Path(ann_file)
         self.img_dir = Path(img_dir)
         self.label = label
+        self.single_cls = bool(single_cls)
 
         # category_id（COCO 非连续 id）-> 0..nc-1（与训练侧共用 parse_coco 口径）
-        res = scan_split(self.ann_file, self.img_dir, label, progress=progress, progress_file=progress_file)
+        res = scan_split(self.ann_file, self.img_dir, label, progress=progress, progress_file=progress_file,
+                         single_cls=self.single_cls)
         self.images, self.annotations = res.images, res.annotations
         self.cat_id_to_idx, self.names, stats = res.cat_id_to_idx, res.names, res.stats
+        if self.single_cls:  # 单类评估：模型 nc=1，GT 类别全部映射到 0
+            self.names = {0: "item"}
 
         self.n_instances = stats.n_instances  # 含 crowd（与官方 val 口径一致）
         self.n_categories = len(self.names)
@@ -161,8 +167,27 @@ class CocoDataset:
         self.n_corrupt = 0  # 验证在父进程单进程内跑，普通计数即可（见 load_image）
 
     def gt_source(self):
-        """pycocotools 的 GT 来源：COCO 直接给 ann json 路径（YOLO 侧返回 callable，见 data/yolo.py）"""
-        return str(self.ann_file)
+        """pycocotools 的 GT 来源：COCO 直接给 ann json 路径；single_cls 时返回重映射后的 callable"""
+        return self.gt_dict if self.single_cls else str(self.ann_file)
+
+    def gt_dict(self):
+        """single_cls 的 COCO GT dict（category_id 全部为 0；保留 segmentation/iscrowd）"""
+        images, anns, aid = [], [], 0
+        for info in self.images:
+            img = {"id": info["id"], "file_name": info["file_name"]}
+            if "width" in info:
+                img["width"], img["height"] = info["width"], info.get("height", 0)
+            images.append(img)
+            for a in self.annotations.get(info["id"], []):
+                x, y, w, h = a["bbox"]
+                aid += 1
+                ann = {"id": aid, "image_id": info["id"], "category_id": 0,
+                       "bbox": [x, y, w, h], "area": a.get("area", w * h),
+                       "iscrowd": a.get("iscrowd", 0)}
+                if a.get("segmentation") is not None:
+                    ann["segmentation"] = a["segmentation"]
+                anns.append(ann)
+        return {"images": images, "categories": [{"id": 0, "name": "item"}], "annotations": anns}
 
     def __len__(self):
         return len(self.images)
@@ -195,7 +220,7 @@ class CocoDataset:
             if not include_crowd and a.get("iscrowd", 0):
                 continue
             x, y, w, h = a["bbox"]
-            out.append(([x, y, x + w, y + h], self.cat_id_to_idx[a["category_id"]]))
+            out.append(([x, y, x + w, y + h], (0 if self.single_cls else self.cat_id_to_idx[a["category_id"]])))
         return out
 
     def _seg_polys(self, idx, imgsz, ratio, pad, include_crowd):
@@ -212,7 +237,7 @@ class CocoDataset:
             poly, _fallback = annotation_polygon(a)
             if poly is None:
                 continue
-            cls_ids.append(self.cat_id_to_idx[a["category_id"]])
+            cls_ids.append((0 if self.single_cls else self.cat_id_to_idx[a["category_id"]]))
             polys.append(poly)
         if not polys:
             return np.zeros((0, 5), np.float32), []
@@ -260,24 +285,25 @@ class CocoTrainDataset(TrainMixin):
     """
 
     def __init__(self, cfg, ann_file, img_dir, label="train", augment=True, limit=0,
-                 progress=False, progress_file=None, segment=False):
+                 progress=False, progress_file=None, segment=False, single_cls=False):
         self.cfg = cfg  # TrainConfig 共享引用：close_mosaic 原地清零概率
         self.use_augment = augment
         self.use_segments = segment
         self.ann_file = Path(ann_file)
         self.img_dir = Path(img_dir)
         self.label = label
+        self.single_cls = bool(single_cls)
 
         # 解析 + 单趟扫描（存在的图 / 剔 crowd / 建标签 / 计数在同一个循环里，见 data/coco.py::scan_split）
         res = scan_split(self.ann_file, self.img_dir, label, limit=limit, drop_crowd=True,
                          build_labels=True, build_segments=segment,
-                         progress=progress, progress_file=progress_file)
+                         progress=progress, progress_file=progress_file, single_cls=self.single_cls)
         self.images, self.labels, self.cat_id_to_idx = res.images, res.labels, res.cat_id_to_idx
         self.segments = res.segments if segment else None
-        self.names = res.names
+        self.names = {0: "item"} if self.single_cls else res.names
 
         self.n_instances = res.stats.n_instances
-        self.n_categories = len(self.cat_id_to_idx)
+        self.n_categories = len(self.names)
         self.n_backgrounds = res.stats.n_backgrounds
         self.n_missing = res.stats.n_missing
         self.n_crowd_excluded = res.stats.n_crowd_excluded

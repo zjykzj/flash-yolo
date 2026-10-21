@@ -61,6 +61,9 @@ def main():
                         help="model yaml path override (custom structure; screening/experiment variants)")
     parser.add_argument("--recipe", default=None, help="recipe name (config/recipes/<name>.yaml) or a .yaml path; "
                                                        "default = the built-in baseline (config/train.yaml values)")
+    parser.add_argument("--single-cls", dest="single_cls", action=argparse.BooleanOptionalAction, default=None,
+                        help="single-class training: remap every label class to 0 and build an nc=1 head "
+                             "(default: yaml `single_cls`, false)")
     parser.add_argument("--plots", action=argparse.BooleanOptionalAction, default=None,
                         help="write results/PR/confusion-matrix plots at the end of training "
                              "(default: yaml `plots`, true; needs matplotlib)")
