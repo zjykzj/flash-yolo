@@ -13,10 +13,11 @@
 #
 # 用法：python scripts/train.py --recipe yolo26-coco-ft --scale n --weights <objv1-150.safetensors>
 #
-# 官方记录但本仓库未实现的三项（实验分支参数，released 代码读不到，仅供留档）：
-#   cls_w: n 2.74 / s-x 3.48   —— o2o 分类损失额外权重
-#   o2m:   n 1.0  / s-x 0.705  —— ProgLoss o2m 初值（本仓库用 released 默认 0.8）
-#   （topk 与 muon_w/sgd_w 已实现，见下）
+# 官方实验分支参数（已实现并写入配方）：
+#   cls_w: n 2.74 / s-x 3.48   —— o2o 分类损失额外权重（--cls-w）
+#   o2m:   n 1.0  / s-x 0.705  —— ProgLoss 初值（本仓库字段 prog_alpha_init）
+#   cutmix/perspective: 按 scale 写入 ckpt 记录值
+#   erasing/auto_augment：**分类任务专用**，检测/分割管线不消费（N/A）
 
 base:
   epochs: 245          # n 档 245 轮（s/m/l/x 见 scale_overrides）
@@ -29,6 +30,10 @@ base:
   muon_w: 0.528        # 实验分支参数：官方 n 档记录值
   sgd_w: 0.674
   topk: 8              # 官方 n 档 o2m 分配 top-k（released 代码默认 10）
+  prog_alpha_init: 1.0     # 官方 o2m 初值（n 档）
+  cls_w: 2.7371            # 官方 o2o 分类权重（n 档）
+  cutmix: 0.0
+  perspective: 0.00011     # n 档 ckpt 记录值
   box_gain: 5.63
   cls_gain: 0.56
   dfl_gain: 9.04
@@ -56,6 +61,10 @@ scale_overrides:
     muon_w: 0.436
     sgd_w: 0.479
     topk: 5
+    prog_alpha_init: 0.70518
+    cls_w: 3.48357
+    cutmix: 0.00082
+    perspective: 0.00074
     box_gain: 9.83
     cls_gain: 0.65
     dfl_gain: 0.96
@@ -81,6 +90,10 @@ scale_overrides:
     muon_w: 0.436
     sgd_w: 0.479
     topk: 5
+    prog_alpha_init: 0.70518
+    cls_w: 3.48357
+    cutmix: 0.00082
+    perspective: 0.00074
     box_gain: 9.83
     cls_gain: 0.65
     dfl_gain: 0.96
@@ -106,6 +119,10 @@ scale_overrides:
     muon_w: 0.436
     sgd_w: 0.479
     topk: 5
+    prog_alpha_init: 0.70518
+    cls_w: 3.48357
+    cutmix: 0.00082
+    perspective: 0.00074
     box_gain: 9.83
     cls_gain: 0.65
     dfl_gain: 0.96
@@ -131,6 +148,10 @@ scale_overrides:
     muon_w: 0.436
     sgd_w: 0.479
     topk: 5
+    prog_alpha_init: 0.70518
+    cls_w: 3.48357
+    cutmix: 0.00082
+    perspective: 0.00074
     box_gain: 9.83
     cls_gain: 0.65
     dfl_gain: 0.96

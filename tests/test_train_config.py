@@ -42,6 +42,9 @@ def test_recipe_file_n():
     assert cfg.box_gain == 5.63 and cfg.cls_gain == 0.56 and cfg.dfl_gain == 9.04
     assert cfg.mosaic == 0.909 and cfg.copy_paste == 0.075 and cfg.aug_scale == 0.562
     assert cfg.muon_w == 0.528 and cfg.sgd_w == 0.674 and cfg.topk == 8
+    # 官方实验分支参数（n 档 ckpt 记录值）
+    assert cfg.prog_alpha_init == 1.0 and cfg.cls_w == 2.7371
+    assert cfg.cutmix == 0.0 and cfg.perspective == 0.00011
     print("  yolo26-coco-ft n 档配方正确")
 
 
@@ -99,6 +102,8 @@ def test_recipe_file_per_scale():
         assert cfg.box_gain == 9.83 and cfg.cls_gain == 0.65 and cfg.dfl_gain == 0.96
         assert cfg.mosaic == 0.992 and cfg.fliplr == 0.304 and cfg.bgr == 0.0
         assert cfg.muon_w == 0.436 and cfg.sgd_w == 0.479 and cfg.topk == 5
+        assert cfg.prog_alpha_init == 0.70518 and cfg.cls_w == 3.48357
+        assert cfg.cutmix == 0.00082 and cfg.perspective == 0.00074
         # 未列字段继承：配方 base（nbs）+ 本仓库 train.yaml 基础值（tal_beta/imgsz）
         assert cfg.nbs == 128 and cfg.tal_beta == 6.0 and cfg.imgsz == 640
     print("  yolo26-coco-ft s/m/l/x 分档配方正确（增量覆盖 + base 继承）")
