@@ -104,6 +104,31 @@ def test_recipe_file_per_scale():
     print("  yolo26-coco-ft s/m/l/x 分档配方正确（增量覆盖 + base 继承）")
 
 
+def test_seg_o365_recipe():
+    """yolo26-seg-o365-pt：逐 scale 转录官方 objv1-seg ckpt 的 train_args"""
+    expect = {
+        "n": (0.1, 0.5, 0.0, 0.5, 0.5),
+        "s": (0.15, 0.9, 0.05, 0.5, 0.6),
+        "m": (0.4, 0.9, 0.15, 0.5, 0.5),
+        "l": (0.5, 0.9, 0.15, 0.5, 0.55),
+        "x": (0.6, 0.9, 0.2, 0.5, 0.6),
+    }
+    for scale, (cp, aug, mix, muon, sgd) in expect.items():
+        cfg = load_train_config(TRAIN_CONFIG_PATH, recipe="yolo26-seg-o365-pt", scale=scale)
+        assert cfg.model == "yolo26-seg"
+        assert cfg.epochs == 150 and cfg.nbs == 128 and cfg.imgsz == 640
+        assert cfg.mask_ratio == 4 and cfg.overlap_mask is True and cfg.copy_paste_mode == "flip"
+        assert cfg.lr0 == 0.01 and cfg.lrf == 0.01 and cfg.momentum == 0.9
+        assert cfg.weight_decay == 0.0005 and cfg.warmup_epochs == 2.0
+        assert cfg.box_gain == 7.5 and cfg.cls_gain == 0.5 and cfg.dfl_gain == 6.0
+        assert cfg.copy_paste == cp and cfg.aug_scale == aug and cfg.mixup == mix
+        assert cfg.muon_w == muon and cfg.sgd_w == sgd
+        assert cfg.prog_alpha_init == (1.0 if scale in "lx" else 0.1)
+        assert cfg.cls_w == 1.0 and cfg.cutmix == 0.0 and cfg.perspective == 0.0
+        assert cfg.close_mosaic == 8 and cfg.topk == 10
+    print("  yolo26-seg-o365-pt n/s/m/l/x 转录正确")
+
+
 def test_recipe_by_path():
     """--recipe 支持直接给 .yaml 路径"""
     path = RECIPES_DIR / f"{RECIPE}.yaml"

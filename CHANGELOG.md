@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Single-class training**: `--single-cls` remaps every label and GT to class 0 and builds an nc=1 model named `item`; `eval.py --single-cls` applies the same remap for COCO and YOLO datasets, and the default leaves multi-class runs unchanged.
 - **Agnostic NMS**: `--agnostic-nms` (used with `--nms`) suppresses overlapping boxes across classes in eval and infer; the default keeps per-class suppression, and E2E runs reject the flag because they have no NMS stage.
 - **Segmentation recipe records the experimental checkpoint values**: `yolo26-seg-coco-ft` now writes the per-scale `cls_w`, ProgLoss initial `o2m` (`prog_alpha_init`) and cutmix/perspective values read from the five released seg checkpoints, instead of keeping them in a comment.
+- **O365 segmentation pretraining recipe**: `yolo26-seg-o365-pt` transcribes the five released `*-objv1-seg` checkpoints' stage-1 training args (150 epochs, 365 classes); the Objects365 dataset itself is not bundled or verified, and no values were tuned.
 
 ### Changed
 

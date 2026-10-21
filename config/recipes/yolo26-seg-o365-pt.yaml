@@ -1,0 +1,87 @@
+# 官方 YOLO26-seg Stage-1 Objects365v1 预训练配方（发布 seg checkpoint 的第一阶段，150 轮）
+#
+# 来源：官方发布的五个 `yolo26{n,s,m,l,x}-objv1-seg.pt` checkpoint 内嵌的 train_args
+#       （逐 scale 读取；不做任何调参/实验）。n/s/m/l/x 的共同项：
+#         epochs 150 · batch 128 · imgsz 640 · mask_ratio 4 · overlap_mask true ·
+#         copy_paste_mode flip · close_mosaic 8 · warmup_epochs 2 / momentum 0.8 /
+#         bias_lr 0 · lr0 0.01 · lrf 0.01 · momentum 0.9 · wd 0.0005 ·
+#         box/cls/dfl 7.5/0.5/6.0 · mosaic 1.0 · cutmix 0 · perspective 0 ·
+#         degrees/shear 0 · translate 0.1 · fliplr 0.5 · flipud 0 ·
+#         hsv 0.015/0.7/0.4 · bgr 0 · muon_w 0.5 · cls_w 1.0 · o2m 0.1（l/x 为 1.0）
+#       copy_paste / mixup / scale / sgd_w 按 scale 不同（见 scale_overrides）。
+#
+# ⚠️ 未在本仓库验证：需要 Objects365v1 分割数据集（官方 ~1.7M 图、batch 128 × 150 轮）。
+#    与检测版 `yolo26-o365-pt.yaml` 一样，本文件只补全"官方 seg COCO 权重从哪来"的链路；
+#    Stage-2 见 `yolo26-seg-coco-ft.yaml`。
+#
+# 说明：
+# - `topk` 在五个 seg ckpt 的 train_args 中均为 null（released code 默认 10），本配方不覆盖；
+# - `erasing 0.4` / `auto_augment randaugment` 是**分类任务专用**参数，检测/分割管线不消费（N/A）；
+# - `semseg_loss` 在官方记录中恒 true；本仓库 semseg 辅助项始终参与训练，无需开关；
+# - batch 是机器相关值：官方物理 batch 128，命令行给，不写进配方。
+#
+# 用法：python scripts/train.py --recipe yolo26-seg-o365-pt --scale n \
+#         --data <objects365-seg 描述符> --batch <N>
+
+base:
+  model: yolo26-seg
+
+  mask_ratio: 4
+  overlap_mask: true
+  copy_paste_mode: flip
+
+  epochs: 150
+  nbs: 128
+  lr0: 0.01
+  lrf: 0.01
+  momentum: 0.9
+  weight_decay: 0.0005
+  warmup_epochs: 2.0
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.0
+  muon_w: 0.5
+  sgd_w: 0.5
+  box_gain: 7.5
+  cls_gain: 0.5
+  dfl_gain: 6.0
+  prog_alpha_init: 0.1   # 官方 o2m 初值（n/s/m）；l/x 见 scale_overrides
+  cls_w: 1.0             # 官方记录值：所有 scale 均为 1.0
+  mosaic: 1.0
+  mixup: 0.0
+  cutmix: 0.0
+  copy_paste: 0.1
+  aug_scale: 0.5
+  degrees: 0.0
+  shear: 0.0
+  perspective: 0.0
+  translate: 0.1
+  fliplr: 0.5
+  flipud: 0.0
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  bgr: 0.0
+  close_mosaic: 8
+
+scale_overrides:
+  s:
+    copy_paste: 0.15
+    mixup: 0.05
+    aug_scale: 0.9
+    sgd_w: 0.6
+  m:
+    copy_paste: 0.4
+    mixup: 0.15
+    aug_scale: 0.9
+  l:
+    copy_paste: 0.5
+    mixup: 0.15
+    aug_scale: 0.9
+    sgd_w: 0.55
+    prog_alpha_init: 1.0
+  x:
+    copy_paste: 0.6
+    mixup: 0.2
+    aug_scale: 0.9
+    sgd_w: 0.6
+    prog_alpha_init: 1.0
