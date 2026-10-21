@@ -85,6 +85,7 @@ class TrainConfig:
     # loss
     box_gain: float = 7.5
     cls_gain: float = 0.5
+    cls_w: float = 1.0  # o2o 分类项额外权重（官方 ckpt 记录值；released 代码不消费，默认 1.0）
     dfl_gain: float = 1.5
     obj_gain: float = 1.0  # v3 系 objectness 权重（yolo26 双头无独立 obj 项，不使用）
     obj_iou_target: bool = False  # v3 系 IoU-aware objectness（参考 zjykzj/YOLOv3，--yolov3loss）：

@@ -63,6 +63,7 @@ ns_iters: 5        # Newton-Schulz 迭代次数
 # ---- loss ----
 box_gain: 7.5      # CIoU
 cls_gain: 0.5      # BCE（软目标）
+cls_w: 1.0         # o2o 分类项额外权重（官方 ckpt 记录值；released 代码不消费，默认 1.0）
 dfl_gain: 1.5      # box-L1（复用 dfl 槽位，reg_max=1 无 DFL）
 obj_gain: 1.0      # v3 系 objectness 权重（yolo26 双头无独立 obj 项，不使用）
 obj_iou_target: false  # v3 系 IoU-aware objectness（参考 zjykzj/YOLOv3）：正样本 obj 目标 = IoU(预测框, 责任 GT)、

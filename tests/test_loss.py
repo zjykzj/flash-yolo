@@ -31,6 +31,23 @@ def test_loss_gradient_flow():
     print(f"  梯度流正确, total={total.item():.3f}, items={items}")
 
 
+def test_cls_w_scales_only_o2o_classification():
+    """cls_w 只放大 o2o 分类项：o2m 分支逐位不变，总损失单调增加"""
+    model = DetectionModel(scale="n").train()
+    head = model.model[-1]
+    torch.manual_seed(0)
+    _, preds = _preds(model)
+    targets = torch.tensor([[0, 5, 10, 10, 500, 500]], dtype=torch.float32)
+    base_total, base = ComputeLoss(TrainConfig(cls_w=1.0), head, torch.device("cpu"))(
+        preds, targets, batch_size=1, imgsz=640)
+    wide_total, wide = ComputeLoss(TrainConfig(cls_w=2.0), head, torch.device("cpu"))(
+        preds, targets, batch_size=1, imgsz=640)
+    assert wide_total > base_total
+    assert wide["o2o"] > base["o2o"]
+    assert abs(wide["o2m"] - base["o2m"]) < 1e-6
+    print(f"  cls_w=2: total {base_total.item():.3f} -> {wide_total.item():.3f}")
+
+
 def test_loss_empty_batch():
     """无 GT 批：损失有限（cls 目标全零）"""
     model = DetectionModel(scale="n").train()

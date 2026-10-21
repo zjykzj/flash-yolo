@@ -126,7 +126,10 @@ class ComputeLoss:
             extra_loss, extra_items = self._extra_branch_terms(
                 branch, preds[branch], a, masks, targets, strides, batch_size, imgsz)
 
-            branch_loss = (self.cfg.box_gain * l_box + self.cfg.cls_gain * l_cls + self.cfg.dfl_gain * l_l1) / batch_size
+            cls_term = self.cfg.cls_gain * l_cls
+            if name == "o2o":  # 官方配方记录的 cls_w：只作用于 o2o 分类项，默认 1.0 行为不变
+                cls_term = cls_term * self.cfg.cls_w
+            branch_loss = (self.cfg.box_gain * l_box + cls_term + self.cfg.dfl_gain * l_l1) / batch_size
             if extra_loss is not None:
                 branch_loss = branch_loss + extra_loss / batch_size
             total = total + weight * branch_loss * batch_size
