@@ -84,6 +84,7 @@ class TRTEngine(BaseEngine):
         if not torch.cuda.is_available():
             raise RuntimeError("TensorRT engine requires a CUDA device")
         self._trt = trt
+        self.mask_device = torch.device("cuda")  # 掩码解码走 GPU（与引擎同设备）
         self.scale = scale
         self.arch = model
         self.task = arch_task(model)

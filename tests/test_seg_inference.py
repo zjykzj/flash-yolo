@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
 from utils.postprocess import masks_to_segments, nms_per_image, process_mask
 
@@ -45,6 +46,19 @@ def test_masks_to_segments_contours_and_merge():
     assert segs[1][:, 0].max() >= 50 and segs[1][:, 1].min() <= 5
     assert len(segs[1]) >= 8
     assert segs[2].shape == (0, 2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_process_mask_gpu_matches_cpu():
+    """GPU 掩码解码与 CPU 逐位一致（同一双线性插值/阈值口径，只是设备不同）"""
+    rng = np.random.default_rng(0)
+    n = 64
+    proto = rng.standard_normal((32, 160, 160), dtype=np.float32)
+    coeffs = rng.standard_normal((n, 32), dtype=np.float32)
+    boxes = np.tile(np.array([100, 80, 540, 400], np.float32), (n, 1))
+    cpu = process_mask(proto, coeffs, boxes, (640, 640), (480, 640), 0.75, (0, 0))
+    gpu = process_mask(proto, coeffs, boxes, (640, 640), (480, 640), 0.75, (0, 0), device="cuda")
+    assert np.array_equal(cpu, gpu)
 
 
 def test_label_lines_seg_polygon():

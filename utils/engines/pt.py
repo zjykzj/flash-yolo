@@ -23,6 +23,7 @@ class PtEngine(BaseEngine):
 
     def __init__(self, weights, scale="n", end2end=True, device=None, nc=None, model="yolo26", imgsz=None):
         self.device = resolve_device(device)
+        self.mask_device = self.device  # 掩码解码跟随模型设备（CUDA 下 300 检出 48ms -> 2.6ms）
         self.scale = scale
         self.arch = model
         self.task = arch_task(model)

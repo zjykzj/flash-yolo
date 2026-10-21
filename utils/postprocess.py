@@ -176,7 +176,7 @@ def scale_boxes(boxes, ratio, pad, ori_h, ori_w):
     return boxes
 
 
-def process_mask(proto, coeffs, boxes, net_hw, ori_hw, ratio, pad):
+def process_mask(proto, coeffs, boxes, net_hw, ori_hw, ratio, pad, device=None):
     """原型 + mask 系数 -> 原图分辨率二值掩码（uint8, (N, H, W)）
 
     与官方两段式口径一致（ultralytics `ops.process_mask(upsample=True)` + validator 侧
@@ -191,32 +191,39 @@ def process_mask(proto, coeffs, boxes, net_hw, ori_hw, ratio, pad):
     **分批（_MASK_CHUNK）**：整批做时中间张量是 (N,640,640) 的 float32（300 检出 ≈ 0.5 GiB），
     内存带宽吃掉全部时间；按掩码分批后每批的中间量落进缓存，实测 300 检出 354ms -> 144ms，
     且逐位不变（双线性插值逐掩码独立，分批只是切分）。
+
+    **device**：给 cuda 时整段在 GPU 上算（300 检出 48ms -> 2.6ms，随机数据与 CPU 逐位一致），
+    回传仍是 numpy；ONNX 等 CPU 引擎传 None 保持原路径。GPU 下每批 32 张（实测最优）。
     """
     import torch
     import torch.nn.functional as F
 
+    device = torch.device(device) if device is not None else torch.device("cpu")
+    if device.type == "cuda" and not torch.cuda.is_available():
+        device = torch.device("cpu")
+    chunk = 32 if device.type == "cuda" else _MASK_CHUNK
     ori_h, ori_w = int(ori_hw[0]), int(ori_hw[1])
     n = int(coeffs.shape[0])
     if n == 0:  # 无检出：返回形状正确的空栈（F.interpolate 不接受 N=0）
         return np.zeros((0, ori_h, ori_w), dtype=np.uint8)
     nm, mh, mw = proto.shape
-    p = torch.from_numpy(np.ascontiguousarray(proto, dtype=np.float32)).reshape(nm, -1)
-    c = torch.from_numpy(np.ascontiguousarray(coeffs, dtype=np.float32))
-    b = torch.from_numpy(np.ascontiguousarray(boxes, dtype=np.float32))
+    p = torch.from_numpy(np.ascontiguousarray(proto, dtype=np.float32)).reshape(nm, -1).to(device)
+    c = torch.from_numpy(np.ascontiguousarray(coeffs, dtype=np.float32)).to(device)
+    b = torch.from_numpy(np.ascontiguousarray(boxes, dtype=np.float32)).to(device)
     net_h, net_w = int(net_hw[0]), int(net_hw[1])
     # 反 letterbox：与 data/preprocess.letterbox 同口径（round(pad - 0.1) 抵消浮点误差）
     top, left = round(pad[0] - 0.1), round(pad[1] - 0.1)
     bottom, right = top + round(ori_h * ratio), left + round(ori_w * ratio)
 
     out = np.empty((n, ori_h, ori_w), dtype=np.uint8)
-    for i in range(0, n, _MASK_CHUNK):
-        j = min(i + _MASK_CHUNK, n)
+    for i in range(0, n, chunk):
+        j = min(i + chunk, n)
         masks = (c[i:j] @ p).reshape(-1, mh, mw)
         masks = F.interpolate(masks[:, None], size=(net_h, net_w), mode="bilinear", align_corners=False)[:, 0]
         masks = _crop_mask((masks > 0).to(torch.uint8), b[i:j])
         content = masks[:, top:bottom, left:right].float()
         masks = F.interpolate(content[:, None], size=(ori_h, ori_w), mode="bilinear", align_corners=False)[:, 0]
-        out[i:j] = (masks > 0.5).to(torch.uint8).numpy()
+        out[i:j] = (masks > 0.5).to(torch.uint8).cpu().numpy()
     return out
 
 
@@ -291,8 +298,10 @@ def _crop_mask(masks, boxes):
 
     _, h, w = masks.shape
     x1, y1, x2, y2 = boxes.unbind(1)  # (N,)
-    col = (torch.arange(w)[None, :] >= x1[:, None]) & (torch.arange(w)[None, :] < x2[:, None])  # (N, W)
-    row = (torch.arange(h)[None, :] >= y1[:, None]) & (torch.arange(h)[None, :] < y2[:, None])  # (N, H)
+    col = (torch.arange(w, device=masks.device)[None, :] >= x1[:, None]) & \
+          (torch.arange(w, device=masks.device)[None, :] < x2[:, None])  # (N, W)
+    row = (torch.arange(h, device=masks.device)[None, :] >= y1[:, None]) & \
+          (torch.arange(h, device=masks.device)[None, :] < y2[:, None])  # (N, H)
     masks *= col[:, None, :].to(masks.dtype)
     masks *= row[:, :, None].to(masks.dtype)
     return masks

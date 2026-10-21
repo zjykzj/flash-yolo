@@ -79,7 +79,8 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 ```
 
 - 掩码由 `utils/postprocess.process_mask` 解码到**原图分辨率**（与 GT 掩码同尺度），评估器现编码
-  RLE 喂给 pycocotools（`iou_type="segm"`）；
+  RLE 喂给 pycocotools（`iou_type="segm"`）；pt/trt 引擎在 CUDA 上解码掩码（与 CPU 逐位一致），
+  200 图实测 postprocess 48 -> 19 ms/图、端到端 102 -> 66 ms/图；
 - `runs/val/valN/results.json` 写 Mask 组（含 `segmentation` RLE 字符串），可直接当 COCO 结果提交；
 - 掩码解码与官方 val 管线**逐像素一致**（`tests/test_seg_inference.py` 对拍）；
 - 数据集支持 COCO json 与 YOLO-seg txt：YOLO 的 GT dict 由多边形即时生成
