@@ -393,7 +393,8 @@ class Trainer:
                         f"cls {self.cfg.cls_gain} BCE (anchor-matched) · "
                         f"EMA {self.cfg.ema_decay} (tau {self.cfg.ema_tau})")
         logger.info(f"aug: mosaic {self.cfg.mosaic} · copy_paste {self.cfg.copy_paste}({self.cfg.copy_paste_mode}) · "
-                    f"mixup {self.cfg.mixup} · fliplr {self.cfg.fliplr} · flipud {self.cfg.flipud} · "
+                    f"mixup {self.cfg.mixup} · cutmix {self.cfg.cutmix} · perspective {self.cfg.perspective} · "
+                    f"fliplr {self.cfg.fliplr} · flipud {self.cfg.flipud} · "
                     f"hsv h/s/v {self.cfg.hsv_h}/{self.cfg.hsv_s}/{self.cfg.hsv_v} · bgr {self.cfg.bgr}")
         if self.task == "segment":
             logger.info(f"seg: mask_ratio {self.cfg.mask_ratio} · overlap_mask {self.cfg.overlap_mask} · "

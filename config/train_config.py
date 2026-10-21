@@ -108,6 +108,7 @@ class TrainConfig:
     # augment
     mosaic: float = 1.0
     mixup: float = 0.0
+    cutmix: float = 0.0
     copy_paste: float = 0.0
     copy_paste_mode: str = "off"  # off = 官方检测口径（无 segments 时 CopyPaste 恒为 no-op）| box = 矩形贴块近似
     aug_scale: float = 0.5  # 仿射缩放增益（与模型档位 scale 字段区分）

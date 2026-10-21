@@ -11,7 +11,8 @@ import cv2
 import numpy as np
 import torch
 
-from data.augment import augment, bgr_swap, flip_lr, mosaic, random_hsv, random_perspective, resize_long_side
+from data.augment import (_rand_cut_area, augment, bgr_swap, cutmix, flip_lr, mosaic,
+                          random_hsv, random_perspective, resize_long_side)
 from config.train_config import TrainConfig
 
 
@@ -96,6 +97,85 @@ def test_perspective_zero_keeps_rng_stream():
     hyp = _identity_hyp(imgsz=64, perspective=0.02)
     random_perspective(_img(size=64), np.zeros((0, 5), np.float32), hyp, _CountRNG(center=False))
     assert len(calls) == 8
+
+
+class _CutStub:
+    """CutMix 专用确定性 RNG：Beta 固定 0.9375（边长 sqrt(1-lam)=0.25），中心固定 (0,0)"""
+
+    def beta(self, a, b):
+        return 0.9375
+
+    def integers(self, lo, hi):
+        return 0
+
+
+def test_rand_cut_area_matches_official_formula():
+    """切块公式：lam~Beta、边长 sqrt(1-lam)、随机中心、坐标 clip 到画布"""
+    class _R:
+        def beta(self, a, b):
+            return 0.75  # sqrt(0.25)=0.5 -> 50x40
+
+        def __init__(self):
+            self.k = 0
+
+        def integers(self, lo, hi):
+            self.k += 1
+            return 5 if self.k % 2 else 7  # cx=5, cy=7
+
+    assert _rand_cut_area(100, 80, _R()) == (0, 0, 30, 27)
+
+
+def test_cutmix_pastes_region_and_clips_instances():
+    """CutMix：贴块区域来自副图，主图标签保留，副图实例裁剪后拼入（分割多边形同步）"""
+    S = 64
+    hyp = _identity_hyp(imgsz=S, cutmix=1.0)
+    img = _img(size=S, value=10)
+    other = _img(size=S, value=200)
+    labels = np.array([[0, 40, 40, 60, 60]], np.float32)
+    other_labels = np.array([[1, 2, 2, 6, 6], [2, 20, 20, 30, 30]], np.float32)
+    segs = [np.array([[40, 40], [60, 40], [60, 60], [40, 60]], np.float32)]
+    other_segs = [np.array([[2, 2], [6, 2], [6, 6], [2, 6]], np.float32),
+                  np.array([[20, 20], [30, 20], [30, 30], [20, 30]], np.float32)]
+
+    out, out_labels, out_segs = cutmix(img, labels, other, other_labels, hyp, _CutStub(),
+                                       segments=segs, other_segments=other_segs)
+    # 切块 (0,0,8,8)：块内来自副图，块外保持原图
+    np.testing.assert_array_equal(out[:8, :8], other[:8, :8])
+    np.testing.assert_array_equal(out[8:, :], img[8:, :])
+    # 主图标签保留；只有与切块 IoA>=0.01 的副图实例被拼入
+    assert out_labels.shape == (2, 5)
+    np.testing.assert_allclose(out_labels[0], labels[0])
+    np.testing.assert_allclose(out_labels[1], [1, 2, 2, 6, 6])
+    assert len(out_segs) == 2
+    np.testing.assert_allclose(out_segs[1], other_segs[0])
+    # 纯检测路径（segments=None）返回二元组，阈值为 0.10
+    det_out, det_labels = cutmix(img, labels, other, other_labels, hyp, _CutStub())
+    assert det_out.shape == img.shape and det_labels.shape == (2, 5)
+
+
+def test_cutmix_skips_when_primary_covers_canvas():
+    """主图框覆盖全图 -> 三个候选切块都与目标重叠 -> 原样返回"""
+    S = 64
+    hyp = _identity_hyp(imgsz=S, cutmix=1.0)
+    img = _img(size=S, value=10)
+    labels = np.array([[0, 0, 0, S, S]], np.float32)
+    other_labels = np.array([[1, 2, 2, 6, 6]], np.float32)
+    out, out_labels = cutmix(img, labels, _img(size=S, value=200), other_labels, hyp, _CutStub())
+    np.testing.assert_array_equal(out, img)
+    np.testing.assert_array_equal(out_labels, labels)
+
+
+def test_close_mosaic_zeroes_cutmix():
+    """close_mosaic 同时关闭 mosaic/mixup/cutmix/copy_paste（官方 semantics）"""
+    from data.loader import TrainMixin
+
+    class _D(TrainMixin):
+        pass
+
+    d = _D()
+    d.cfg = TrainConfig(mosaic=1.0, mixup=0.5, cutmix=0.5, copy_paste=0.5)
+    d.close_mosaic()
+    assert (d.cfg.mosaic, d.cfg.mixup, d.cfg.cutmix, d.cfg.copy_paste) == (0.0, 0.0, 0.0, 0.0)
 
 
 def test_fliplr_exact_mirror():

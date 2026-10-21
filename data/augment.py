@@ -395,6 +395,58 @@ def mixup(img, labels, other_img, other_labels, alpha, rng, segments=None, other
     return _ret(img, labels, segments)
 
 
+def _rand_cut_area(w, h, rng):
+    """CutMix 候选切块（官方 CutMix._rand_bbox 口径：lam~Beta(1,1)、sqrt 边长、随机中心）"""
+    lam = float(rng.beta(1.0, 1.0))
+    ratio = float(np.sqrt(1.0 - lam))
+    cut_w, cut_h = int(w * ratio), int(h * ratio)
+    cx, cy = int(rng.integers(0, w)), int(rng.integers(0, h))
+    return (int(np.clip(cx - cut_w // 2, 0, w)), int(np.clip(cy - cut_h // 2, 0, h)),
+            int(np.clip(cx + cut_w // 2, 0, w)), int(np.clip(cy + cut_h // 2, 0, h)))
+
+
+def cutmix(img, labels, other_img, other_labels, hyp, rng, segments=None, other_segments=None):
+    """CutMix：3 个候选切块避开主图目标，贴入副图区域并拼接副图实例（官方 CutMix 语义）
+
+    - 候选切块与主图所有框的 IoA 必须为 0，否则丢弃；全部无效则跳过；
+    - 副图框与切块 IoA >= 0.01（本图有多边形）/ 0.10（纯检测）才被选中；
+    - 选中实例先平移到切块原点、裁剪到切块尺寸、再平移回去，然后与主图标签/多边形拼接。
+    与官方一致，裁剪后为零面积的实例不额外剔除（后续栅格化/分配按既有口径处理）。
+    """
+    h, w = img.shape[:2]
+    areas = np.array([_rand_cut_area(w, h, rng) for _ in range(3)], np.float32)
+    if len(labels):
+        valid = np.nonzero(_bbox_ioa(areas, labels[:, 1:5]).sum(1) <= 0)[0]
+    else:
+        valid = np.arange(len(areas))
+    if not len(valid):
+        return _ret(img, labels, segments)
+    x1, y1, x2, y2 = areas[int(rng.integers(0, len(valid)))].astype(np.int32)
+    if x2 <= x1 or y2 <= y1 or not len(other_labels):
+        return _ret(img, labels, segments)
+    thr = 0.01 if (segments is not None and len(segments)) else 0.1
+    ioa = _bbox_ioa(np.array([[x1, y1, x2, y2]], np.float32), other_labels[:, 1:5])[0]
+    keep = np.nonzero(ioa >= thr)[0]
+    if not len(keep):
+        return _ret(img, labels, segments)
+
+    img = img.copy()  # 上游可能与本图共享缓冲（mosaic/resize 之外的路径），不原地改
+    img[y1:y2, x1:x2] = other_img[y1:y2, x1:x2]
+    cw, ch = x2 - x1, y2 - y1
+    lb2 = other_labels[keep].copy()
+    shift = np.array([x1, y1, x1, y1], np.float32)
+    lb2[:, 1:5] = np.clip(lb2[:, 1:5] - shift, 0, np.array([cw, ch, cw, ch], np.float32)) + shift
+    labels = np.concatenate([labels, lb2], 0) if len(labels) else lb2
+    segs = None
+    if segments is not None:
+        sel = np.zeros(len(other_labels), bool)
+        sel[keep] = True
+        seg2 = _subset_segments(other_segments, sel)
+        seg2 = _shift_segments(_clip_segments(_shift_segments(seg2, -x1, -y1), cw, ch), x1, y1)
+        segs = segments + seg2
+    return _ret(img, labels, segs)
+
+
 def random_hsv(img, h_gain, s_gain, v_gain, rng):
     """HSV 空间随机增益（官方 RandomHSV）
 
@@ -484,6 +536,18 @@ def augment(img, labels, img_loader, hyp, rng, idx, n, segments=None):
                                           segments=segments, other_segments=other_segs)
         else:
             img, labels = mixup(img, labels, other_img, other_labels, alpha=32.0, rng=rng)
+
+    if hyp.cutmix and rng.random() < hyp.cutmix:  # 0 时不消耗 RNG（历史随机流逐位不变）
+        other_img, other_labels, other_segs = _load_sample(
+            img_loader, int(rng.integers(0, n)), seg_on)
+        other_img, other_labels, other_segs = _resize_long_side(other_img, other_labels, other_segs, S)
+        other_img, other_labels, other_segs = _random_perspective(
+            other_img, other_labels, hyp, rng, other_segs)
+        if seg_on:
+            img, labels, segments = cutmix(img, labels, other_img, other_labels, hyp, rng,
+                                           segments=segments, other_segments=other_segs)
+        else:
+            img, labels = cutmix(img, labels, other_img, other_labels, hyp, rng)
 
     img = random_hsv(img, hyp.hsv_h, hyp.hsv_s, hyp.hsv_v, rng)
     if rng.random() < hyp.flipud:

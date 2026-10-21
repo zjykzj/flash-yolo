@@ -68,8 +68,8 @@ class TrainMixin:
         return letterbox_train(img, labels, self.cfg.imgsz)
 
     def close_mosaic(self):
-        """最后 N epoch：清零 mosaic/mixup/copy_paste 概率（HSV/flip/perspective 保留）"""
-        self.cfg.mosaic = self.cfg.mixup = self.cfg.copy_paste = 0.0
+        """最后 N epoch：清零 mosaic/mixup/cutmix/copy_paste 概率（HSV/flip/perspective 保留）"""
+        self.cfg.mosaic = self.cfg.mixup = self.cfg.cutmix = self.cfg.copy_paste = 0.0
 
     @property
     def n_corrupt(self):
