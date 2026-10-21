@@ -2,7 +2,7 @@
 
 > 定位：`flash-yolo` 的实例分割变体，模型名 `flash-yolo-seg`（`arch_task = segment`）。
 > backbone/neck 与检测版**逐行相同**，只把最后一行 `Detect` 换成 `Segment26`——
-> 与 `yolo26 -> yolo26-seg` 是同一种关系。结构事实见本文，训练/评估数字见 §4。
+> 与 `yolo26 -> yolo26-seg` 是同一种关系。结构事实见本文，训练/评估数字见 §7。
 
 ## 1. 命名
 
@@ -67,7 +67,8 @@ python model/summary.py --model flash-yolo-seg
 # -> 311 layers, 2,528,248 parameters, 7.6 GFLOPs
 
 # 训练（default 配方；COCO 分割标签见 docs/dataset.md）
-python scripts/train.py --model flash-yolo-seg --data coco --epochs 20 --batch 32 --workers 8 --mask-ratio 4
+python scripts/train.py --model flash-yolo-seg --data coco --epochs 20 --batch 32 --workers 8 \
+    --mask-ratio 4 --name flash-seg-20ep
 
 # 正式评估（Box + Mask，权重 metadata 自动解析 arch/scale）
 python scripts/eval.py --weights runs/train/train-flash-seg-20ep/weights/best.safetensors --data coco
@@ -85,3 +86,39 @@ python scripts/export.py --weights runs/train/train-flash-seg-20ep/weights/best.
   E2E/raw/训练三种前向契约、自定义 nc、命名与任务解析、损失分派；
 - `tests/test_train_smoke.py::test_train_smoke_flash_seg`（`FLASH_YOLO_SMOKE=1`，CPU，2 epoch）：
   `cfg.scale == "flash"`、分割列名、权重 metadata、strict 回载。
+
+20 轮从零训练与同预算对照的正式数字见 §7。
+
+## 7. 20 轮从零验收（2026-10-21）
+
+设置：**default 配方、从零、640、20 epoch、batch 32、nbs 64、fp32、mask_ratio 4、seed 0**。
+对照组 yolo26n-seg 用完全相同的配方与预算（唯一变量 = 架构），两组都从随机初始化开始。
+本机产物为 `runs/train/train-flash-seg-20ep2`（`--name flash-seg-20ep` 被上一轮中止的 run
+占用后自动加序号）与 `runs/train/train-seg-n-20ep-scratch`。
+
+正式口径（`scripts/eval.py` + pycocotools，COCO val2017 5000 图）：
+
+| 模型 | 参数 | GFLOPs | Box mAP50 | Box mAP50-95 | Mask mAP50 | Mask mAP50-95 |
+|---|---|---|---|---|---|---|
+| flash-yolo-seg | 2,528,248 | 7.6 | 0.3821 | 0.2580 | 0.3588 | 0.2207 |
+| yolo26n-seg（从零对照） | 3,126,280 | 9.3 | 0.4081 | 0.2780 | 0.3843 | 0.2395 |
+| **Δ（flash − 对照）** | **−19.1%** | **−18.3%** | **−0.0260** | **−0.0200** | **−0.0255** | **−0.0188** |
+| 相对 | | | −6.4% | −7.2% | −6.6% | −7.8% |
+
+- **与检测版的筛选结论同量级**：flash-yolo 100 轮检测是 −2.45 box mAP（−7%，参数 −23% /
+  GFLOPs −31%）；分割 20 轮是 −7.2% box / −7.8% mask（参数 −19% / GFLOPs −18%）。
+  两个任务上的架构代价一致，说明 PoolConv/DW stem 的取舍不随检测头或分割头改变。
+- **20 轮远未收敛**：两条曲线的最佳 fitness 都出现在最后一轮（测试集每轮 box +0.003~0.005、
+  mask +0.002~0.003 稳定上升），绝对数字只用于同预算相对比较。
+- **不要与官方 O365 初始化微调 20 轮（Box 0.3633 / Mask 0.3083）直接横比**：那一组起点是
+  `yolo26n-objv1-seg` 预训练权重；本表第二行才是同起点对照。
+- 训练成本：两组都约 **4.16 h / 20 轮**（每轮 11–13 min）；分割训练由 loader 与验证主导，
+  架构差异在吞吐上不可辨。
+
+**导出对齐（同权重）**：
+
+- `scripts/export.py` 双输出 ONNX 正常；**pt(CPU) vs onnx(CPU)** 原始输出相对差 ~1e-6；
+- **pt(CUDA) vs onnx(CPU)** 原始输出相对差 1e-3~4e-3，掩码出现边界像素翻转（最差实例
+  IoU 0.993，其余 ≤0.1% 像素）。原因是非同设备运行时（cuDNN vs oneDNN）的舍入差被 DW stem
+  的 BN 放大（`model.2.bn` running_var 最小 1.8e-3，eps=1e-3）；关掉 ONNX 常量折叠后差异不变，
+  所以不是导出结构问题。跨设备对齐应在同运行时比较，或走 TensorRT。
