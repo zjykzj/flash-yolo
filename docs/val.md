@@ -85,6 +85,9 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - 数据集支持 COCO json 与 YOLO-seg txt：YOLO 的 GT dict 由多边形即时生成
   （`segmentation` 为绝对像素多边形、`area` 为多边形面积）；YOLO 无 crowd 概念，
   Mask/Box GT 会少 crowd 实例（与检测侧同一条口径差异）；
+- **官方分割权重同管线对照**：`scripts/compare_official.py --weights yolo26n-seg.pt --data coco`
+  解包官方双输出（检测+系数、原型），同时输出 Box/Mask 两表；同子集与 `scripts/eval.py`
+  逐项一致（dev-time 工具，需要 ultralytics）。
 - **训练中验证**（`train/validator.py` + `FastMetrics`）：同一轮同时算 Box 与 Mask，Mask 在
   `imgsz/mask_ratio` 网格上做快速近似（低分辨率 `process_mask_lowres`，不落盘掩码），best 选取
   用官方 seg fitness = box mAP@[.5:.95] + mask mAP@[.5:.95]；正式数字仍以本节 pycocotools 为准。
