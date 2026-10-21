@@ -35,7 +35,8 @@ python scripts/train.py --data coco --model flash-yolo-seg --name flash-seg --ma
 | *（不传）* | 从零 / 自有数据微调 | — | 100 |
 | `yolo26-coco-ft` | 官方 COCO 阶段（微调） | **需 O365 预训练权重初始化** | 245/70/80/60/40 |
 | `yolo26-seg-coco-ft` | 官方 seg COCO 阶段（微调） | 需 `yolo26*-objv1-seg`（365 类）初始化 + COCO json / YOLO-seg 描述符；n/s/m/l/x 全部按官方 seg ckpt 的 `train_args` 核对 | 245/50/80/60/40 |
-| `yolo26-o365-pt` | 官方 Objects365 预训练 | 需 Objects365 数据集（未在本仓库验证） | 150 |
+| `yolo26-o365-pt` | 官方 Objects365 预训练（检测） | 需 Objects365 数据集（未在本仓库验证） | 150 |
+| `yolo26-seg-o365-pt` | 官方 Objects365 预训练（分割） | 需 Objects365v1 分割数据集（未在本仓库验证）；数值取自五个 `*-objv1-seg` ckpt 的 `train_args` | 150 |
 
 > `yolo26-seg-coco-ft` 的数值取自五个官方 seg ckpt 的 `train_args`：m/l/x 与官方检测表一致；
 > s 来自另一提交的早期基线（epochs 50 / lr0 0.00125），n 的 mixup/degrees/shear/bgr 与检测表不同——
