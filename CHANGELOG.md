@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-24
+
 ### Added
 
 - **YOLO26-seg**: segmentation is now end to end — official architecture/weights convert bit-for-bit, `train.py --model yolo26-seg` trains from COCO polygons (BCE mask loss, Box+Mask validation, `--mask-ratio`/`--overlap-mask`), and trained checkpoints run through infer, export, and pycocotools eval (official weights: box 39.67 / mask 33.67 mAP50-95).
