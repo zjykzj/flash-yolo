@@ -2,7 +2,7 @@
 
 > 定位：`flash-yolo` 的实例分割变体，模型名 `flash-yolo-seg`（`arch_task = segment`）。
 > backbone/neck 与检测版**逐行相同**，只把最后一行 `Detect` 换成 `Segment26`——
-> 与 `yolo26 -> yolo26-seg` 是同一种关系。结构事实见本文，训练/评估数字见 §7。
+> 与 `yolo26 -> yolo26-seg` 是同一种关系。结构事实见本文，训练/评估数字见 §7–§8。
 
 ## 1. 命名
 
@@ -122,3 +122,28 @@ python scripts/export.py --weights runs/train/train-flash-seg-20ep/weights/best.
   IoU 0.993，其余 ≤0.1% 像素）。原因是非同设备运行时（cuDNN vs oneDNN）的舍入差被 DW stem
   的 BN 放大（`model.2.bn` running_var 最小 1.8e-3，eps=1e-3）；关掉 ONNX 常量折叠后差异不变，
   所以不是导出结构问题。跨设备对齐应在同运行时比较，或走 TensorRT。
+
+## 8. 100 轮从零结果（2026-10-24）
+
+设置：**default 配方、从零、640、100 epoch、batch 16、nbs 64、fp32、mask_ratio 4、seed 0**；
+单卡 RTX 5090，**37 h 42 min**；产物 `runs/train/train-flash-seg-100ep2`。对照组
+`runs/train/train-seg-n-100ep2` 使用完全相同的配方、数据与预算（唯一变量 = 架构）。
+
+正式口径（`scripts/eval.py` + pycocotools，COCO val2017 5000 图）：
+
+| 模型 | 参数 | GFLOPs | Box mAP50 | Box mAP50-95 | Mask mAP50 | Mask mAP50-95 |
+|---|---|---|---|---|---|---|
+| flash-yolo-seg | 2,528,248 | 7.6 | 0.4796 | 0.3311 | 0.4534 | 0.2824 |
+| yolo26n-seg（从零对照） | 3,126,280 | 9.3 | 0.5103 | 0.3569 | 0.4861 | 0.3052 |
+| **Δ（flash − 对照）** | **−19.1%** | **−18.3%** | **−0.0307** | **−0.0258** | **−0.0327** | **−0.0228** |
+| 相对 | | | −6.0% | −7.2% | −6.7% | −7.5% |
+
+- **架构代价与检测版同量级**：flash-yolo 100 轮检测是 −2.45 box mAP50-95（−7%）；分割是
+  −2.58 box / −2.28 mask（−7.2% / −7.5%），参数 −19.1%、GFLOPs −18.3%。两个任务上的结论一致，
+  说明 PoolConv/DW stem 的取舍不随检测头或分割头改变。
+- **best 在末轮（ep100），曲线仍在上升**：100 轮是预算点，不是收敛上限；绝对数字用于同预算
+  相对比较。
+- **不要与官方 O365 初始化权重直接横比**：官方 yolo26n-seg 的 39.67 / 33.67（Box / Mask
+  mAP50-95）是预训练 + 微调口径，本表第二行才是同起点对照。
+- 训练成本：两组分别 **37 h 42 min / 37 h 21 min**（batch 16）；分割训练由 loader 与验证
+  主导，架构差异在吞吐上不可辨。

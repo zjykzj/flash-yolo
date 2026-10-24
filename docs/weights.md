@@ -1,9 +1,11 @@
 # 发布权重档案（Released checkpoints）
 
-> 4 份**从零自训** checkpoint 的精度 / 速度 / 部署产物记录（2026-10-15 复测）。
+> 权重与延迟的权威档案：4 份**从零自训**检测 checkpoint 的精度 / 速度 / 部署产物记录
+> （2026-10-15 复测），另附分割参考数字。
 > 权重本体随 GitHub [Releases](https://github.com/zjykzj/flash-yolo/releases) 分发（自训产物，
 > 官方来源的转换权重不随附——用 `scripts/download_weights.py` + `convert_weights.py` 自行获取）。
-> 训练过程与配方见 `yolov3-tiny-runs.md` / `yolo26-runs.md` / `flash-yolo-spec.md`。
+> 训练过程与配方见 `yolov3-tiny-runs.md` / `yolo26-runs.md` / `flash-yolo-spec.md` /
+> `flash-yolo-seg-spec.md`。README 只保留精度摘要，完整延迟与部署档案以本页为准。
 
 ## 1. 清单与精度（COCO val2017，pycocotools，`scripts/eval.py`）
 
@@ -20,7 +22,33 @@
 + COCO 微调）= **40.27 / 55.80**（E2E）· **40.89 / 56.87**（NMS）。v3 两行与官方 v3 的 mAP50-95
 差 0.42 / 0.87；mAP50 差 3.93 / 4.81。
 
-## 2. 速度（2026-10-15 复测；model-only 推理段，不含前后处理）
+## 2. 分割参考（COCO val2017，Box + Mask，640）
+
+口径同 `scripts/eval.py`（pycocotools，`iou_type="bbox"` / `"segm"`）。官方行是 O365 预训练 +
+COCO 微调；从零行与官方**不是同预算**。
+
+| 权重 / 来源 | 训练 | 参数 | GFLOPs | Box 50-95 | Box 50 | Mask 50-95 | Mask 50 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| YOLO26n-seg 官方权重 | O365 + COCO | 3,126,280 | 9.3 | 39.67 | 55.48 | 33.67 | 52.76 |
+| YOLO26n-seg 从零 | 100 ep | 3,126,280 | 9.3 | 35.69 | 51.03 | 30.52 | 48.61 |
+| Flash-YOLO-seg 从零 | 100 ep | 2,528,248 | 7.6 | 33.11 | 47.96 | 28.24 | 45.34 |
+
+- 官方训练期 validator 记录为 box 0.3975 / mask 0.3386，本管线 0.3967 / 0.3367，差 ~0.002
+  属指标实现噪声（同检测侧 40.1 vs 40.27）。
+- 分割三行中，官方权重需用 `scripts/download_weights.py` 自行获取；两个从零行是本地 run
+  产物，暂未随 Releases 分发。
+- 同预算 100 轮对照（同配方、batch 16、nbs 64、fp32，唯一变量 = 架构）：Flash-YOLO-seg
+  Box/Mask mAP50-95 = 33.11 / 28.24，YOLO26n-seg = 35.69 / 30.52（Δ −2.58 / −2.28，
+  相对 −7.2% / −7.5%）。
+- 同预算 20 轮对照（`flash-yolo-seg-spec.md` §7）：Flash-YOLO-seg Box 25.80 / Mask 22.07；
+  YOLO26n-seg Box 27.80 / Mask 23.95（mAP50-95）。该组只用于架构相对比较，不代表收敛精度。
+- Flash-YOLO-seg 100 轮训练 37 h 42 min，best 在末轮（ep100），曲线仍在上升；训练与评估记录见
+  `runs/` 与 `flash-yolo-seg-spec.md` §8。
+
+## 3. 延迟（model-only 推理段，不含前后处理；2026-10-15 复测）
+
+> README 首页不再重复本表，只链接到这里。`b1` = batch 1 单图延迟；`b8` = batch 8 的**每图**
+> 平均耗时（偏吞吐）。数字依赖机器与宿主负载，跨会话看趋势。
 
 条件：**ORT-CPU** = Intel Xeon 8470Q 25 核配额（intra_op 16 / inter_op 1；b1 固定图 · b8 动态图；
 每档 300 样本取 best-case `min`，host load ≈13）· **TensorRT** = RTX 5090 · TRT 11.4
@@ -40,11 +68,11 @@
 - **fp16 引擎数值一致性**（与 fp32 引擎逐检对照，按同类 IoU 贪心配对；traffic.jpg）：
   v3-silu 300 vs 300 检出、配对 299（1 个为 max_det 截断边缘），IoU min 0.972 / 均值 0.993、
   最大框差 0.79 px；yolo26n 21 vs 21 全部配对，IoU min 0.990、最大框差 0.23 px。
-  **不要按分数序逐位对照**——近分框在两精度间会互换（同 README 导出脚注的既有教训）。
-- ORT-CPU 绝对数受宿主邻居负载影响（README 表在 load ≈40 时 b8 读到 8.27 / 6.09）——同机同
+  **不要按分数序逐位对照**——近分框在两精度间会互换（同导出链路的既有教训）。
+- ORT-CPU 绝对数受宿主邻居负载影响（早期会话在 load ≈40 时 b8 读到 8.27 / 6.09）——同机同
   协议可比，跨会话看趋势。
 
-## 3. 部署产物（`runs/release-weights/`，与本页同批生成）
+## 4. 部署产物（`runs/release-weights/`，与本页同批生成）
 
 每份权重 9 个文件：
 
@@ -66,10 +94,16 @@
   python scripts/export.py --weights <release 权重>.safetensors --out <name>.onnx --trt [--fp16]
   ```
 
-## 4. 溯源（随权重 metadata）
+## 5. 溯源（随权重 metadata）
 
 - 两份 v3 权重：header 自带 `arch/scale/nc/imgsz/names` + provenance
   （`version 0.5.0` · `commit 0baa0bf` · `describe v0.5.0-20-g0baa0bf`）
 - `flash-yolo-e100-640`：自带 arch/scale/nc/imgsz（保存于 2026-10-11，无 provenance 字段）
 - `yolo26n-from-scratch-e100-640`：无 metadata（保存于 2026-10-08）——消费时需显式
   `--model yolo26 --scale n --imgsz 640`
+
+## 6. 相关文档
+
+- [与官方实现的对齐与验证](alignment.md) — 官方权重逐位对齐、训练内部 parity、测试套件
+- [工程结构与模块职责](architecture.md) — 目录结构、模块边界、扩展点
+- [评估口径](val.md) — pycocotools / FastMetrics / NMS 与评估坑
