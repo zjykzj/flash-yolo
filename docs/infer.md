@@ -13,19 +13,18 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/tra
 python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/
 
 # 换路径 / 换引擎 / 换解码路径
-python scripts/infer.py --weights runs/train/my-run/weights/best.safetensors --image img.jpg --nms
+python scripts/infer.py --weights yolo26n.safetensors --image img.jpg --nms
 python scripts/infer.py --weights weights/yolo26n.onnx --engine onnx --image img.jpg
 python scripts/infer.py --weights weights/yolo26n.engine --engine trt --image img.jpg
 
 # 非 COCO 数据训练的模型：用描述符带出 nc 与标签名
-python scripts/infer.py --weights runs/train/my-run/weights/best.safetensors \
-    --data mydataset --image img.jpg
+python scripts/infer.py --weights <自训权重>.safetensors --data mydataset --image img.jpg
 
 # 分割权重：自动识别 arch（yolo26-seg / flash-yolo-seg），可视化叠加实例掩码
 python scripts/infer.py --weights weights/yolo26n-seg.safetensors --image assets/traffic.jpg
 
 # 分割训练产物：metadata 自带 arch/nc/names/imgsz，直接推理（无需 --data）
-python scripts/infer.py --weights runs/train/seg/weights/best.safetensors --image assets/traffic.jpg
+python scripts/infer.py --weights yolo26n-seg-from-scratch-e100-640.safetensors --image assets/traffic.jpg
 ```
 
 | 参数 | 默认 | 说明 |

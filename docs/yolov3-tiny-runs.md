@@ -54,11 +54,11 @@ run 同：`scripts/eval.py --data coco --model yolov3-tiny`，imgsz 由 metadata
 ```bash
 # 100 轮（正式口径 12.70 / 24.84）
 python scripts/train.py --data coco --model yolov3-tiny --name v3-coco-e100 --batch 64 --workers 16 --imgsz 416
-python scripts/eval.py --weights runs/train/v3-coco-e100/weights/best.safetensors --data coco
+# 评估：--weights 指向该 run 的 weights/best.safetensors（中间 run 未随 release 分发；release 资产见 weights.md）
 
 # 300 轮（正式口径 14.23 / 27.50）
 python scripts/train.py --data coco --model yolov3-tiny --name v3-coco-e300 --batch 64 --workers 16 --imgsz 416 --epochs 300
-python scripts/eval.py --weights runs/train/v3-coco-e300/weights/best.safetensors --data coco
+# 评估：同上，weights 指向 v3-coco-e300 的 weights/best.safetensors
 
 # 推荐配置（§4.5；也即 §3.1 组合轮探针的命令，把 --epochs 提到 300 即可）
 python scripts/train.py --data coco --model yolov3-tiny-silu --obj-iou-target \

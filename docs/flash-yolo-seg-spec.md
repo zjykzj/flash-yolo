@@ -66,16 +66,16 @@
 python model/summary.py --model flash-yolo-seg
 # -> 311 layers, 2,528,248 parameters, 7.6 GFLOPs
 
-# 训练（default 配方；COCO 分割标签见 docs/dataset.md）
+# 训练（default 配方；COCO 分割标签见 docs/dataset.md；20 轮筛选数字见 §7，产物未归档）
 python scripts/train.py --model flash-yolo-seg --data coco --epochs 20 --batch 32 --workers 8 \
     --mask-ratio 4 --name flash-seg-20ep
 
-# 正式评估（Box + Mask，权重 metadata 自动解析 arch/scale）
-python scripts/eval.py --weights runs/train/train-flash-seg-20ep/weights/best.safetensors --data coco
+# 正式评估（Box + Mask，权重 metadata 自动解析 arch/scale；100 轮正式数字见 §8）
+python scripts/eval.py --weights flash-yolo-seg-e100-640.safetensors --data coco
 
 # 推理 / 导出
-python scripts/infer.py --weights runs/train/train-flash-seg-20ep/weights/best.safetensors --image assets/traffic.jpg
-python scripts/export.py --weights runs/train/train-flash-seg-20ep/weights/best.safetensors
+python scripts/infer.py --weights flash-yolo-seg-e100-640.safetensors --image assets/traffic.jpg
+python scripts/export.py --weights flash-yolo-seg-e100-640.safetensors
 ```
 
 ## 6. 验收

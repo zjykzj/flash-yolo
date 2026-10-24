@@ -145,8 +145,8 @@ b1 **13.2 vs 14.8 ms**、b8 **6.09 vs 8.27 ms/img**（flash-yolo vs yolo26n）�
 ```bash
 # 全长训练与正式评估（100 轮，同 yolo26n 控制配方/预算）
 python scripts/train.py --data coco --model flash-yolo --name flash-coco-e100 --batch 64 --workers 16
-python scripts/eval.py --weights runs/train/flash-coco-e100/weights/best.safetensors --data coco
-python scripts/eval.py --weights runs/train/flash-coco-e100/weights/best.safetensors --data coco --nms
+python scripts/eval.py --weights flash-yolo-e100-640.safetensors --data coco
+python scripts/eval.py --weights flash-yolo-e100-640.safetensors --data coco --nms
 ```
 
 筛选 run 的命令见第 3 节；`flash-yolo.yaml` 是定稿结构（S2）。筛选变体属本地实验档案，

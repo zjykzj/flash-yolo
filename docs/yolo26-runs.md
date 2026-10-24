@@ -52,8 +52,8 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data coco --nms  
 ```bash
 # 从零 100 轮（基线配方；约 14 h / RTX 5090）
 python scripts/train.py --data coco --name yolo26n-from-scratch --batch 64 --workers 16
-python scripts/eval.py --weights runs/train/yolo26n-from-scratch/weights/best.safetensors --data coco
-python scripts/eval.py --weights runs/train/yolo26n-from-scratch/weights/best.safetensors --data coco --nms
+python scripts/eval.py --weights yolo26n-from-scratch-e100-640.safetensors --data coco
+python scripts/eval.py --weights yolo26n-from-scratch-e100-640.safetensors --data coco --nms
 ```
 
 **收敛观察**：100 轮最后 10 轮 FastMetrics 仍 **+0.0038 mAP / +0.0046 mAP50**——放缓但没平，
