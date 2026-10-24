@@ -41,7 +41,8 @@ python scripts/train.py --data coco --model flash-yolo-seg --name flash-seg --ma
 > `yolo26-seg-coco-ft` 的数值取自五个官方 seg ckpt 的 `train_args`：m/l/x 与官方检测表一致；
 > s 来自另一提交的早期基线（epochs 50 / lr0 0.00125），n 的 mixup/degrees/shear/bgr 与检测表不同——
 > 均按 seg ckpt 保留。配方显式写入 `mask_ratio: 1`、`overlap_mask: true`、`copy_paste_mode: flip`，
-> semseg 辅助损失始终启用；未实现的 ckpt 参数（cls_w/o2m/erasing 等）见配方头部。从零训练仍用 default。
+> semseg 辅助损失始终启用；其余实验分支参数见配方头部（cls_w/o2m 已写入配方，erasing/auto_augment
+> 为分类任务专用、检测/分割管线不消费）。从零训练仍用 default。
 
 ```bash
 python scripts/train.py --data coco --recipe yolo26-coco-ft --weights yolo26n-objv1-150.safetensors

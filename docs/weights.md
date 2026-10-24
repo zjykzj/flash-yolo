@@ -35,8 +35,9 @@ COCO 微调；从零行与官方**不是同预算**。
 
 - 官方训练期 validator 记录为 box 0.3975 / mask 0.3386，本管线 0.3967 / 0.3367，差 ~0.002
   属指标实现噪声（同检测侧 40.1 vs 40.27）。
-- 分割三行中，官方权重需用 `scripts/download_weights.py` 自行获取；两个从零行是本地 run
-  产物，暂未随 Releases 分发。
+- 分割三行中，官方权重需用 `scripts/download_weights.py` 自行获取；两个从零行是本地训练
+  产物，已按 release 命名归档（`runs/new/`：`yolo26n-seg-from-scratch-e100-640` /
+  `flash-yolo-seg-e100-640`），暂未随 Releases 分发。
 - 同预算 100 轮对照（同配方、batch 16、nbs 64、fp32，唯一变量 = 架构）：Flash-YOLO-seg
   Box/Mask mAP50-95 = 33.11 / 28.24，YOLO26n-seg = 35.69 / 30.52（Δ −2.58 / −2.28，
   相对 −7.2% / −7.5%）。

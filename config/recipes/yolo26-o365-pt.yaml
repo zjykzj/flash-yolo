@@ -13,9 +13,9 @@
 #    MuSGD 混合系数。因此未列出的字段（translate/fliplr/hsv_*/degrees/shear/bgr…）
 #    全部沿用本仓库基础值（= ultralytics default.yaml）。
 #
-# 官方记录但本仓库未实现的项（实验分支参数，仅供留档）：
-#   o2m:   n/s/m 0.1，l/x 1.0   —— ProgLoss o2m 初值
-#   cls_w: 全档 1.0             —— o2o 分类损失额外权重
+# 官方实验分支参数（本仓库已支持对应字段；本配方未写入、沿用默认值，仅留档记录）：
+#   o2m:   n/s/m 0.1，l/x 1.0   —— ProgLoss 初值（本仓库字段 prog_alpha_init，默认 0.8）
+#   cls_w: 全档 1.0             —— o2o 分类损失额外权重（--cls-w，默认 1.0）
 #
 # 用法：python scripts/train.py --recipe yolo26-o365-pt --data /path/to/objects365
 
