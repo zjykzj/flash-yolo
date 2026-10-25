@@ -1,7 +1,8 @@
 # 推理（Infer）
 
-> 入口：`python scripts/infer.py --weights <w> --image <文件|目录>`。
-> 三种运行时（pt / onnx / trt）同一套前后处理，输出可视化图 + YOLO txt 标签。
+> 入口：`python scripts/infer.py --weights <w> --image <文件|目录>`，或 `--video <文件|URL|相机索引>`。
+> 三种运行时（pt / onnx / trt）同一套前后处理；图片模式输出可视化图 + YOLO txt 标签，
+> 视频模式输出带标注的视频文件。
 
 ## 1. 用法
 
@@ -25,18 +26,29 @@ python scripts/infer.py --weights weights/yolo26n-seg.safetensors --image assets
 
 # 分割训练产物：metadata 自带 arch/nc/names/imgsz，直接推理（无需 --data）
 python scripts/infer.py --weights yolo26n-seg-from-scratch-e100-640.safetensors --image assets/traffic.jpg
+
+# 视频文件（输出 <run_dir>/<源名>.mp4，默认 runs/predict/predictN/）
+python scripts/infer.py --weights weights/yolo26n.safetensors --video traffic.mp4
+# 相机 / RTSP 流：用 --max-frames 限流（0 = 直到流结束；Ctrl-C 干净退出）
+python scripts/infer.py --weights weights/yolo26n.safetensors --video 0 --max-frames 300
+python scripts/infer.py --weights weights/yolo26n.safetensors --video rtsp://host/stream --max-frames 600
+# 窗口预览（需要 GUI；按 q 退出）+ 指定输出文件
+python scripts/infer.py --weights weights/yolo26n.safetensors --video traffic.mp4 --show --output out.avi
 ```
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `--weights` | — | `.safetensors` / `.onnx` / `.engine` |
-| `--image` | — | 图片文件或目录 |
+| `--image` | — | 图片文件或目录（与 `--video` 二选一） |
+| `--video` | — | 视频文件 / RTSP 等流 URL / 相机索引（`0`） |
+| `--max-frames` | 0 | 视频模式最多处理 N 帧（0 = 直到 EOF；流式源建议显式给） |
+| `--show` | off | 视频模式实时预览（需要 GUI；按 `q` 退出） |
 | `--engine` | `pt` | `pt` / `onnx` / `trt`（trt 需已构建的 `.engine`） |
 | `--conf` | **0.25** | 置信度阈值（注意：**eval 的默认是 0.001**，两者用途不同） |
 | `--nms` | off | o2m + NMS 路径（yolo26 专属；v3 会报错） |
 | `--agnostic-nms` | off | 跨类 NMS（需同时给 `--nms`；E2E 路径会报错） |
 | `--model` / `--scale` | 从文件名推断 | 架构/档位（推不出时报错要求显式给） |
-| `--output` | `runs/predict/predictN/` | 单图：输出文件路径；目录模式：输出目录 |
+| `--output` | `runs/predict/predictN/` | 单图：输出文件路径；目录模式：输出目录；视频模式：输出视频文件（缺后缀补 `.mp4`） |
 | `--data` | COCO 标签 | 只用 `names` + `nc`（不读图片） |
 | `--imgsz` | 权重 metadata > 640 | 覆盖输入尺寸 |
 | `--device` | auto | pt 引擎设备 |
@@ -76,3 +88,8 @@ Labels        -> runs/predict/predict21/labels
 - v3 只有一条"解码 + obj×cls + NMS"路径，`--nms` / `--raw` 对它直接报错。
 - 目录模式**只扫一层**（不递归，按文件名排序）；读不了的图会告警跳过，不中断批量。
 - 类别名优先级：`--data`/权重 metadata 的 names > COCO 默认；名字对不上时可视化标的是序号。
+- **视频模式不写 `labels/`**（逐帧 txt 没有稳定的文件命名语义）；要标注数据请抽帧成图片再走
+  图片模式。输出编码按后缀选：`.avi`/`.mjpg` 用 MJPG，其余（默认 `.mp4`）用 mp4v；写不了时
+  会报错并提示换 `.avi`。
+- 相机/流的输出尺寸在**首帧**确定（打开时 `CAP_PROP` 可能还是 0）；`--show` 在无显示的服务器上
+  会告警并自动关闭预览，不影响视频写入。

@@ -24,8 +24,13 @@ def capture_rng():
     return out
 
 
-def save_resume(path, model, ema, optimizer, scaler, epoch, best_fitness, cfg, run_dir):
-    """完整训练状态 -> resume.pt（内部文件）"""
+def save_resume(path, model, ema, optimizer, scaler, epoch, best_fitness, cfg, run_dir,
+                world_size=1, device=None):
+    """完整训练状态 -> resume.pt（内部文件）
+
+    world_size / device 只做恢复时的提示（旧 ckpt 缺这两个键 = 未知，不报错）：换卡数或换设备
+    续训是支持的，但数据分片/增强流会重新派生，轨迹不再与原来的 run 逐位一致。
+    """
     ckpt = {
         "model_sd": model.state_dict(),
         "ema_sd": ema.ema.state_dict() if ema is not None else None,
@@ -36,14 +41,22 @@ def save_resume(path, model, ema, optimizer, scaler, epoch, best_fitness, cfg, r
         "best_fitness": best_fitness,
         "cfg": asdict(cfg),  # 纯 dict：dataclass 实例会把模块路径写进 pickle（改名后旧 resume.pt 无法反序列化）
         "run_dir": str(run_dir),
+        "world_size": world_size,
+        "device": str(device) if device is not None else None,
         "rng": capture_rng(),
     }
     torch.save(ckpt, path)
 
 
-def load_resume(path, model, ema, optimizer, scaler=None):
-    """恢复完整状态（strict 回载验证 key 完整性），返回 (epoch, best_fitness, cfg, run_dir)"""
-    ckpt = torch.load(path, weights_only=False)
+def load_resume(path, model, ema, optimizer, scaler=None, meta=None):
+    """恢复完整状态（strict 回载验证 key 完整性），返回 (epoch, best_fitness, cfg, run_dir)
+
+    `map_location="cpu"`：先落到 CPU 再交给各模块 copy 到目标设备——CUDA/CPU 双向续训、
+    换 GPU 序号、换卡数都走同一条路径（44MB 快照不会在每张卡上重复驻留）。model/ema/optimizer
+    的 load_state_dict 会做跨设备复制，数值逐位不变（回归：test_train_repro 的 resume 等价）。
+    meta（可选 dict）：回填 epoch/world_size/device，供 Trainer 判断"换了卡数/设备"并告警。
+    """
+    ckpt = torch.load(path, weights_only=False, map_location="cpu")
     model.load_state_dict(ckpt["model_sd"], strict=True)
     if ema is not None and ckpt.get("ema_sd") is not None:
         ema.ema.load_state_dict(ckpt["ema_sd"], strict=True)
@@ -60,6 +73,9 @@ def load_resume(path, model, ema, optimizer, scaler=None):
         np.random.set_state(rng["numpy"])
     if "random" in rng:
         random.setstate(rng["random"])
+    if meta is not None:
+        meta.update({"epoch": ckpt["epoch"], "world_size": ckpt.get("world_size"),
+                     "device": ckpt.get("device")})
     return ckpt["epoch"], ckpt["best_fitness"], ckpt["cfg"], ckpt.get("run_dir")
 
 

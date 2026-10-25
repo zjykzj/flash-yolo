@@ -132,6 +132,10 @@ python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.
     --image assets/traffic.jpg
 # --engine onnx|trt switches runtime; --image accepts a file or a directory.
 # Annotated images + YOLO-txt labels are written under runs/predict/.
+
+# Video / camera / RTSP stream -> annotated video under runs/predict/
+python scripts/infer.py --weights <weights> --video traffic.mp4
+python scripts/infer.py --weights <weights> --video 0 --max-frames 300   # camera index / live stream
 ```
 
 Full engine and output notes: [docs/infer.md](docs/infer.md).

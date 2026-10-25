@@ -5,6 +5,7 @@ world=1 路径等价）。2 进程由 subprocess 启动 tests/ddp_worker.py（�
 CUDA_VISIBLE_DEVICES=""），避免 mp.spawn 在 pytest 下的 pickle/import-path 问题。
 """
 
+import csv
 import json
 import os
 import subprocess
@@ -78,19 +79,20 @@ def test_ddp_scale_loss():
 
 # ---- 2 进程 CPU gloo 冒烟（FLASH_YOLO_DDP=1）----
 
-def _launch(tmp_path, data, model, run_dir, tag, epochs=1, stop_after=0, resume=None):
-    """起 2 个 worker（env:// rendezvous），返回 (rank0 参数哈希, rank1 参数哈希)
+def _launch(tmp_path, data, model, run_dir, tag, epochs=1, stop_after=0, resume=None, nprocs=2):
+    """起 nprocs 个 worker（env:// rendezvous），返回每 rank 的参数哈希
 
     子进程日志落文件（不进 PIPE：单管道写满会让 rank 在集体操作前阻塞）。
+    nprocs=1 用于"单进程 checkpoint -> 多进程续训"的跨卡数用例（WORLD_SIZE=1 = 普通单卡路径）。
     """
     port = free_port()
     procs, outs, logs = [], [], []
-    for rank in (0, 1):
+    for rank in range(nprocs):
         env = os.environ.copy()
         env.update({
             "CUDA_VISIBLE_DEVICES": "",
             "MASTER_ADDR": "127.0.0.1", "MASTER_PORT": str(port),
-            "WORLD_SIZE": "2", "RANK": str(rank), "LOCAL_RANK": str(rank),
+            "WORLD_SIZE": str(nprocs), "RANK": str(rank), "LOCAL_RANK": str(rank),
             "OMP_NUM_THREADS": "1", "PYTHONUNBUFFERED": "1",
         })
         out = tmp_path / f"{tag}-rank{rank}.sha"
@@ -168,6 +170,44 @@ def test_ddp_resume_matches_uninterrupted(tmp_path):
                       resume=part_dir / "resume.pt")
     assert full == resumed, "DDP resume diverged from an uninterrupted run"
     assert full[0] == full[1]
+
+
+@pytest.mark.skipif(not DDP_ENABLED, reason="FLASH_YOLO_DDP=1 才执行跨卡数 resume")
+def test_resume_from_single_rank_checkpoint(tmp_path):
+    """1 进程 checkpoint -> 2 进程续训：继续到第 2 轮、两 rank 参数一致、meta 记录新 world_size"""
+    data = _make_mini_coco(tmp_path, n_img=8, size=160)
+    run_dir = tmp_path / "run-xws"
+    _launch(tmp_path, data, "yolo26", run_dir, "xws-part", epochs=2, stop_after=1, nprocs=1)
+    hashes = _launch(tmp_path, data, "yolo26", run_dir, "xws-resume", epochs=2,
+                     resume=run_dir / "resume.pt", nprocs=2)
+    assert hashes[0] == hashes[1], "ranks diverged after resuming from a single-rank checkpoint"
+    with open(run_dir / "results.csv", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert [int(r["epoch"]) for r in rows] == [1, 2], rows
+    meta = json.loads((run_dir / "meta.json").read_text())
+    assert meta["train"]["world_size"] == 2, meta["train"]
+
+
+@pytest.mark.skipif(not (DDP_ENABLED and torch.cuda.is_available()),
+                    reason="FLASH_YOLO_DDP=1 + CUDA 才执行跨设备 resume")
+def test_resume_across_device(tmp_path):
+    """CUDA checkpoint -> CPU 续训与反向：map_location=cpu 恢复后可继续（两个方向各 2 轮）"""
+    from config.train_config import TrainConfig
+    from train.trainer import Trainer
+
+    data = _make_mini_coco(tmp_path, n_img=8, size=160)
+    kwargs = dict(data=str(data), epochs=2, stop_after=1, batch=4, nbs=4, imgsz=160, workers=0,
+                  val_epochs=0, amp=False, mosaic=0.0, mixup=0.0, copy_paste=0.0,
+                  close_mosaic=0, warmup_epochs=0.0, aug_samples=0, plots=False,
+                  save_period=0, diag_interval=0)
+    for tag, first, second in (("gpu2cpu", "cuda", "cpu"), ("cpu2gpu", "cpu", "cuda")):
+        run = tmp_path / tag
+        torch.manual_seed(0)
+        Trainer(TrainConfig(**kwargs), device=first, run_dir=run).train()
+        Trainer(TrainConfig(**kwargs), device=second, run_dir=run, resume=str(run / "resume.pt")).train()
+        with open(run / "results.csv", newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        assert [int(r["epoch"]) for r in rows] == [1, 2], (tag, rows)
 
 
 @pytest.mark.skipif(not DDP_ENABLED, reason="FLASH_YOLO_DDP=1 才执行 world=1 路径等价")

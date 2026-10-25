@@ -63,8 +63,9 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 > `load_weights_finetune` 的 key+shape 交集加载——backbone/neck/proto/cv2 逐位加载，
 > cv3/one2one_cv3/semseg 等类别相关头按 80 类重建（n 档实测 740/844 张量加载、104 个重初始化）。
 > 实测（RTX 4080 32GB，mask_ratio=1，640，batch 1，AMP）训练约 **5.2 img/s**、峰值 **1.41G**；
-> 全量 COCO 245 轮约 **65 天/单卡**。DDP 已实现（§7），可直接多卡扩；吞吐上限通常在数据管线
-> 而不是 GPU（本机 2×5090 检测实测约 1.2× 单卡——loader 先饱和；batch/模型越大比例越高）。
+> 全量 COCO 245 轮约 **65 天/单卡**（4080 口径）。DDP 已实现（§7），可直接多卡扩；但 2×5090
+> 实测 mask_ratio=1 单卡 9.20 / 2 卡 10.52 img/s（1.14×，≈32 天/245 轮），吞吐上限在数据管线
+> 而不是 GPU——完整复现前应先做数据管线优化（见 §7.5）。
 >
 > **单卡闭环验收（coco-tiny：train 2000 / val 1000）**：官方 n 档配方 + O365 初始化，
 > 1 epoch / batch 4 / AMP / 640 —— 训练 7m20s、峰值 5.31G；pycocotools Box mAP50-95
@@ -172,7 +173,8 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
    按 `set_epoch(epoch)` 决定（各 rank 是同一 permuted 索引表的跨步切片，无重叠）。
    **新增随机性时不要裸调全局 `np.random`/`random`**——会同时打破第 4 条。
 4. **resume 逐位等价**：`resume.pt` 存了 torch/cuda/numpy/random 四套 RNG 状态 + `ema.steps`，且抽样流
-   按 epoch 重建——实测"1 轮后续训"与"一次跑完"逐位相同。
+   按 epoch 重建——实测"1 轮后续训"与"一次跑完"逐位相同。**前提 = 同卡数同设备**；换卡数/换设备
+   续训是支持的，但数据分片/增强流重新派生，轨迹不再逐位一致（见 §7.4）。
 
 **配合权重 metadata 用**：交付物里带 `commit` / `describe`，正是为了让人拿到文件就能定位"哪版代码 +
 什么设置"。完整复现命令 = 描述符 + `--seed` + `--workers`/`--batch` + 权重 metadata 里的 commit。
@@ -245,6 +247,11 @@ batch，aug 关闭）：2 卡/1 卡裁剪前 gnorm 中位数比 = **1.03**；把
   从零训练仍默认 fp32（AMP 的 NaN 机制与单卡相同，DDP 不解决）。
 - **resume**：`resume.pt` 由 rank0 写，各 rank 读同一文件（模型/EMA/优化器/RNG 状态一致），
   DDP 包装在恢复之后，可直接 `--resume` + `--device 0,1` 续训。
+- **换卡数 / 换设备续训**：支持。`resume.pt` 记录 `world_size` / `device`，恢复时先
+  `map_location="cpu"` 再复制到目标设备（CUDA↔CPU、换 GPU 序号、1↔多卡同一条路径）；
+  换了卡数/设备会打印 warning 并说明**轨迹不再与原 run 逐位一致**（数据分片与增强流按
+  `(seed, epoch, rank, world_size)` 重新派生）；同卡数同设备续训仍逐位等价（§5 第 4 条）。
+  换 `batch`/`nbs`/`imgsz`/`amp` 也会告警（梯度/步长语义变化，调度按当前配置走）。
 
 ### 7.5 吞吐
 
@@ -258,6 +265,14 @@ DDP 只并行训练步；**数据管线是常见瓶颈**（本机 2×5090 / yolo
 best_raw/epoch020 · results.csv · diag · samples · plots · run.rank1.log）；best 权重经
 `scripts/eval.py` 为 **E2E mAP50-95 0.2808 / mAP50 0.4073**（20 轮从零，只作 DDP 规模与吞吐
 验收，不是精度结论；训练中 FastMetrics 报 0.2781，与正式口径同量级）。
+
+**分割（yolo26-seg）的 DDP 吞吐**：瓶颈比检测更靠前（2×5090 / workers 8 / 无 val）——
+- `mask_ratio=4` · 全局 batch 16 · 20k 图：**1 卡 74.5 img/s → 2 卡 84.0 img/s（1.13×）**，
+  GPU 利用率仅 26-38%。
+- `mask_ratio=1`（官方配方）· 全局 batch 2 · 2k 图：**1 卡 9.20 img/s → 2 卡 10.52 img/s（1.14×）**；
+  外推全量 COCO 245 轮 ≈ **32 天**（单卡 ≈36 天，训练不含每轮 val）。
+数据侧（解码 + mosaic + 多边形栅格化）与主进程的掩码损失/后处理先饱和，加卡不能线性放大；
+这解释了为什么分割长跑仍应优先优化数据管线（uint8 传输 / 缓存），而不是继续堆卡。
 
 ## 8. 常见坑
 

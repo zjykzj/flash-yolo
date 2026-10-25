@@ -100,6 +100,13 @@ python scripts/train.py --data coco --device 0,1 --batch 64 --workers 8
 eval / export / infer 仍是单进程，CLI 不变。多卡结果与单卡**不逐位一致**（无 SyncBatchNorm，
 BN 批次统计按卡独立；同卡数重复运行可逐位复现），细节见 `train.md` §7。
 
+### resume 能从单卡切到多卡、或换设备（CPU↔GPU）吗？
+
+可以。`resume.pt` 记录 `world_size` / `device`，恢复时先落到 CPU 再复制到目标设备；`--resume`
+配 `--device 0,1`（或多卡 checkpoint 配单卡）都能继续训练，日志会提示"换了卡数/设备、轨迹不再
+与原 run 逐位一致"——同卡数同设备续训才逐位等价。换 `--batch`/`--nbs`/`--imgsz`/`--amp` 同样
+可续训但会告警（梯度/步长语义变化）。细节见 `train.md` §7.4。
+
 ### 换自己的数据集要改什么？
 
 写一个描述符 yaml（`dataset.md` §1）+ `--data <描述符>`：nc/names 随描述符走（模型头按 nc

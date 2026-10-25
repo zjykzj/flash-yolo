@@ -1,10 +1,12 @@
-"""单图 / 目录推理 + 可视化（pt / onnx / trt；YOLO26 / YOLO26-seg / YOLOv3-tiny）
+"""单图 / 目录 / 视频流推理 + 可视化（pt / onnx / trt；YOLO26 / YOLO26-seg / YOLOv3-tiny）
 
 用法:
     python scripts/infer.py --weights weights/yolo26n.safetensors --image assets/traffic.jpg
     python scripts/infer.py --weights yolo26n.onnx --engine onnx --image assets/     # 目录批量
     python scripts/infer.py --weights weights/yolo26n.safetensors --image traffic.jpg --nms  # o2m+NMS 路径
     python scripts/infer.py --weights weights/yolov3-tiny.safetensors --image traffic.jpg  # v3（档位由架构固定）
+    python scripts/infer.py --weights weights/yolo26n.safetensors --video traffic.mp4   # 视频文件
+    python scripts/infer.py --weights weights/yolo26n.safetensors --video 0 --max-frames 300  # 摄像头/流
 """
 
 import argparse
@@ -35,6 +37,7 @@ setup_logging(to_file=False)
 logger = get_logger(__name__)
 
 _IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+_VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".mjpg"}
 
 
 def _collect_images(source):
@@ -43,6 +46,106 @@ def _collect_images(source):
     if p.is_dir():
         return sorted(f for f in p.iterdir() if f.suffix.lower() in _IMG_EXTS)
     return [p]
+
+
+def _video_stem(source):
+    """视频源 -> 默认输出名：相机索引 -> cameraN，URL/流 -> stream，文件 -> stem"""
+    text = str(source)
+    if text.isdigit():
+        return f"camera{text}"
+    if "://" in text:
+        return "stream"
+    return Path(text).stem or "video"
+
+
+def _open_video(source):
+    """打开视频文件 / 流 URL / 相机索引 -> (cap, info)；打不开直接报错（在建 run 目录/引擎之前）"""
+    text = str(source)
+    cap = cv2.VideoCapture(int(text) if text.isdigit() else text)
+    if not cap.isOpened():
+        raise FileNotFoundError(f"cannot open video source: {source!r} "
+                                f"(expected a video file, a stream URL, or a camera index)")
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+    if not np.isfinite(fps) or fps <= 0:
+        fps = 30.0  # 部分相机/流不上报帧率
+    info = {"width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            "fps": fps,
+            "frames": int(cap.get(cv2.CAP_PROP_FRAME_COUNT))}
+    return cap, info
+
+
+def _video_writer(path, fps, size):
+    """按后缀选编码：.avi/.mjpg -> MJPG，其余 -> mp4v；打不开时报错并提示换 .avi"""
+    codec = "MJPG" if path.suffix.lower() in {".avi", ".mjpg"} else "mp4v"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*codec), float(fps), size)
+    if not writer.isOpened():
+        raise RuntimeError(f"cannot open video writer: {path} (codec {codec}); try an .avi output")
+    return writer
+
+
+def _run_video(engine, names, cap, info, args, imgsz, out_path):
+    """逐帧推理 + 画框 + 写视频；返回处理帧数（None = 没读到帧）
+
+    - 输出尺寸在首帧确定（相机/流打开时 CAP_PROP 可能还是 0）
+    - 流式源用 --max-frames 限流；Ctrl-C 干净退出（释放 capture/writer）
+    - 不写逐帧 txt 标签：视频没有稳定的文件命名语义（图片模式才写 labels/）
+    """
+    stage_sums = {"preprocess": 0.0, "inference": 0.0, "postprocess": 0.0}
+    writer = None
+    n_done = 0
+    t_start = time.perf_counter()
+    show = args.show
+    try:
+        while True:
+            if args.max_frames and n_done >= args.max_frames:
+                break
+            ok, frame = cap.read()
+            if not ok:
+                break
+            n_done += 1
+            dets, tseg = engine.predict_timed(frame, conf_thres=args.conf)
+            for k in stage_sums:
+                stage_sums[k] += tseg[k]
+            annotated = draw_detections(frame, dets, names)
+            if writer is None:
+                h, w = annotated.shape[:2]
+                writer = _video_writer(out_path, info["fps"], (w, h))
+                logger.info(f"output: {out_path} · {w}x{h} @ {info['fps']:.1f} fps")
+            writer.write(annotated)
+            if show:
+                try:
+                    cv2.imshow("flash-yolo", annotated)
+                    if (cv2.waitKey(1) & 0xFF) == ord("q"):
+                        logger.info("preview quit (q)")
+                        break
+                except cv2.error:
+                    logger.warning("--show requires a display; continuing without preview")
+                    show = False
+            if n_done % 30 == 0:
+                fps_now = n_done / max(time.perf_counter() - t_start, 1e-6)
+                logger.info(f"frame {n_done} · {fps_now:.1f} fps processing · "
+                            f"{len(dets.boxes)} detection{'s' if len(dets.boxes) != 1 else ''} · "
+                            f"{sum(tseg.values()):.1f}ms")
+    except KeyboardInterrupt:
+        logger.info("interrupted by user")
+    finally:
+        cap.release()
+        if writer is not None:
+            writer.release()
+        if show:
+            cv2.destroyAllWindows()
+    if n_done == 0:
+        logger.warning("no frames processed")
+        return None
+    elapsed = time.perf_counter() - t_start
+    avg = {k: v / n_done for k, v in stage_sums.items()}
+    logger.info(f"Speed: {avg['preprocess']:.1f}ms preprocess, {avg['inference']:.1f}ms inference, "
+                f"{avg['postprocess']:.1f}ms postprocess per frame at shape (1, 3, {imgsz}, {imgsz})")
+    logger.info(f"Total: {elapsed * 1e3:.1f}ms end-to-end for {n_done} frame(s) "
+                f"({n_done / max(elapsed, 1e-6):.1f} fps processing)")
+    logger.info(f"Video -> {out_path}")
+    return n_done
 
 
 def _label_lines(dets, task, w_img, h_img):
@@ -78,9 +181,15 @@ def _summary(image_path, image, dets, pipeline_ms, idx, total, names):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="single-image / directory inference (YOLO26 / YOLOv3-tiny)")
+    parser = argparse.ArgumentParser(description="image / directory / video inference (YOLO26 / YOLOv3-tiny)")
     parser.add_argument("--weights", required=True, help=".safetensors or .onnx weights path")
-    parser.add_argument("--image", required=True, help="input image path or directory")
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument("--image", help="input image path or directory")
+    src.add_argument("--video", help="input video file, stream URL (rtsp://...), or camera index (0)")
+    parser.add_argument("--max-frames", dest="max_frames", type=int, default=0,
+                        help="video only: stop after N frames (0 = until EOF; use it for live streams)")
+    parser.add_argument("--show", action="store_true",
+                        help="video only: display frames in a window (needs a GUI; q quits)")
     parser.add_argument("--engine", choices=["pt", "onnx", "trt"], default="pt")
     parser.add_argument("--conf", type=float, default=0.25, help="confidence threshold")
     parser.add_argument("--nms", action="store_true", help="use o2m+NMS path (yolo26 only)")
@@ -90,7 +199,8 @@ def main():
                         help="architecture (default: inferred from the weights filename)")
     parser.add_argument(
         "--output", default=None,
-        help="output path: single image file, or directory for directory mode (default runs/predict/predictN/)",
+        help="output path: single image file / directory for images, video file for --video "
+             "(default runs/predict/predictN/)",
     )
     parser.add_argument("--device", default=None, help="pt engine device (default auto)")
     parser.add_argument("--scale", default=None,
@@ -101,6 +211,12 @@ def main():
     parser.add_argument("--imgsz", type=int, default=None,
                         help="model input size (default: weights metadata, else 640)")
     args = parser.parse_args()
+    video_mode = args.video is not None
+    source = args.video if video_mode else args.image
+    if args.max_frames and not video_mode:
+        parser.error("--max-frames is only supported with --video")
+    if args.show and not video_mode:
+        parser.error("--show is only supported with --video")
 
     meta = load_meta(args.weights)  # 可选：训练保存的权重自带 {arch, scale, nc, imgsz, names, anchors}
     names, nc = load_names(), None  # 推理无数据集上下文：默认按 COCO 类名/80 类构建
@@ -117,10 +233,14 @@ def main():
         nc = meta["nc"]
 
     # 输入清单与 run 目录先确定：日志挂到 run 目录上（engine 构建失败的报错也才进得了 run.log）
-    images = _collect_images(args.image)
-    if not images:
-        raise FileNotFoundError(f"no images found: {args.image}")
-    multi = len(images) > 1 or Path(args.image).is_dir()
+    cap, video_info, images, multi = None, None, None, False
+    if video_mode:
+        cap, video_info = _open_video(source)  # 打不开在引擎构建之前拦下
+    else:
+        images = _collect_images(source)
+        if not images:
+            raise FileNotFoundError(f"no images found: {source}")
+        multi = len(images) > 1 or Path(source).is_dir()
 
     # 架构/档位从权重文件名推（yolo26s -> yolo26/s；yolov3-tiny -> v3）——提前解析，参数预览要用
     arch, scale = resolve_arch_scale(args.weights, args.model, args.scale)
@@ -136,15 +256,31 @@ def main():
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 内部同一规则，构建后以 engine.imgsz 为准）
     imgsz = resolve_imgsz(args.weights, args.imgsz)
 
-    # 结果保存：默认 runs/predict/predictN/（递增）；--output 可显式指定文件（单图）或目录（多图）
+    # 结果保存：图片默认 runs/predict/predictN/（--output 显式文件/目录）；视频默认 <run_dir>/<源名>.mp4
+    video_out = None
     if args.output:
-        run_dir = Path(args.output).resolve() if multi else Path(args.output).resolve().parent
+        out = Path(args.output).resolve()
+        if video_mode:
+            if out.is_dir():
+                parser.error("--output in video mode must be a video file path, not a directory")
+            if out.suffix.lower() not in _VIDEO_EXTS:
+                out = out.with_suffix(".mp4")
+            video_out = out
+            run_dir = out.parent
+        else:
+            run_dir = out if multi else out.parent
     else:
         run_dir = increment_path(ROOT / "runs" / "predict" / "predict")
     run_dir.mkdir(parents=True, exist_ok=True)
+    if video_mode and video_out is None:
+        video_out = run_dir / f"{_video_stem(source)}.mp4"
     attach_file_log(run_dir / "run.log")
-    log_params(logger, __file__, weights=args.weights, image=args.image, model=arch,
-               engine=args.engine, conf=args.conf, imgsz=imgsz)
+    if video_mode:
+        log_params(logger, __file__, weights=args.weights, video=args.video, model=arch,
+                   engine=args.engine, conf=args.conf, imgsz=imgsz, max_frames=args.max_frames)
+    else:
+        log_params(logger, __file__, weights=args.weights, image=args.image, model=arch,
+                   engine=args.engine, conf=args.conf, imgsz=imgsz)
 
     # ---- 头部（与训练/评估同一套五段排版：环境 -> 模型 -> 输入/参数 -> 细节）----
     # ① 环境：engine 构建之前（onnx 后端固定 CPU、trt 后端固定 CUDA，见各自 Engine）
@@ -167,7 +303,16 @@ def main():
                      f"{mode} · engine {args.engine}"))
 
     # ③ 输入清单 + 本次任务参数
-    logger.info(f"infer: {args.image} · {len(images)} image{'s' if len(images) > 1 else ''} · "
+    if video_mode:
+        dims = (f"{video_info['width']}x{video_info['height']}"
+                if video_info["width"] > 0 and video_info["height"] > 0 else "unknown size")
+        frames = f"{video_info['frames']} frames" if video_info["frames"] > 0 else "live stream"
+        limit = f" · max {args.max_frames} frames" if args.max_frames else ""
+        logger.info(f"infer: {source} · video {dims} @ {video_info['fps']:.1f} fps · {frames}{limit} · "
+                    f"conf {args.conf} · imgsz {imgsz}")
+        _run_video(engine, names, cap, video_info, args, imgsz, video_out)
+        return
+    logger.info(f"infer: {source} · {len(images)} image{'s' if len(images) > 1 else ''} · "
                 f"conf {args.conf} · imgsz {imgsz}")
 
     t_start = time.perf_counter()  # 端到端计时（含图像读/写 I/O）

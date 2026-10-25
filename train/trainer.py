@@ -206,7 +206,9 @@ class Trainer:
             path = Path(resume)
             if path.is_dir():
                 path = path / "resume.pt"
-            epoch, best, ckpt_cfg, ckpt_run = load_resume(path, model, self.ema, self.optimizer, self.scaler)
+            resume_meta = {}
+            epoch, best, ckpt_cfg, ckpt_run = load_resume(path, model, self.ema, self.optimizer, self.scaler,
+                                                          meta=resume_meta)
             self.start_epoch = epoch + 1
             self.best_fitness = best
             if ckpt_run:
@@ -219,8 +221,9 @@ class Trainer:
                 logger.warning(f"resume checkpoint was written with model={ckpt_cfg.get('model', 'yolo26')!r}, "
                                f"now model={self.cfg.model!r} — the model is rebuilt from the current config")
             cur_cfg = self.cfg.cfg_path or None
-            if ckpt_cfg.get("cfg_path") != cur_cfg:
-                logger.warning(f"resume checkpoint was written with cfg_path={ckpt_cfg.get('cfg_path')!r}, "
+            old_cfg = ckpt_cfg.get("cfg_path") or None  # "" 与 None 同义（默认 yaml），不告警
+            if old_cfg != cur_cfg:
+                logger.warning(f"resume checkpoint was written with cfg_path={old_cfg!r}, "
                                f"now cfg_path={cur_cfg!r} — the model is rebuilt from the current config")
             if self.task == "segment":
                 for key in ("mask_ratio", "overlap_mask", "copy_paste_mode"):
@@ -229,6 +232,25 @@ class Trainer:
                     if old != new:
                         logger.warning(f"resume checkpoint was written with {key}={old!r}, now {key}={new!r} "
                                        f"— the segment target grid/augmentation changes mid-run")
+            # 换卡数/换设备是支持的：状态先落 CPU 再复制到目标设备；但抽样流按 (seed, epoch, rank,
+            # world_size) 重新派生，轨迹不再与原来的 run 逐位一致（同卡数同设备续训仍逐位等价）。
+            old_ws, old_dev = resume_meta.get("world_size"), resume_meta.get("device")
+            if old_ws is not None and old_ws != self.world_size:
+                logger.warning(f"resume checkpoint was written with world_size={old_ws} "
+                               f"(device {old_dev or 'unknown'}), now world_size={self.world_size} "
+                               f"(device {self.device}) — data sharding/augmentation streams are re-derived; "
+                               f"training continues but is not bit-identical to the original run")
+            elif old_dev is not None and str(self.device) != old_dev:
+                logger.warning(f"resume checkpoint was written on device {old_dev}, now {self.device} — "
+                               f"state is copied device-to-device; a backend/device change can alter the "
+                               f"numerical trajectory")
+            changed = {k: (ckpt_cfg.get(k), getattr(self.cfg, k))
+                       for k in ("batch", "nbs", "imgsz", "amp")
+                       if ckpt_cfg.get(k) is not None and ckpt_cfg.get(k) != getattr(self.cfg, k)}
+            if changed:
+                logger.warning("resume checkpoint was written with "
+                               + ", ".join(f"{k}={old!r} (now {new!r})" for k, (old, new) in changed.items())
+                               + " — gradient/step semantics change mid-run; the schedule follows the current config")
             logger.info(f"resumed from {path} at epoch {self.start_epoch + 1} -> {self.run_dir}")
 
         self.accumulate = max(round(cfg.nbs / cfg.batch), 1)
@@ -387,6 +409,7 @@ class Trainer:
         save_resume(
             self.run_dir / "resume.pt", self.model, self.ema, self.optimizer, self.scaler,
             epoch, self.best_fitness, self.cfg, self.run_dir,
+            world_size=self.world_size, device=str(self.device),
         )
 
     def _epoch_row(self, epoch, mem, means, n_img, lr):

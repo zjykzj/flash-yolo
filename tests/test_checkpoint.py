@@ -65,6 +65,22 @@ def test_resume_roundtrip_identical(tmp_path):
     print("  resume 往返逐位一致（模型 + EMA + 优化器状态）")
 
 
+def test_resume_metadata_records_world_size_and_device(tmp_path):
+    """resume.pt 记录 world_size/device（旧 ckpt 缺这两个键 = 未知），供换卡数/换设备续训告警"""
+    torch.manual_seed(0)
+    m = nn.Linear(4, 4, bias=False)
+    opt = MuSGD([{"params": m.parameters(), "muon": True, "wd": 0.0, "lr_mult": 1.0}], lr=0.01)
+    path = tmp_path / "resume.pt"
+    save_resume(path, m, ModelEMA(m), opt, None, 3, 0.0, TrainConfig(), tmp_path,
+                world_size=2, device="cuda:1")
+    m2 = nn.Linear(4, 4, bias=False)
+    opt2 = MuSGD([{"params": m2.parameters(), "muon": True, "wd": 0.0, "lr_mult": 1.0}], lr=0.01)
+    meta = {}
+    load_resume(path, m2, ModelEMA(m2), opt2, meta=meta)
+    assert meta == {"epoch": 3, "world_size": 2, "device": "cuda:1"}, meta
+    print("  resume metadata: world_size/device 往返正确")
+
+
 def test_best_last_weights(tmp_path):
     """best 仅在 is_best 时落盘；safetensors 可 strict 回载到 DetectionModel；meta 随盘写入"""
     model = DetectionModel(scale="n")
