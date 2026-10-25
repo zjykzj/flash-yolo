@@ -5,7 +5,7 @@
     python scripts/infer.py --weights yolo26n.onnx --engine onnx --image assets/     # 目录批量
     python scripts/infer.py --weights weights/yolo26n.safetensors --image traffic.jpg --nms  # o2m+NMS 路径
     python scripts/infer.py --weights weights/yolov3-tiny.safetensors --image traffic.jpg  # v3（档位由架构固定）
-    python scripts/infer.py --weights weights/yolo26n.safetensors --video traffic.mp4   # 视频文件
+    python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/video.mp4  # 视频文件
     python scripts/infer.py --weights weights/yolo26n.safetensors --video 0 --max-frames 300  # 摄像头/流
 """
 

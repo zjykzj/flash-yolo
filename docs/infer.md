@@ -27,13 +27,13 @@ python scripts/infer.py --weights weights/yolo26n-seg.safetensors --image assets
 # 分割训练产物：metadata 自带 arch/nc/names/imgsz，直接推理（无需 --data）
 python scripts/infer.py --weights yolo26n-seg-from-scratch-e100-640.safetensors --image assets/traffic.jpg
 
-# 视频文件（输出 <run_dir>/<源名>.mp4，默认 runs/predict/predictN/）
-python scripts/infer.py --weights weights/yolo26n.safetensors --video traffic.mp4
+# 视频文件（自备视频；输出 <run_dir>/<源名>.mp4，默认 runs/predict/predictN/）
+python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/video.mp4
 # 相机 / RTSP 流：用 --max-frames 限流（0 = 直到流结束；Ctrl-C 干净退出）
 python scripts/infer.py --weights weights/yolo26n.safetensors --video 0 --max-frames 300
 python scripts/infer.py --weights weights/yolo26n.safetensors --video rtsp://host/stream --max-frames 600
 # 窗口预览（需要 GUI；按 q 退出）+ 指定输出文件
-python scripts/infer.py --weights weights/yolo26n.safetensors --video traffic.mp4 --show --output out.avi
+python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/video.mp4 --show --output out.avi
 ```
 
 | 参数 | 默认 | 说明 |

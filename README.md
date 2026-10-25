@@ -2,7 +2,8 @@
 
 > ⚡ **A super-lightweight detection & segmentation framework — 31% fewer GFLOPs than YOLO26n
 > for detection (18% for segmentation), millisecond GPU/CPU inference, and a complete independent
-> pipeline: train · evaluate · export · infer. Raw dataset in, TensorRT engine out.**
+> pipeline: train (single-GPU / DDP) · evaluate · export · infer (image / video / stream).
+> Raw dataset in, TensorRT engine out.**
 >
 > Core runtime is just PyTorch + NumPy — no monolithic abstractions, no ultralytics dependency.
 
@@ -81,7 +82,8 @@ Datasets are described by a small yaml. Fill in the single machine-specific `pat
 cp config/datasets/coco.yaml config/datasets/local/coco.yaml   # then edit `path:`
 ```
 
-See [docs/dataset.md](docs/dataset.md) for YOLO-format descriptors and segmentation labels.
+See [docs/dataset.md](docs/dataset.md) for YOLO-format descriptors and segmentation labels,
+and [docs/docker.md](docs/docker.md) for the container environment.
 
 ## Usage
 
@@ -102,6 +104,9 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft --weights <objv1
 # multi-GPU DDP (training only; --batch is the GLOBAL batch, --workers is per GPU)
 python scripts/train.py --data coco --name ddp-coco --device 0,1 --batch 64 --workers 8
 # or: torchrun --standalone --nproc_per_node=2 scripts/train.py --data coco --batch 64
+
+# resume works across GPU counts / devices (1<->2 GPUs, CPU<->GPU)
+python scripts/train.py --data coco --device 0,1 --resume runs/train/train-ddp-coco/resume.pt
 ```
 
 From-scratch / finetune / resume, DDP details and all recipe options: [docs/train.md](docs/train.md).
@@ -133,12 +138,21 @@ python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.
 # --engine onnx|trt switches runtime; --image accepts a file or a directory.
 # Annotated images + YOLO-txt labels are written under runs/predict/.
 
-# Video / camera / RTSP stream -> annotated video under runs/predict/
-python scripts/infer.py --weights <weights> --video traffic.mp4
-python scripts/infer.py --weights <weights> --video 0 --max-frames 300   # camera index / live stream
+# Video / camera / RTSP stream -> annotated video under runs/predict/ (no per-frame labels)
+# --video takes your own file / stream URL / camera index; there is no bundled demo video.
+python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors \
+    --video /path/to/video.mp4
+python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors \
+    --video 0 --max-frames 300   # camera index / live stream
 ```
 
 Full engine and output notes: [docs/infer.md](docs/infer.md).
+
+## Documentation
+
+The full manual starts at [docs/README.md](docs/README.md): train / val / export / infer / dataset /
+docker / FAQ, released weights and latency ([docs/weights.md](docs/weights.md)), and the
+per-architecture specs (YOLO26, Flash-YOLO / -seg, YOLOv3-tiny).
 
 ## License
 
@@ -146,6 +160,6 @@ The code is licensed under **Apache-2.0** — see [LICENSE](LICENSE) for details
 
 - **Official YOLO26 weights** (AGPL-3.0) are not distributed here; download them with
   `scripts/download_weights.py` for personal use.
-- **From-scratch checkpoints** are published as safetensors on
-  [Releases](https://github.com/zjykzj/flash-yolo/releases); the exact list and profiles are in
-  [docs/weights.md](docs/weights.md).
+- **From-scratch detection checkpoints** are published as safetensors on
+  [Releases](https://github.com/zjykzj/flash-yolo/releases); the exact list, profiles and the
+  segmentation status (local-only for now) are in [docs/weights.md](docs/weights.md).
