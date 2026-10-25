@@ -24,6 +24,11 @@ python scripts/train.py --data coco --model yolov3-tiny-silu --name v3s --imgsz 
 python scripts/train.py --data coco --model yolo26-seg --name seg --mask-ratio 4
 # flash-yolo 的分割变体（单档 flash，不要传 --scale；结构见 flash-yolo-seg-spec.md）
 python scripts/train.py --data coco --model flash-yolo-seg --name flash-seg --mask-ratio 4
+
+# 多卡 DDP（`--batch` 是**全局** batch：2 卡时每卡 32；仅训练链路，见 §7）
+python scripts/train.py --data coco --name ddp --device 0,1 --batch 64 --workers 8
+# 等价 torchrun 入口（自动读 RANK/LOCAL_RANK/WORLD_SIZE，设备按 LOCAL_RANK 选）
+torchrun --standalone --nproc_per_node=2 scripts/train.py --data coco --name ddp --batch 64 --workers 8
 ```
 
 ## 2. 配方（recipe）
@@ -58,7 +63,8 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 > `load_weights_finetune` 的 key+shape 交集加载——backbone/neck/proto/cv2 逐位加载，
 > cv3/one2one_cv3/semseg 等类别相关头按 80 类重建（n 档实测 740/844 张量加载、104 个重初始化）。
 > 实测（RTX 4080 32GB，mask_ratio=1，640，batch 1，AMP）训练约 **5.2 img/s**、峰值 **1.41G**；
-> 全量 COCO 245 轮约 **65 天/单卡**——完整复现需要多卡（当前 Trainer 单设备，DDP 未实现）。
+> 全量 COCO 245 轮约 **65 天/单卡**。DDP 已实现（§7），可直接多卡扩；吞吐上限通常在数据管线
+> 而不是 GPU（本机 2×5090 检测实测约 1.2× 单卡——loader 先饱和；batch/模型越大比例越高）。
 >
 > **单卡闭环验收（coco-tiny：train 2000 / val 1000）**：官方 n 档配方 + O365 初始化，
 > 1 epoch / batch 4 / AMP / 640 —— 训练 7m20s、峰值 5.31G；pycocotools Box mAP50-95
@@ -85,7 +91,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--overlap-mask` / `--no-overlap-mask` | true | 分割 GT：每图实例索引图（官方默认）vs 每实例二值掩码 |
 | `--cfg` | — | 模型 yaml 覆盖（自定义结构 / 筛选变体） |
 | `--epochs` | 100 | 总轮数（配方的调度也按它算） |
-| `--batch` | 16 | **物理** batch；机器相关，用 `bench_io.py` 实测后给 |
+| `--batch` | 16 | **物理** batch（**全局**口径）；DDP 下每卡 = batch/world_size（必须整除）。机器相关，用 `bench_io.py` 实测后给 |
 | `--nbs` | 64 | 名义 batch；`accum = max(round(nbs/batch),1)`，梯度语义与物理 batch 无关 |
 | `--imgsz` | 640 | 训练输入（v3 常用 416）。batch 需整除 nbs（否则 wd 因子 ≠ 1.0） |
 | `--workers` | 8 | 加载进程数；机器相关 |
@@ -93,7 +99,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--deterministic` / `--no-deterministic` | true | 逐位可复现的 kernel 开关（关 cuDNN autotune + 确定性算法）；代价实测在噪声内，见 §5 |
 | `--weights` | — | 初始化权重（微调） |
 | `--resume` | — | `resume.pt` 或 run 目录（恢复优化器/EMA/轮次） |
-| `--device` | auto | `cuda:0` / `cpu` |
+| `--device` | auto | `cuda:0` / `cpu` / `0,1`（DDP，仅训练；见 §7） |
 | `--amp` / `--no-amp` | false | fp16+GradScaler；**从零训练会 NaN，仅微调用** |
 | `--optimizer` | `musgd` | `musgd` = Muon+SGD 混合（官方 yolo26 口径）；`sgd` = 全参数走 SGD 路径（darknet 口径复刻：配 `--momentum 0.9 --no-nesterov --lr0 0.001` + 台阶 LR） |
 | `--nesterov` / `--no-nesterov` | true | SGD 分支的 Nesterov 修正；darknet 的更新是 heavy-ball，复刻时用 `--no-nesterov` |
@@ -159,8 +165,11 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 2. **`workers` 与 `batch` 是复现条件的一部分**（机器相关值，故不写进默认配置）：增强流的种子按
    (seed, epoch, worker_id) 派生，改 worker 数会重排"哪张图落到哪个 worker"。换机器时按
    `scripts/bench_io.py` 重选，然后把它当实验参数固定下来。
-3. **RNG 流域每 epoch 重播**（不依赖历史消费量）：worker 内由 `worker_init_fn` 播种、主进程
-   （`workers=0`）由 `seed_main_rng(seed + epoch)` 播种；stdlib `random`（multi_scale 抽尺寸）也随之播种。
+3. **RNG 流域每 epoch 重播**（不依赖历史消费量）：DataLoader generator 与主进程增强 RNG 的种子
+   都是 `seed + epoch × world_size + rank`（单卡即 `seed + epoch`，逐位不变）；worker 内由
+   `worker_init_fn` 播种、主进程（`workers=0`）由 `seed_main_rng(同一派生种子)` 播种；stdlib
+   `random`（multi_scale 抽尺寸）也随之播种。DDP 的抽样顺序由 `DistributedSampler(seed=cfg.seed)`
+   按 `set_epoch(epoch)` 决定（各 rank 是同一 permuted 索引表的跨步切片，无重叠）。
    **新增随机性时不要裸调全局 `np.random`/`random`**——会同时打破第 4 条。
 4. **resume 逐位等价**：`resume.pt` 存了 torch/cuda/numpy/random 四套 RNG 状态 + `ema.steps`，且抽样流
    按 epoch 重建——实测"1 轮后续训"与"一次跑完"逐位相同。
@@ -182,7 +191,75 @@ python scripts/bench_io.py --data coco --loader-only
 - worker 里的 cv2/torch 线程数由框架统一管理（`data/loader.py` 导入时设定）——
   **不要在 worker 里调 `cv2.setNumThreads`**（OpenCV 线程池非 fork 安全，会整体卡死）。
 
-## 7. 常见坑
+## 7. 多卡训练（DDP）
+
+只覆盖**训练**：`scripts/train.py` 一条路径支持检测与分割（yolo26 / yolo26-seg / flash-yolo /
+flash-yolo-seg / yolov3-tiny），eval / export / infer 仍是单进程，CLI 不变。
+
+### 7.1 启动与 batch 语义
+
+```bash
+python scripts/train.py --data coco --device 0,1 --batch 64 --workers 8 --name ddp
+# 或 torchrun --standalone --nproc_per_node=2 scripts/train.py --data coco --batch 64 ...
+```
+
+- `--device 0,1`：父进程为每张卡起一个 worker（设置 `RANK/LOCAL_RANK/WORLD_SIZE/MASTER_*`），
+  任一 worker 非 0 退出即终止其余。`torchrun` 已设好这些环境变量时不再 spawn。
+- **`--batch` 是全局 batch**（ultralytics 口径）：每卡 = `batch // world_size`，必须整除。
+  `accumulate = max(round(nbs / batch), 1)` 仍按全局 batch 计算，`nbs` 的梯度语义不变。
+  `--workers` 是**每卡**的加载进程数（2 卡 × 8 = 16 个 worker，按机器核数分配）。
+- 单卡（world_size=1）路径逐位不变：所有 rank 分支为真、barrier 为 no-op。
+
+### 7.2 梯度口径（为什么要乘 world_size）
+
+本工程的损失是 **Σ_img 口径**（`total = weight × Σ_img L_img`，见 `train/loss/yolo26_detect.py`
+文件头）。DDP 在 backward 时对梯度做 **按 rank 平均**：每 rank 的局部 Σ 平均后是全局 Σ 的 1/W。
+所以 backward 前把损失乘 `world_size`（`train/distributed.py::ddp_scale_loss`，world=1 原样返回），
+"每 rank 局部 Σ → 平均 → ×W" 才等于单卡同一 global batch 的梯度。实测（2×5090，同数据同 global
+batch，aug 关闭）：2 卡/1 卡裁剪前 gnorm 中位数比 = **1.03**；把 ×W 临时去掉后同一对比 = **0.50**
+（回归信号：2 卡 gnorm 约为单卡一半）。
+
+### 7.3 哪些东西按 rank 分、哪些只 rank 0
+
+- **训练数据**：`DistributedSampler(shuffle=True)` 每 epoch `set_epoch(epoch)`，各 rank 拿互不
+  重叠的索引切片（不整除时官方口径补样）。每卡一个 DataLoader generator（种子含 rank）。
+- **验证只 rank 0 且全量**：不按 rank 分片，指标口径与单卡完全一致（检测数秒、分割百秒级）。
+  其他 rank 在每轮末的 barrier 等待；barrier 在验证/保存之后、且每个 epoch 无条件执行。
+- **产物只 rank 0**：checkpoint / results.csv / diag / samples / plots / meta.json / run.log。
+  非 0 rank 写 `run.rankN.log`（文件仍 INFO），控制台抬到 ERROR。
+- **`self.model` / `self.head` 始终是未包裹的 raw module**：DDP 只放在 `self.ddp_model`，
+  EMA（deepcopy raw）、state_dict 保存、resume 都不带 `module.` 前缀。
+- **梯度累积**：非累积边界的 micro-batch 把 forward+backward 整体包进 `no_sync()`（不发
+  all-reduce），边界步同步；单卡是 `nullcontext`，代码顺序与历史一致。
+
+### 7.4 与单卡的数值差异
+
+- **不转换 SyncBatchNorm**：BN 前向统计按卡独立（官方 DDP 口径）。DDP 默认的 buffer 同步保留
+  （每 forward 从 rank0 广播 running stats），因此 running stats 以 rank0 为准，但每卡的
+  **批次统计**仍不同 → 多卡结果与单卡**不逐位一致**（同 world_size/rank 数的重复运行可逐位复现）。
+- `find_unused_parameters=True`：覆盖 freeze 与损失内的条件分支（某些 step 参数不参与前向）。
+  首个 iteration 会看到 torch 的 `find_unused_parameters=True ... did not find any unused
+  parameters` 告警（本模型全参数参与前向时 torch 自己提示），属预期。
+- **AMP**：每个 rank 独立 GradScaler；同步 DDP 的梯度 all-reduce 会让任一 rank 的 inf/nan
+  传播到所有 rank，`found_inf` 一致、各 rank 一起 skip step，代码不需要额外分支。
+  从零训练仍默认 fp32（AMP 的 NaN 机制与单卡相同，DDP 不解决）。
+- **resume**：`resume.pt` 由 rank0 写，各 rank 读同一文件（模型/EMA/优化器/RNG 状态一致），
+  DDP 包装在恢复之后，可直接 `--resume` + `--device 0,1` 续训。
+
+### 7.5 吞吐
+
+DDP 只并行训练步；**数据管线是常见瓶颈**（本机 2×5090 / yolo26n@640 / batch 64 / workers 8：
+2 卡约 258 img/s vs 单卡 218 img/s ≈ 1.2×，而纯 GPU fwd+bwd（dummy loss）约 450-770 img/s）。先用
+`scripts/bench_io.py` 定单卡 batch/workers；多卡时按“每卡 worker 数 × 卡数”分配，别把总 worker
+数翻倍到核数超订。分割等重 GPU 步的任务，训练步占比更高，扩展比会更好。
+
+**20 轮全量 COCO 实测**（2026-10-25，2×5090，yolo26n / fp32 / batch 64 / workers 8 / 全量 val）：
+**2 h 38 min**（每轮训练 ~430 s + rank0 全量 val ~40 s，约 258 img/s），产物齐全（best/last/
+best_raw/epoch020 · results.csv · diag · samples · plots · run.rank1.log）；best 权重经
+`scripts/eval.py` 为 **E2E mAP50-95 0.2808 / mAP50 0.4073**（20 轮从零，只作 DDP 规模与吞吐
+验收，不是精度结论；训练中 FastMetrics 报 0.2781，与正式口径同量级）。
+
+## 8. 常见坑
 
 1. **`--amp` 从零训练必炸**（fp16 在 640² 从零 + BN eps=0.001 的组合下第 1 轮内 NaN）。默认
    fp32；微调可以试 `--amp`。

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Distributed training (DDP)**: `--device 0,1` or torchrun now trains detection and segmentation on multiple GPUs (`--batch` is global, per-GPU = batch/world_size). Single-GPU runs stay bit-identical; multi-GPU runs are reproducible per world size but not vs single GPU (no SyncBatchNorm).
+
 ## [0.7.0] - 2026-10-24
 
 ### Added

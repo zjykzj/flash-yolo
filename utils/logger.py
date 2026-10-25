@@ -14,7 +14,8 @@
     - 运行日志跟 run 目录走（`run.log`）：归档/对比/删除 run 就是一个目录；resume 追加同一文件，
       一次训练只有一份完整日志
     - 兜底：没有 run 目录的脚本走 `logs/<脚本名>_<时间戳>.log`，多程序并发天然隔离（无跨进程锁）
-    - 多卡训练时仅 rank 0 落文件：setup_logging(to_file=(rank == 0))
+    - 多卡训练时每个 rank 落自己的文件（rank0 -> run.log，其余 -> run.rankN.log），
+      非 0 rank 的控制台由 configure_rank 抬到 ERROR（见 train/distributed.py）
     - 文件轮转 10MB x 5 份，防长跑写爆
     - 控制台纯消息 + 级别着色（无时间戳，与进度条等 UI 元素对齐；ultralytics 风格）；
       文件带完整时间戳前缀且永远纯文本
@@ -29,8 +30,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-__all__ = ["setup_logging", "attach_file_log", "get_logger", "bold", "redirect_prints", "log_file_only",
-           "log_params"]
+__all__ = ["setup_logging", "attach_file_log", "configure_rank", "get_logger", "bold", "redirect_prints",
+           "log_file_only", "log_params"]
 
 _ROOT = Path(__file__).resolve().parent.parent
 _LOG_DIR = _ROOT / "logs"
@@ -102,6 +103,21 @@ def setup_logging(log_name=None, level="INFO", to_file=True):
         name = log_name or Path(sys.argv[0]).stem
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         root.addHandler(_file_handler(_LOG_DIR / f"{name}_{stamp}.log"))
+
+
+def configure_rank(rank):
+    """DDP rank 分派：rank>0 的控制台抬到 ERROR（进度条/信息行只由 rank0 输出）
+
+    文件 handler 保持 INFO（每个 rank 有自己的 `run.rankN.log`），所以非 0 rank 的完整
+    过程仍可从文件复盘；控制台只留错误（异常栈由 traceback 直接进 stderr）。
+    单进程/rank0 调用是 no-op（控制台外观零变化）。
+    """
+    if rank == 0:
+        return
+    for handler in logging.getLogger().handlers:
+        if isinstance(handler, logging.StreamHandler) and not isinstance(
+                handler, logging.handlers.RotatingFileHandler):
+            handler.setLevel(logging.ERROR)
 
 
 def _find_file_handler():

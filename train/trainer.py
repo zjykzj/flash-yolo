@@ -1,11 +1,15 @@
-"""单卡训练主循环（AMP + MuSGD + EMA + ProgLoss + close_mosaic + 每 epoch 验证/保存）
+"""训练主循环（单卡 / DDP；AMP + MuSGD + EMA + ProgLoss + close_mosaic + 每 epoch 验证/保存）
 
-结构上保持单设备语义（DDP 后置时只需加 sampler 与 rank0 守卫）。
+DDP 口径：`--batch` 是全局 batch（每卡 = batch/world_size）；损失是 Σ_img 口径，backward 前
+乘 world_size 抵消 DDP 的梯度平均；验证/落盘只在 rank 0；`self.model` / `self.head` 始终是
+未包裹的 raw module（DDP 包装只进 `self.ddp_model`，EMA/保存/state_dict 不带 `module.` 前缀）。
+单卡（world_size=1）时所有 rank 分支退化为原路径，逐位不变。
 """
 
 import csv
 import logging
 import os
+from contextlib import nullcontext
 from dataclasses import replace
 import random
 import sys
@@ -15,7 +19,9 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, DistributedSampler
 
 from config import __version__
 from config.datasets import load_dataset
@@ -28,6 +34,7 @@ from model.weights import (arch_has_scale, encode_anchors, load_weights, load_we
                            provenance_meta)
 from model.build import ARCHS, YOLO26_FAMILY, arch_display_name, arch_task, build_model
 from train.checkpoint import load_resume, save_best_last, save_periodic, save_resume
+from train.distributed import DistInfo, ddp_scale_loss, sync_barrier
 from train.ema import ModelEMA
 from train.loss import build_loss
 from train.lr import cosine_lr, linear_lr, set_epoch_lr, step_lr, warmup_momentum
@@ -109,7 +116,8 @@ class Trainer:
         "sem": ("sem_loss", 4), "obj": ("obj_loss", 3),
     }
 
-    def __init__(self, cfg: TrainConfig, device=None, run_dir=None, resume=None, weights=None, spec=None):
+    def __init__(self, cfg: TrainConfig, device=None, run_dir=None, resume=None, weights=None, spec=None,
+                 dist_info=None):
         self.cfg = cfg
         self.data_spec = spec or load_dataset(cfg.data)  # 描述符：角色路径与原始类别表的来源
         # 单类训练：模型头/掩码 metadata 用 nc=1，数据侧仍按原始类别表解析后再映射到 0
@@ -118,6 +126,18 @@ class Trainer:
         if self.task == "segment" and (cfg.mask_ratio < 1 or cfg.imgsz % cfg.mask_ratio):
             raise ValueError(f"mask_ratio={cfg.mask_ratio} must be >=1 and divide imgsz={cfg.imgsz}")
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        # 分布式身份：默认 world=1（单卡/单进程，所有 rank 分支为真、barrier 为 no-op）
+        self.dist = dist_info if dist_info is not None else DistInfo(device=self.device)
+        if dist_info is not None and dist_info.device is not None:  # DistInfo 是设备选择的唯一来源
+            self.device = torch.device(dist_info.device)
+        self.world_size = self.dist.world_size
+        self.is_main = self.dist.is_main
+        if self.world_size > 1 and cfg.batch % self.world_size:
+            raise ValueError(f"global batch {cfg.batch} must be divisible by DDP world_size {self.world_size}")
+        self.per_rank_batch = cfg.batch // self.world_size if self.world_size > 1 else cfg.batch
+        if self.per_rank_batch < 1:
+            raise ValueError(f"global batch {cfg.batch} is too small for world_size {self.world_size}")
+        self.ddp_model = None  # DDP 包装（self.model 始终是 raw module；末尾 _wrap_ddp 建立）
 
         torch.manual_seed(cfg.seed)
         np.random.seed(cfg.seed)
@@ -231,6 +251,29 @@ class Trainer:
         self.samples_dir = self.run_dir / "samples"
         self.diag_fields = ["epoch", "batch", "lr", "lr_x3", "gnorm", *self.loss_keys, "loss"]
 
+        # DDP 包装放最后：模型/权重/resume/EMA/优化器/数据都已就绪，且 raw module 不被替换
+        self._wrap_ddp()
+
+    def _wrap_ddp(self):
+        """world_size>1 时包 DDP（构造是集合操作：各 rank 在这里对齐并广播初值）
+
+        - `find_unused_parameters=True`：覆盖 freeze 与动态分支（某些 step 参数不参与前向）
+        - 不传 buffer 同步开关：保持默认（每 forward 从 rank0 广播 BN running stats）
+        - 不做 SyncBatchNorm 转换：BN 批次统计按卡独立（官方 DDP 口径），多卡结果与单卡不逐位一致
+        """
+        if not self.dist.enabled:
+            return
+        if not dist.is_available() or not dist.is_initialized():
+            raise RuntimeError("DDP world_size>1 but no process group: init_distributed() was not called")
+        if dist.get_world_size() != self.world_size or dist.get_rank() != self.dist.rank:
+            raise RuntimeError(f"process group reports rank {dist.get_rank()}/{dist.get_world_size()} "
+                               f"but DistInfo says {self.dist.rank}/{self.world_size}")
+        device_ids = [self.device.index] if self.device.type == "cuda" else None
+        self.ddp_model = DDP(self.model, device_ids=device_ids, find_unused_parameters=True)
+        logger.info(f"DDP: world_size {self.world_size} · rank {self.dist.rank} · backend {self.dist.backend} · "
+                    f"per-rank batch {self.per_rank_batch}/{self.cfg.batch} · "
+                    f"loss x{self.world_size} before backward")
+
     def _sample_epochs(self):
         """增强抽样可视化的轮次：首轮 / close_mosaic 生效首轮 / 末轮（去重）"""
         last = self.stop_after - 1
@@ -238,9 +281,26 @@ class Trainer:
 
     # ---- 数据 ----
     def _dataloader(self, epoch):
-        generator = torch.Generator().manual_seed(self.cfg.seed + epoch)  # 每 epoch 可复现抽样流
+        # 每 rank 每 epoch 一条可复现抽样流；world=1/rank=0 时退化为历史的 seed+epoch
+        seed = self.cfg.seed + epoch * self.world_size + self.dist.rank
+        generator = torch.Generator().manual_seed(seed)
         if self.cfg.workers == 0:  # workers=0：增强在主进程跑，与 worker 侧同构地每 epoch 重播 RNG
-            seed_main_rng(self.cfg.seed + epoch)
+            seed_main_rng(seed)
+        if self.dist.enabled:
+            # DistributedSampler：同一 permuted 索引表的跨步切片（各 rank 无重叠），每 epoch set_epoch
+            sampler = DistributedSampler(self.dataset, num_replicas=self.world_size, rank=self.dist.rank,
+                                         shuffle=True, seed=self.cfg.seed, drop_last=False)
+            sampler.set_epoch(epoch)
+            return DataLoader(
+                self.dataset,
+                batch_size=self.per_rank_batch,
+                sampler=sampler,
+                num_workers=self.cfg.workers,
+                collate_fn=collate_fn,
+                worker_init_fn=worker_init_fn,
+                generator=generator,
+                pin_memory=self.device.type == "cuda",
+            )
         return DataLoader(
             self.dataset,
             batch_size=self.cfg.batch,
@@ -254,6 +314,8 @@ class Trainer:
 
     # ---- 验证 ----
     def _validate(self):
+        if not self.is_main:  # DDP：验证只在 rank0 跑（全量 val，不按 rank 分片）
+            return None
         ema_model = self.ema.eval_model()
         if self.val_dataset is None:
             self.val_dataset = build_eval_dataset(self.data_spec, "val", task=self.task,
@@ -273,6 +335,8 @@ class Trainer:
         gnorm 是 clip_grad_norm_ 的返回值（裁剪前范数），唯一一次 device->host 同步；
         饱和度 = 10/gnorm，长期 <1 说明实际步长 ∝ lr（见 CLAUDE.md 训练诊断一节）。
         """
+        if not self.is_main:  # 诊断/产物只由 rank0 写
+            return
         import csv as _csv
 
         base = [g["lr"] for g in self.optimizer.param_groups if g.get("lr_mult", 1.0) == 1.0]
@@ -289,6 +353,8 @@ class Trainer:
             w.writerow(row)
 
     def _write_meta(self):
+        if not self.is_main:  # meta.json 只由 rank0 写（非 0 rank 的 run 目录是广播来的同一个）
+            return
         write_run_meta(self.run_dir, {
             "config": asdict(self.cfg),
             "data": {"descriptor": str(self.spec.source), "name": self.spec.name, "format": self.spec.format,
@@ -306,10 +372,14 @@ class Trainer:
             "model": {"arch": self.cfg.model, "scale": self.cfg.scale,
                       "params": sum(p.numel() for p in self.model.parameters())},
             "train": {"accumulate": self.accumulate, "close_mosaic_from": max(self.cfg.epochs - self.close_mosaic, 0),
-                      "stop_after": self.stop_after, "device": str(self.device)},
+                      "stop_after": self.stop_after, "device": str(self.device),
+                      "world_size": self.world_size, "per_rank_batch": self.per_rank_batch,
+                      "backend": self.dist.backend or "single"},
         })
 
     def _save(self, epoch, is_best):
+        if not self.is_main:  # checkpoint 只由 rank0 写
+            return
         save_best_last(self.run_dir, self.ema.ema, is_best, raw_model=self.model, meta=self.weights_meta)
         if self.cfg.save_period and (epoch + 1) % self.cfg.save_period == 0:
             save_periodic(self.run_dir, self.ema.ema, epoch, keep=self.cfg.keep_periodic,
@@ -335,9 +405,12 @@ class Trainer:
         """① 环境 + 超参快照（最先打印：这两行只依赖 cfg/device，不依赖任何构建结果）"""
         if self.device.type == "cuda":
             props = torch.cuda.get_device_properties(self.device)
-            dev_str = f"CUDA:0 ({props.name}, {props.total_memory // 2**20}MiB)"
+            index = self.device.index if self.device.index is not None else torch.cuda.current_device()
+            dev_str = f"CUDA:{index} ({props.name}, {props.total_memory // 2**20}MiB)"
         else:
             dev_str = str(self.device)
+        if self.dist.enabled:  # 单卡输出保持逐字符不变，只在 DDP 追加身份
+            dev_str += f" · DDP world_size {self.world_size} rank {self.dist.rank}"
         logger.info(bold(f"Flash-YOLO {__version__} 🚀 Python {sys.version.split()[0]} · torch {torch.__version__} · {dev_str}"))
 
         # 超参数快照（dict 直出，快速核对用）
@@ -347,7 +420,11 @@ class Trainer:
         """② 模型：逐层参数表 + 汇总（profile_flops 会切 eval，打印后恢复 train）
 
         汇总行由 summary_lines 统一输出（带档位名，如 YOLO26n），避免重复打印。
+        非 0 rank 跳过（逐层表 + FLOPs profile 纯展示，多卡时只浪费启动时间）。
         """
+        if not self.is_main:
+            self.model.train()
+            return
         logger.info("")
         lines, _, _, _ = summary_lines(self.model, self.cfg.imgsz, device=self.device,
                                        name=arch_display_name(self.cfg.model, self.cfg.scale))
@@ -366,18 +443,22 @@ class Trainer:
         """
         logger.info("")
         self.dataset = build_train_dataset(self.cfg, self.data_spec, "train", augment=True,
-                                           limit=self.cfg.limit, progress=True, task=self.task,
+                                           limit=self.cfg.limit, progress=self.is_main, task=self.task,
                                            single_cls=self.cfg.single_cls)
         self._log_split("train", self.dataset)
-        if self.val_enabled:
+        if self.val_enabled and self.is_main:  # DDP：val 只在 rank0 构建（指标不因卡数改变）
             self.val_dataset = build_eval_dataset(self.data_spec, "val", progress=True, task=self.task,
                                                   single_cls=self.cfg.single_cls)
             self._log_split("val", self.val_dataset,
                             extra=f" · limit {self.cfg.val_limit}" if self.cfg.val_limit else "")
-        else:
+        elif not self.val_enabled:
             logger.info("val:   disabled (val_epochs=0)")
+        else:
+            logger.info("val:   rank0 only (this rank skips validation)")
         ms = f" · multi_scale ±{self.cfg.multi_scale} @32px" if self.cfg.multi_scale > 0 else ""
-        logger.info(f"imgsz {self.cfg.imgsz} · batch {self.cfg.batch} · nbs {self.cfg.nbs} (accum {self.accumulate}) · "
+        batch_note = f" (per-rank {self.per_rank_batch})" if self.dist.enabled else ""
+        logger.info(f"imgsz {self.cfg.imgsz} · batch {self.cfg.batch}{batch_note} · nbs {self.cfg.nbs} "
+                    f"(accum {self.accumulate}) · "
                     f"workers {self.cfg.workers} · seed {self.cfg.seed} · AMP {'fp16' if self.cfg.amp else 'off'}"
                     f"{' · deterministic' if self.cfg.deterministic else ''}{ms}")
 
@@ -506,7 +587,8 @@ class Trainer:
             n_batch = len(dl)
             if n_batch == 0:
                 raise RuntimeError("training set is empty — check the dataset descriptor and --limit")
-            bar = ProgressBar(n_batch, desc="")
+            bar = ProgressBar(n_batch, desc="") if self.is_main else None
+            forward_model = self.ddp_model if self.ddp_model is not None else self.model
             t0 = time.monotonic()
             speed = None  # 累计平均速度（tqdm 口径：n / 已耗时）
             sums = {**{k: 0.0 for k in self.loss_keys}, "total": 0.0}
@@ -528,8 +610,8 @@ class Trainer:
                              warmup_bias_lr=self.cfg.warmup_bias_lr)
                 lr_last = self.optimizer.param_groups[0]["lr"]
 
-                # 增强抽样可视化：首个 / close_mosaic 后首个 / 末轮各存一张网格图
-                if bi == 0 and self.cfg.aug_samples and epoch in self._sample_epochs():
+                # 增强抽样可视化：首个 / close_mosaic 后首个 / 末轮各存一张网格图（产物只由 rank0 写）
+                if self.is_main and bi == 0 and self.cfg.aug_samples and epoch in self._sample_epochs():
                     draw_target_grid(imgs, targets, self.samples_dir / f"epoch{epoch + 1:03d}.png",
                                      n=self.cfg.aug_samples, names=self.dataset.names)
 
@@ -550,39 +632,48 @@ class Trainer:
                                                                mode="bilinear", align_corners=False)
                         if targets.numel():
                             targets[:, 2:6] *= sf
-                with torch.autocast(device_type=self.device.type, enabled=self.cfg.amp and self.device.type == "cuda"):
-                    preds = self.model(imgs)
-                    if self.task == "segment":
-                        loss, items = self.loss_fn(preds, targets, imgs.shape[0], imgsz, masks=masks)
+                # DDP 梯度累积：非累积边界的 micro-batch 不发 all-reduce（forward+backward 整个包住），
+                # 累积边界/末批走默认同步（单卡 nullcontext，代码顺序与历史完全一致）。
+                is_update = (bi + 1) % self.accumulate == 0 or bi == n_batch - 1
+                sync_ctx = (self.ddp_model.no_sync()
+                            if self.ddp_model is not None and not is_update else nullcontext())
+                with sync_ctx:
+                    with torch.autocast(device_type=self.device.type,
+                                        enabled=self.cfg.amp and self.device.type == "cuda"):
+                        preds = forward_model(imgs)
+                        if self.task == "segment":
+                            loss, items = self.loss_fn(preds, targets, imgs.shape[0], imgsz, masks=masks)
+                        else:
+                            loss, items = self.loss_fn(preds, targets, imgs.shape[0], imgsz)
+                    # preds 诊断按 10 步窗口取样：每次 8 个 isfinite+bool 转换（同步）≈ 1.2ms，
+                    # NaN 检出延迟 ≤10 步（loss 本身的有限性检查仍每步执行）；两种 head 输出形态走同一枚举
+                    preds_bad = ((bi + 1) % 10 == 0 or bi == n_batch - 1) and any(
+                        not torch.isfinite(t).all() for _, t in _pred_tensors(preds)
+                    )
+                    if not torch.isfinite(loss) or preds_bad:
+                        # 快速诊断：定位首个非有限值所在分支 + 权重发散程度 + 损失分解
+                        # 注意：权重 NaN 时 n_pos=0 会让损失保持有限（静默死亡），必须同时查 preds
+                        wmax = max(p.abs().max().item() for p in self.model.parameters())
+                        logger.error(f"non-finite loss/preds at epoch {epoch + 1} batch {bi} · items={items} · max|weight|={wmax:.2f}")
+                        if isinstance(preds, dict):
+                            for branch in preds:
+                                b, s = preds[branch]["boxes"], preds[branch]["scores"]
+                                logger.error(
+                                    f"  {branch}: boxes finite={torch.isfinite(b).all().item()} max={b.abs().max().item():.2f} · "
+                                    f"scores finite={torch.isfinite(s).all().item()} max={s.abs().max().item():.2f}"
+                                )
+                        else:
+                            for name, t in _pred_tensors(preds):
+                                logger.error(f"  {name}: finite={torch.isfinite(t).all().item()} "
+                                             f"max={t.abs().max().item():.2f}")
+                        raise RuntimeError(f"non-finite loss/preds ({loss.item()}) — 见上方分支诊断")
+                    # Σ_img 口径补偿：DDP 的梯度平均会把尺度压成 1/W（world=1 返回同一对象）
+                    backward_loss = ddp_scale_loss(loss, self.world_size)
+                    if self.scaler is not None:
+                        self.scaler.scale(backward_loss).backward()
                     else:
-                        loss, items = self.loss_fn(preds, targets, imgs.shape[0], imgsz)
-                # preds 诊断按 10 步窗口取样：每次 8 个 isfinite+bool 转换（同步）≈ 1.2ms，
-                # NaN 检出延迟 ≤10 步（loss 本身的有限性检查仍每步执行）；两种 head 输出形态走同一枚举
-                preds_bad = ((bi + 1) % 10 == 0 or bi == n_batch - 1) and any(
-                    not torch.isfinite(t).all() for _, t in _pred_tensors(preds)
-                )
-                if not torch.isfinite(loss) or preds_bad:
-                    # 快速诊断：定位首个非有限值所在分支 + 权重发散程度 + 损失分解
-                    # 注意：权重 NaN 时 n_pos=0 会让损失保持有限（静默死亡），必须同时查 preds
-                    wmax = max(p.abs().max().item() for p in self.model.parameters())
-                    logger.error(f"non-finite loss/preds at epoch {epoch + 1} batch {bi} · items={items} · max|weight|={wmax:.2f}")
-                    if isinstance(preds, dict):
-                        for branch in preds:
-                            b, s = preds[branch]["boxes"], preds[branch]["scores"]
-                            logger.error(
-                                f"  {branch}: boxes finite={torch.isfinite(b).all().item()} max={b.abs().max().item():.2f} · "
-                                f"scores finite={torch.isfinite(s).all().item()} max={s.abs().max().item():.2f}"
-                            )
-                    else:
-                        for name, t in _pred_tensors(preds):
-                            logger.error(f"  {name}: finite={torch.isfinite(t).all().item()} "
-                                         f"max={t.abs().max().item():.2f}")
-                    raise RuntimeError(f"non-finite loss/preds ({loss.item()}) — 见上方分支诊断")
-                if self.scaler is not None:
-                    self.scaler.scale(loss).backward()
-                else:
-                    loss.backward()
-                if (bi + 1) % self.accumulate == 0 or bi == n_batch - 1:
+                        backward_loss.backward()
+                if is_update:
                     # 梯度全局范数裁剪 max_norm=10（官方 optimizer_step 同口径，无条件执行）：
                     # 缺它时 o2o 分类头在"小数据 + 快速到高 lr"下会进入 BN 掩蔽式复利增长
                     # （train loss 正常但 one2one_cv3 权重 0.68→5.8e18，5-7 轮 NaN；官方同配
@@ -599,88 +690,100 @@ class Trainer:
                     self.ema.update(self.model)
                     # 诊断行：裁剪前梯度范数（clip_grad_norm_ 返回值，免额外反向/同步）
                     self._opt_step += 1
-                    if self.cfg.diag_interval and self._opt_step % self.cfg.diag_interval == 0:
+                    if self.is_main and self.cfg.diag_interval and self._opt_step % self.cfg.diag_interval == 0:
                         self._write_diag(epoch, bi, float(gnorm_t), items, loss.detach().item())
 
-                for k in sums:
-                    if k == "total":
-                        sums[k] += loss.detach().item() / self.cfg.batch
-                    else:
-                        sums[k] += items.get(k, 0.0)
+                if self.is_main:  # 指标/进度条只由 rank0 统计（非 0 rank 每步省一次 .item() 同步）
+                    loss_val = loss.detach().item()
+                    for k in sums:
+                        if k == "total":
+                            # per-rank batch：rank0 的每图损失与单卡口径可比（world=1 即 cfg.batch）
+                            sums[k] += loss_val / self.per_rank_batch
+                        else:
+                            sums[k] += items.get(k, 0.0)
 
-                # 每 10 batch 刷新行内指标（ultralytics tloss 口径）：
-                #   损失 = epoch 内累计运行均值（行内值在 epoch 末尾自然收敛到定格值，无断层）
-                #   速度 = 累计平均（tqdm 口径，不再 10 batch 窗口跳动）
-                #   显存 = 进程峰值（max_memory_reserved 单调、不跳动，判 OOM 风险才有意义）
-                if (bi + 1) % 10 == 0 or bi == n_batch - 1 or speed is None:
-                    speed = (bi + 1) / max(time.monotonic() - t0, 1e-6)
-                mem = torch.cuda.max_memory_reserved() / 1e9 if self.device.type == "cuda" else 0.0
-                mem_last = mem  # epoch 汇总行复用
-                mean_w = {k: v / (bi + 1) for k, v in sums.items()}
-                desc = "      " + self._epoch_row(epoch, mem, mean_w, len(dl.dataset), lr_last)
-                bar.update(bi + 1, speed, desc=desc)
-            # ---- epoch 定格（ultralytics 机制）：进度条行即记录，结束后保留 ----
-            mean = {k: v / n_batch for k, v in sums.items()}
-            elapsed = time.monotonic() - t0
-            row = "      " + self._epoch_row(epoch, mem_last, mean, len(dl.dataset), lr_last)
-            bar.update(n_batch, speed, desc=row)  # 末次刷新换真均值（非 10 batch 窗口值）
-            bar.close()  # 换行保留，不再清屏
-            # 控制台定格行=进度条行；文件日志另落真均值行（time_s 同时入 results.csv）
-            log_file_only(row + f" · {fmt_elapsed(elapsed)}", name=logger.name)
+                    # 每 10 batch 刷新行内指标（ultralytics tloss 口径）：
+                    #   损失 = epoch 内累计运行均值（行内值在 epoch 末尾自然收敛到定格值，无断层）
+                    #   速度 = 累计平均（tqdm 口径，不再 10 batch 窗口跳动）
+                    #   显存 = 进程峰值（max_memory_reserved 单调、不跳动，判 OOM 风险才有意义）
+                    if (bi + 1) % 10 == 0 or bi == n_batch - 1 or speed is None:
+                        speed = (bi + 1) / max(time.monotonic() - t0, 1e-6)
+                    mem = torch.cuda.max_memory_reserved() / 1e9 if self.device.type == "cuda" else 0.0
+                    mem_last = mem  # epoch 汇总行复用
+                    mean_w = {k: v / (bi + 1) for k, v in sums.items()}
+                    desc = "      " + self._epoch_row(epoch, mem, mean_w, len(dl.dataset), lr_last)
+                    bar.update(bi + 1, speed, desc=desc)
+            if self.is_main:  # epoch 产物只由 rank0 生成
+                # ---- epoch 定格（ultralytics 机制）：进度条行即记录，结束后保留 ----
+                mean = {k: v / n_batch for k, v in sums.items()}
+                elapsed = time.monotonic() - t0
+                row = "      " + self._epoch_row(epoch, mem_last, mean, len(dl.dataset), lr_last)
+                bar.update(n_batch, speed, desc=row)  # 末次刷新换真均值（非 10 batch 窗口值）
+                bar.close()  # 换行保留，不再清屏
+                # 控制台定格行=进度条行；文件日志另落真均值行（time_s 同时入 results.csv）
+                log_file_only(row + f" · {fmt_elapsed(elapsed)}", name=logger.name)
 
-            # 惰性 corrupt：worker 里读失败 +1（跨 fork 共享计数），每 epoch 最多一条告警
-            n_bad = self.dataset.n_corrupt + (self.val_dataset.n_corrupt if self.val_dataset is not None else 0)
-            if n_bad > self._n_corrupt_seen:
-                logger.warning(f"unreadable images: +{n_bad - self._n_corrupt_seen} this epoch "
-                               f"({n_bad} total) — replaced with blank samples")
-                self._n_corrupt_seen = n_bad
+                # 惰性 corrupt：worker 里读失败 +1（跨 fork 共享计数），每 epoch 最多一条告警
+                n_bad = self.dataset.n_corrupt + (self.val_dataset.n_corrupt if self.val_dataset is not None else 0)
+                if n_bad > self._n_corrupt_seen:
+                    logger.warning(f"unreadable images: +{n_bad - self._n_corrupt_seen} this epoch "
+                                   f"({n_bad} total) — replaced with blank samples")
+                    self._n_corrupt_seen = n_bad
 
-            # ---- 验证（训练中趋势口径；正式数字用 scripts/eval.py）----
-            metrics = None
-            if self.val_enabled and ((epoch + 1) % self.cfg.val_epochs == 0 or epoch == self.cfg.epochs - 1):
-                t_val = time.monotonic()
-                logger.info(VAL_HEADER_SEG if self.task == "segment" else VAL_HEADER)
-                metrics = self._validate()
-                val_elapsed = time.monotonic() - t_val
-                # 控制台定格行=进度条行；文件日志另落一行（带评估耗时）
-                log_file_only(format_val_row(metrics, seg=self.task == "segment")
-                              + f" · {fmt_elapsed(val_elapsed)}", name=logger.name)
-                fitness = metrics["mAP@[.5:.95]"]
-                if self.task == "segment":  # 官方 SegmentMetrics.fitness = box + mask mAP50-95
-                    fitness += metrics["mAP@[.5:.95](M)"]
-            else:
-                fitness = self.best_fitness
-            is_best = fitness > self.best_fitness
-            if is_best:
-                self.best_fitness = fitness
-                logger.info(f"new best fitness {fitness:.4f} -> best.safetensors")
+                # ---- 验证（训练中趋势口径；正式数字用 scripts/eval.py；DDP 只在 rank0）----
+                metrics = None
+                if self.val_enabled and ((epoch + 1) % self.cfg.val_epochs == 0 or epoch == self.cfg.epochs - 1):
+                    t_val = time.monotonic()
+                    logger.info(VAL_HEADER_SEG if self.task == "segment" else VAL_HEADER)
+                    metrics = self._validate()
+                    val_elapsed = time.monotonic() - t_val
+                    # 控制台定格行=进度条行；文件日志另落一行（带评估耗时）
+                    log_file_only(format_val_row(metrics, seg=self.task == "segment")
+                                  + f" · {fmt_elapsed(val_elapsed)}", name=logger.name)
+                    fitness = metrics["mAP@[.5:.95]"]
+                    if self.task == "segment":  # 官方 SegmentMetrics.fitness = box + mask mAP50-95
+                        fitness += metrics["mAP@[.5:.95](M)"]
+                else:
+                    fitness = self.best_fitness
+                is_best = fitness > self.best_fitness
+                if is_best:
+                    self.best_fitness = fitness
+                    logger.info(f"new best fitness {fitness:.4f} -> best.safetensors")
 
-            self._save(epoch, is_best)
-            self._append_results(epoch, elapsed, mean, lr_last, metrics)
+                self._save(epoch, is_best)
+                self._append_results(epoch, elapsed, mean, lr_last, metrics)
+            # 每轮无条件同步：rank0 验证/落盘期间其余 rank 在这里等待（不验证的 epoch 与
+            # stop_after 前也执行，保证所有 rank 的 epoch 边界一一对齐）
+            sync_barrier()
             if self.cfg.stop_after and epoch + 1 >= self.stop_after:  # 筛选实验：调度按 epochs 走
                 logger.info(f"stop_after={self.stop_after} reached — 提前结束（lr/close_mosaic 仍按 "
                             f"{self.cfg.epochs} 轮调度，便于与全长 run 同轮次对比）")
                 break
 
-        elapsed_total = time.monotonic() - t_start
-        n_epochs = min(self.stop_after, self.cfg.epochs) - self.start_epoch
-        logger.info(f"training done -> {self.run_dir} · {n_epochs} epoch{'s' if n_epochs != 1 else ''} "
-                    f"completed in {fmt_elapsed(elapsed_total)}")
-        if self.cfg.plots:
-            from utils.plots import write_training_report
-            write_training_report(self.run_dir, self.results_csv, self._last_val_metrics,
-                                  self.spec.names, self.task)
-        if self._n_corrupt_seen:  # 惰性 corrupt 汇总（启动时的 meta.json 里还是 0，重写一次补上）
-            logger.warning(f"{self._n_corrupt_seen} unreadable images replaced by blank samples during the run")
-            self._write_meta()
-        if self.val_enabled:  # 正式口径评估提示（best.safetensors 仅在有验证时落盘）
-            extra = f" --model {self.cfg.model}" if self.cfg.model != "yolo26" else ""
-            if self.task == "segment" and arch_has_scale(self.cfg.model):  # 固定档架构（flash）不写 --scale
-                extra += f" --scale {self.cfg.scale}"
-            logger.info(f"official eval: python scripts/eval.py --weights {self.run_dir / 'weights' / 'best.safetensors'} "
-                        f"--data {self.spec.source}{extra}")
+        if self.is_main:
+            elapsed_total = time.monotonic() - t_start
+            n_epochs = min(self.stop_after, self.cfg.epochs) - self.start_epoch
+            logger.info(f"training done -> {self.run_dir} · {n_epochs} epoch{'s' if n_epochs != 1 else ''} "
+                        f"completed in {fmt_elapsed(elapsed_total)}")
+            if self.cfg.plots:
+                from utils.plots import write_training_report
+                write_training_report(self.run_dir, self.results_csv, self._last_val_metrics,
+                                      self.spec.names, self.task)
+            if self._n_corrupt_seen:  # 惰性 corrupt 汇总（启动时的 meta.json 里还是 0，重写一次补上）
+                logger.warning(f"{self._n_corrupt_seen} unreadable images replaced by blank samples during the run")
+                self._write_meta()
+            if self.val_enabled:  # 正式口径评估提示（best.safetensors 仅在有验证时落盘）
+                extra = f" --model {self.cfg.model}" if self.cfg.model != "yolo26" else ""
+                if self.task == "segment" and arch_has_scale(self.cfg.model):  # 固定档架构（flash）不写 --scale
+                    extra += f" --scale {self.cfg.scale}"
+                logger.info(f"official eval: python scripts/eval.py --weights {self.run_dir / 'weights' / 'best.safetensors'} "
+                            f"--data {self.spec.source}{extra}")
+        # 收尾同步：rank0 写完产物前其余 rank 不提前销毁进程组（destroy 在脚本 finally 里）
+        sync_barrier()
 
     def _append_results(self, epoch, elapsed, mean, lr, metrics):
+        if not self.is_main:  # results.csv 只由 rank0 写
+            return
         row = {"epoch": epoch + 1, "time_s": round(elapsed, 1)}
         row.update({k: round(mean[k], 4) for k in self.loss_keys})
         row.update({"loss": round(mean["total"], 4), "lr": lr})

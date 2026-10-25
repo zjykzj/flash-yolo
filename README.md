@@ -98,9 +98,13 @@ python scripts/train.py --data coco --model flash-yolo-seg --name flash-seg --ba
 
 # official COCO-stage recipe (needs Objects365 segmentation initialization)
 python scripts/train.py --data coco --recipe yolo26-seg-coco-ft --weights <objv1-seg.safetensors>
+
+# multi-GPU DDP (training only; --batch is the GLOBAL batch, --workers is per GPU)
+python scripts/train.py --data coco --name ddp-coco --device 0,1 --batch 64 --workers 8
+# or: torchrun --standalone --nproc_per_node=2 scripts/train.py --data coco --batch 64
 ```
 
-From-scratch / finetune / resume and all recipe options: [docs/train.md](docs/train.md).
+From-scratch / finetune / resume, DDP details and all recipe options: [docs/train.md](docs/train.md).
 
 ### Evaluate
 

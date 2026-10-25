@@ -12,7 +12,8 @@ data: ""           # 数据集描述符（名字或 .yaml 路径，见 config/da
 scale: n
 model: yolo26      # 架构名（model/build.py 的 ARCHS 注册表）；yolov3-tiny 的 scale 固定 tiny
 epochs: 100
-batch: 16          # 物理 batch：最小可移植值（对齐 ultralytics default.yaml，8GB 笔记本可跑）。
+batch: 16          # 物理 batch（**全局**口径：DDP 下每卡 = batch/world_size，必须整除）
+                   # 最小可移植值（对齐 ultralytics default.yaml，8GB 笔记本可跑）。
                    # 大显存按 scripts/bench_io.py 实测值调大；梯度语义由 nbs 保证与物理 batch 无关
                    # （注意 batch 需整除或等于 nbs，否则 accum 取整后 wd 因子 ≠ 1.0）
 nbs: 64            # 名义 batch：accum = max(round(nbs/batch), 1)，任何物理 batch 下 lr 语义不变

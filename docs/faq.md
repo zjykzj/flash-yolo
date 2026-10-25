@@ -62,7 +62,7 @@ pycocotools 得 35.90 AP50 / 17.16 mAP50-95——同一权重 640 比 416 高（
 
 不能，实测必炸：fp16 在第 1 轮内 NaN、bf16 首个优化步就炸（机制 = BN eps=0.001 对 mosaic
 灰边等近常数区域的放大级联 + fp16 上限 65504）。**从零训练默认 fp32**；**微调**（`--weights`
-初始化，激活远离危险区间）可以试 `--amp`。`train.md` §7。
+初始化，激活远离危险区间）可以试 `--amp`。`train.md` §8。
 
 ### 训练 loss 正常，但权重爆掉 / 第几轮就 NaN？
 
@@ -73,7 +73,7 @@ pycocotools 得 35.90 AP50 / 17.16 mAP50-95——同一权重 640 比 416 高（
 ### 第一个 epoch 的 val mAP 是 0，正常吗？
 
 正常。cls 初始偏置让 sigmoid ≈ 1e-5，低于 conf 阈值，全部预测被过滤；训练一两步后恢复。
-不要误判为管线故障。`train.md` §7。
+不要误判为管线故障。`train.md` §8。
 
 ### 训练卡死：进程活着、GPU 0%、没有任何报错？
 
@@ -85,11 +85,20 @@ pycocotools 得 35.90 AP50 / 17.16 mAP50-95——同一权重 640 比 416 高（
 
 参考量级：flash-yolo 100 轮 batch 64 @640，单张 RTX 5090 ≈15.5 h（YOLO26n 同预算 ~14 h）。
 物理 batch 由显存定即可——**梯度语义与 lr 由 nbs 保证（default 64），调 batch 不用动 lr**。
-吞吐别拍脑袋，用 `scripts/bench_io.py` 实测（`train.md` §6）。
+吞吐别拍脑袋，用 `scripts/bench_io.py` 实测（`train.md` §6）；多卡吞吐见 `train.md` §7.5。
 
 ### 支持多卡 / 分布式训练吗？
 
-暂不支持，当前是单卡训练。
+支持（**仅训练**）。`--device 0,1` 自动为每卡起一个 worker，也支持 `torchrun --standalone
+--nproc_per_node=2 scripts/train.py ...`：
+
+```bash
+python scripts/train.py --data coco --device 0,1 --batch 64 --workers 8
+```
+
+`--batch` 是**全局** batch（2 卡时每卡 32，必须整除），`--workers` 是每卡的加载进程数。
+eval / export / infer 仍是单进程，CLI 不变。多卡结果与单卡**不逐位一致**（无 SyncBatchNorm，
+BN 批次统计按卡独立；同卡数重复运行可逐位复现），细节见 `train.md` §7。
 
 ### 换自己的数据集要改什么？
 
