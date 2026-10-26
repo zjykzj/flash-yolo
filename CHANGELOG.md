@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Resume across world size / device**: `resume.pt` now records world_size/device and loads through CPU, so continuing a run from 1 GPU on 2 GPUs (or CPU↔GPU) works; same-world-size resume stays bit-identical.
 - **Distributed training (DDP)**: `--device 0,1` or torchrun now trains detection and segmentation on multiple GPUs (`--batch` is global, per-GPU = batch/world_size). Single-GPU runs stay bit-identical; multi-GPU runs are reproducible per world size but not vs single GPU (no SyncBatchNorm).
 
+### Fixed
+
+- **Image-mode `--output`**: a single-image run now honors an explicit output filename (`.jpg`/`.png`/… or an existing file) and accepts a directory path; previously a directory was silently treated as a file path (only its parent was used) and the source filename always overrode the requested name. `labels/` now follows the output image's stem.
+
 ## [0.7.0] - 2026-10-24
 
 ### Added

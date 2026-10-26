@@ -48,6 +48,32 @@ def _collect_images(source):
     return [p]
 
 
+def _resolve_image_output(output, multi):
+    """解析图片模式的 --output。
+
+    Returns:
+        (run_dir, out_file)：out_file 为 None 时文件名沿用源图名（目录模式/默认）；
+        单图给显式文件路径时返回该路径，保存时用用户指定的文件名。
+
+    规则：目录模式只接受目录；单图模式下，已存在的文件或图片扩展名的路径按文件处理，
+    已存在的目录 / 无后缀 / 非图片后缀按目录处理（支持 `run.v1` 这类带点的目录名）。
+    """
+    out = Path(output).resolve()
+    if multi:
+        if out.exists():
+            if out.is_dir():
+                return out, None
+            raise ValueError(f"--output for a directory input must be a directory: {out}")
+        if out.suffix.lower() in _IMG_EXTS:
+            raise ValueError(f"--output for a directory input must be a directory, got image path: {out}")
+        return out, None
+    if out.is_dir():
+        return out, None
+    if out.exists() or out.suffix.lower() in _IMG_EXTS:
+        return out.parent, out
+    return out, None
+
+
 def _video_stem(source):
     """视频源 -> 默认输出名：相机索引 -> cameraN，URL/流 -> stream，文件 -> stem"""
     text = str(source)
@@ -199,8 +225,8 @@ def main():
                         help="architecture (default: inferred from the weights filename)")
     parser.add_argument(
         "--output", default=None,
-        help="output path: single image file / directory for images, video file for --video "
-             "(default runs/predict/predictN/)",
+        help="output path: image mode — a directory, or an explicit file path for a single image "
+             "(the filename is honored); video mode — a video file (default runs/predict/predictN/)",
     )
     parser.add_argument("--device", default=None, help="pt engine device (default auto)")
     parser.add_argument("--scale", default=None,
@@ -256,8 +282,9 @@ def main():
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 内部同一规则，构建后以 engine.imgsz 为准）
     imgsz = resolve_imgsz(args.weights, args.imgsz)
 
-    # 结果保存：图片默认 runs/predict/predictN/（--output 显式文件/目录）；视频默认 <run_dir>/<源名>.mp4
+    # 结果保存：图片默认 runs/predict/predictN/（--output 目录或单图显式文件）；视频默认 <run_dir>/<源名>.mp4
     video_out = None
+    image_out = None
     if args.output:
         out = Path(args.output).resolve()
         if video_mode:
@@ -268,7 +295,10 @@ def main():
             video_out = out
             run_dir = out.parent
         else:
-            run_dir = out if multi else out.parent
+            try:
+                run_dir, image_out = _resolve_image_output(args.output, multi)
+            except ValueError as exc:
+                parser.error(str(exc))
     else:
         run_dir = increment_path(ROOT / "runs" / "predict" / "predict")
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -330,12 +360,12 @@ def main():
         for k in stage_sums:
             stage_sums[k] += tseg[k]
 
-        out_path = run_dir / path.name
+        out_path = image_out if image_out is not None else run_dir / path.name
         draw_detections(image, dets, names, save_path=str(out_path))
 
-        # YOLO 格式标签：labels/<同名>.txt；分割写多边形行，检测写 cls xc yc w h（均归一化）
+        # YOLO 格式标签：labels/<输出图同名>.txt；分割写多边形行，检测写 cls xc yc w h（均归一化）
         h_img, w_img = image.shape[:2]
-        with open(labels_dir / (path.stem + ".txt"), "w", encoding="utf-8") as f:
+        with open(labels_dir / (out_path.stem + ".txt"), "w", encoding="utf-8") as f:
             f.writelines(line + "\n" for line in _label_lines(dets, engine.task, w_img, h_img))
 
         pipeline_ms = sum(tseg.values())

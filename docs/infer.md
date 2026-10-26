@@ -48,7 +48,7 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--nms` | off | o2m + NMS 路径（yolo26 专属；v3 会报错） |
 | `--agnostic-nms` | off | 跨类 NMS（需同时给 `--nms`；E2E 路径会报错） |
 | `--model` / `--scale` | 从文件名推断 | 架构/档位（推不出时报错要求显式给） |
-| `--output` | `runs/predict/predictN/` | 单图：输出文件路径；目录模式：输出目录；视频模式：输出视频文件（缺后缀补 `.mp4`） |
+| `--output` | `runs/predict/predictN/` | 单图：显式文件路径（文件名生效）或目录；目录模式：输出目录；视频模式：输出视频文件（缺后缀补 `.mp4`） |
 | `--data` | COCO 标签 | 只用 `names` + `nc`（不读图片） |
 | `--imgsz` | 权重 metadata > 640 | 覆盖输入尺寸 |
 | `--device` | auto | pt 引擎设备 |
@@ -87,6 +87,9 @@ Labels        -> runs/predict/predict21/labels
 - **conf 默认值与 eval 不同**（0.25 vs 0.001）：推理图省事，评估要对齐官方口径。
 - v3 只有一条"解码 + obj×cls + NMS"路径，`--nms` / `--raw` 对它直接报错。
 - 目录模式**只扫一层**（不递归，按文件名排序）；读不了的图会告警跳过，不中断批量。
+- **`--output` 的图片语义**：单图给 `.jpg/.png` 等图片后缀（或已存在的文件）时按文件处理，
+  文件名生效、`labels/<同名>.txt` 跟随该文件名；给已存在目录 / 无后缀 / 非图片后缀时按目录
+  处理，文件名沿用源图名。目录输入（`--image <dir>`）只接受目录输出，传图片路径会报错。
 - 类别名优先级：`--data`/权重 metadata 的 names > COCO 默认；名字对不上时可视化标的是序号。
 - **视频模式不写 `labels/`**（逐帧 txt 没有稳定的文件命名语义）；要标注数据请抽帧成图片再走
   图片模式。输出编码按后缀选：`.avi`/`.mjpg` 用 MJPG，其余（默认 `.mp4`）用 mp4v；写不了时
