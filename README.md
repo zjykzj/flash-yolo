@@ -62,11 +62,15 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
 | YOLO26-seg | segmentation | n / s / m / l / x | 3.13M (n) | 9.3 (n) | Box + Mask, COCO polygons / YOLO-seg txt |
 | Flash-YOLO | detection | flash | 1.97M | 3.80 | this repo's lightweight design |
 | Flash-YOLO-seg | segmentation | flash | 2.53M | 7.6 | same backbone/neck, Segment26 head |
-| YOLOv3-tiny / -SiLU | detection | tiny (416) | 8.85M | 5.56 @416 | darknet-compatible; official `.weights` for the original variant |
+| YOLOv3-tiny / -SiLU | detection | tiny | 8.85M | 5.56 @416 | darknet-compatible; official `.weights` for the original variant |
 
 YOLOv3-tiny reference: official darknet weights evaluate at 17.16 / 35.90 (mAP50-95 / mAP50)
 @640 through this pipeline; the recommended 300-epoch from-scratch config reaches 16.52 / 30.44
 @416. See [docs/weights.md](docs/weights.md).
+
+> YOLOv3-tiny's canonical input is **416** (darknet; the GFLOPs column is measured there).
+> `config/train.yaml` keeps `imgsz: 640` for every architecture, so the v3 protocol needs
+> `--imgsz 416` explicitly; from-scratch at 640 would also want re-clustered anchors.
 
 ## Quick Start
 
