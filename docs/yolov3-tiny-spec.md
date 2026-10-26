@@ -169,8 +169,10 @@ wh = anchor · exp(t)               # tw/th 取原始 logits，先 clamp(±8) �
 - **架构注册**：`model/build.py::ARCHS`（`build_yolov3_tiny`）；损失由 `build_loss` 按架构分派；
   Trainer 按 `cfg.model` 分派（非 yolo26 → yaml 默认档）。
 - **训练配方**：默认吃内置 `default`；**推荐配置 = `--model yolov3-tiny-silu` +
-  `--obj-iou-target`（+ default 核）**——300 轮正式 **16.52 / 30.44**（与官方权重 mAP50-95
-  仅差 0.42；100 轮 15.23 / 28.58），见 runs 文档 §4.5。darknet 对齐配方（旧
+  `--obj-iou-target`（+ default 核）**。v0.7.0 默认（MuSGD 0.2/1.0）300 轮正式
+  **16.15 / 29.93**；v0.6.0 批次（0.528/0.674）为 **16.52 / 30.44**（与官方权重
+  mAP50-95 差 0.42），要复现需加 `--muon-w 0.528 --sgd-w 0.674`。100 轮证据
+  15.23 / 28.58。见 runs 文档 §4.5 / §4.6。darknet 对齐配方（旧
   `yolov3-tiny-darknet.yaml`）已经探针定案、随实验完成退役删除（见 runs 文档 §4.4）。
 - **测试**（`pytest tests/`）：`test_v3_model.py`（结构/参数/前向形状/解码数值/锚点 imgsz
   不变性/未知档位拒绝/strict 往返）、`test_v3_loss.py`（分派/匹配/空 GT/批量口径/梯度回流）、
@@ -190,4 +192,5 @@ wh = anchor · exp(t)               # tw/th 取原始 logits，先 clamp(±8) �
 
   官方发布的 33.1 AP50 是 **COCO test-dev @416** 口径；同权重本管线 640 比 416 高（锚值不
   缩放 + 有效分辨率更高），两者不可直接相减。
-- 从零训练数字、全部 run 记录与配方归因实验：见 `yolov3-tiny-runs.md`。
+- 从零训练数字、全部 run 记录与配方归因实验：见 `yolov3-tiny-runs.md`（v0.7.0 默认复跑
+  与 v0.6.0 批次的对照见 §4.6）。

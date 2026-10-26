@@ -65,8 +65,9 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
 | YOLOv3-tiny / -SiLU | detection | tiny | 8.85M | 5.56 @416 | darknet-compatible; official `.weights` for the original variant |
 
 YOLOv3-tiny reference: official darknet weights evaluate at 17.16 / 35.90 (mAP50-95 / mAP50)
-@640 through this pipeline; the recommended 300-epoch from-scratch config reaches 16.52 / 30.44
-@416. See [docs/weights.md](docs/weights.md).
+@640 through this pipeline. From-scratch 300-epoch runs at 416 reach **16.15 / 29.93** with the
+current default recipe (SiLU + `--obj-iou-target`); the v0.6.0 recipe
+(`--muon-w 0.528 --sgd-w 0.674`) reaches 16.52 / 30.44. See [docs/weights.md](docs/weights.md).
 
 > YOLOv3-tiny's canonical input is **416** (darknet; the GFLOPs column is measured there).
 > `config/train.yaml` keeps `imgsz: 640` for every architecture, so the v3 protocol needs

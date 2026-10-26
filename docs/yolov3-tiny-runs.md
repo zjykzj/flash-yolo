@@ -46,10 +46,17 @@
 | `v3-darknet-e300` | 10-10 14:03 | 300ep，darknet 配方，batch 64 | 4 分钟后中断（与 flash 同跑时 reserved 冲到 30.35G，改 batch 16 重启） | — | — |
 | `v3-darknet-e3002` | 10-10 14:13 | 300ep，darknet 配方，batch 16，43 h 53 m | 完成 | 0.1233 / 0.2416（best 在末轮 ep300） | **12.76 / 25.09** |
 | `v3-softobj-e300`（`-e3003`） | 10-14 13:36 | 300ep，default + IoU-aware objectness | 完成（≈31 h，两条并发） | 0.1586 / 0.2913（best 在末轮 ep300） | **16.07 / 29.56** |
-| `v3-silu-softobj-e300`（`-e3004`） | 10-14 13:36 | 300ep，SiLU + IoU-aware objectness（**推荐配置**） | 完成（≈31 h，两条并发） | 0.1630 / 0.3000（best 在末轮 ep300） | **16.52 / 30.44** |
+| `v3-silu-softobj-e300`（`-e3004`） | 10-14 13:36 | 300ep，SiLU + IoU-aware objectness（**v0.6.0 推荐配置**） | 完成（≈31 h，两条并发） | 0.1630 / 0.3000（best 在末轮 ep300） | **16.52 / 30.44** |
+| `v1-softobj-e300`（`-softobj2`） | 10-25 14:35 | 300ep，default + IoU-aware objectness（**v0.7.0 默认**，MuSGD 0.2/1.0） | 完成（31 h 53 m，两条并发） | 0.1579 / 0.2909（best 在末轮 ep300） | **16.03 / 29.59** |
+| `v1-silu-softobj-e300`（`-softobj3`） | 10-25 14:36 | 300ep，SiLU + IoU-aware objectness（v0.7.0 默认，MuSGD 0.2/1.0） | 完成（31 h 52 m，两条并发） | 0.1596 / 0.2952（best 在末轮 ep300） | **16.15 / 29.93** |
 
 （`v3-darknet-e3002` 的正式数字取 `weights/best.safetensors` = EMA 副本，评估口径与其余
 run 同：`scripts/eval.py --data coco --model yolov3-tiny`，imgsz 由 metadata 还原 416。）
+
+> `v1-*` = 2026-10-25/26 用 v0.7.0 代码复跑的 300 轮。与 `v3-*`（v0.6.0 批次）逐项同配方
+> （batch 64 / nbs 64 / 416 / seed 0 / 两条并发），唯一差异是 10-18 起默认 MuSGD 常数从
+> 官方 n 档配方值 0.528/0.674 改为 released ultralytics 代码默认 0.2/1.0（外加随之变化的
+> 随机流）。两批数字的对照与结论见 §4.6。
 
 ```bash
 # 100 轮（正式口径 12.70 / 24.84）
@@ -177,12 +184,14 @@ warmup 一致）在台阶差异生效前就出现，只能来自多尺度（和/
 ② 本 run 是 b16（OOM 改的）而 default 是 b64 —— ep1 两条 run 近乎逐位一致
 （0.0007/0.0007，val 损失差 1~4%），管线等价无疑，但 b16 的小惩罚不能排除。
 
-### 4.3 当前位置（2026-10-15）
+### 4.3 历史位置（2026-10-15，v0.6.0 批次）
+
+> v0.7.0 起默认 MuSGD 常数变化（0.528/0.674 → 0.2/1.0），当前默认的复跑结果见 §4.6。
 
 | 模型（全部 @416，val2017） | 正式 mAP50-95 / mAP50 |
 |---|---|
 | 官方 darknet 权重（同管线） | 16.94 / 34.37 |
-| **自训最优：SiLU + IoU-aware objectness 300 轮（推荐配置，§4.5）** | **16.52 / 30.44** |
+| **自训最优：SiLU + IoU-aware objectness 300 轮（v0.6.0 推荐配置，§4.5）** | **16.52 / 30.44** |
 | 原版 + IoU-aware objectness 300 轮 | 16.07 / 29.56 |
 | SiLU + IoU-aware objectness 100 轮 | 15.23 / 28.58 |
 | IoU-aware objectness 单轴 100 轮 | 14.85 / 27.97 |
@@ -220,6 +229,11 @@ warmup 一致）在台阶差异生效前就出现，只能来自多尺度（和/
 MuSGD momentum 0.937 · wd 0.0005 · mosaic 1.0 …，逐项 = ultralytics default.yaml），
 `--imgsz 416 --batch 64 --nbs 64`。
 
+> 2026-10-26 注：v0.7.0 起默认 MuSGD 常数改为 0.2/1.0（released ultralytics 代码默认），
+> 当前默认复跑结果为 16.15 / 29.93（SiLU）、16.03 / 29.59（原版），见 §4.6。下文
+> 16.52 / 30.44 是 v0.6.0 用 0.528 / 0.674 的结果；要复现需显式加
+> `--muon-w 0.528 --sgd-w 0.674`。
+
 ```bash
 # 最终 300 轮（2026-10-15 已完成：16.52 / 30.44；run = v3-silu-softobj-e3004）
 python scripts/train.py --data coco --model yolov3-tiny-silu --obj-iou-target \
@@ -236,6 +250,48 @@ mAP50 差 3.93（30.44 vs 34.37）。激活轴 A/B（同 300 轮、只差 `--mod
 **16.07 / 29.56**（vs default +1.84 / +2.06，P 0.4436 / R 0.3150）——silu 增量 **+0.45 / +0.88**
 在长预算下保持（100 轮配对 +0.41 / +0.98）。默认 300 轮的正式数字复核复现一致（14.23 / 27.50）。
 速度与部署产物档案（ORT-CPU / TensorRT · onnx/engine 清单）见 `weights.md`。
+
+### 4.6 v0.7.0 默认值复跑：与 v0.6.0 批次、官方权重的对照（2026-10-26）
+
+背景：2026-10-18 的 `ebbfac9` 把默认 MuSGD 常数从官方 n 档 COCO 配方的 0.528/0.674
+改为 released ultralytics `build_optimizer` 的代码默认 0.2/1.0（官方各阶段值仍保留在
+`config/recipes/`，官方权重复现不受影响）。v0.6.0 发布批次的两个 300 轮模型（训练时版本号
+还是 0.5.0，权重 metadata 记为 `version 0.5.0`）是在旧默认下训练的，因此 10-25/26 用
+v0.7.0 原样默认复跑了两条 300 轮（命令与 §4.5 相同，只是不加 `--muon-w/--sgd-w`）。
+
+| 模型（@416，300ep） | v0.6.0（0.528/0.674） | v0.7.0（0.2/1.0） | Δ |
+|---|---:|---:|---:|
+| 原版 + IoU-aware objectness | 16.07 / 29.56（P 0.4436 / R 0.3150） | **16.03 / 29.59**（P 0.4383 / R 0.3250） | −0.04 / +0.03 |
+| SiLU + IoU-aware objectness | 16.52 / 30.44（P 0.4612 / R 0.3216） | **16.15 / 29.93**（P 0.4450 / R 0.3216） | −0.37 / −0.51 |
+
+训练中 FastMetrics → 正式评估的换算保持稳定：原版 15.79 / 29.09 → 16.03 / 29.59，
+SiLU 15.96 / 29.52 → 16.15 / 29.93（+0.19~0.24 / +0.41~0.50）。
+
+结论：
+
+1. **原版几乎完全复现**（0.04 点内），MuSGD 常数变化对它没有可测影响；
+2. **SiLU 版低 0.37 / 0.51**，相对原版的增益从 v0.6.0 的 +0.45 / +0.88 缩小到
+   **+0.12 / +0.34**——仍为正，但优势明显变小；
+3. 差异量级与"同配方不同随机流"相当（参考：仅 DDP 采样流不同，20 轮时差 1.3 点，收敛后
+   收窄），不足以下结论说哪组常数更优；它只说明**默认值变化对 SiLU 有轻微负面影响**；
+4. 若目标是复现 v0.6.0 的 16.52 / 30.44，显式加 `--muon-w 0.528 --sgd-w 0.674`；
+   若目标是"当前默认配置的最终效果"，§4.6 的 16.15 / 29.93 就是答案。
+
+与官方权重（同管线 @416 = 16.94 / 34.37）的差距：v0.6.0 SiLU 0.42 / 3.93，
+v0.7.0 SiLU 0.79 / 4.44；原版 0.87 / 4.81（v0.6.0）→ 0.91 / 4.78（v0.7.0）。
+
+产物（本地，`runs/` 不入库）：
+
+- 权重：`runs/train/train-v1-yolov3-tiny-e300-416-softobj2/weights/best.safetensors`、
+  `runs/train/train-v1-yolov3-tiny-silu-e300-416-softobj3/weights/best.safetensors`
+  （metadata：version 0.7.0 · commit e7cac56 · describe v0.7.0-3-ge7cac56-dirty）
+- 部署：`runs/export/v1-yolov3-tiny[-silu]-softobj-e300-416.{onnx,engine,fp16.onnx,fp16.engine}`
+- 评估：`runs/val/val3`（原版）、`runs/val/val4`（SiLU）
+- 推理抽检：pt / onnx / trt / trt-fp16 四引擎在 `assets/traffic.jpg` 上检出类别一致，
+  仅近阈值框各有 1 个差异（引擎浮点差异）；产物在 `runs/predict/v1-v3*-traffic-*`
+  （baseball 另见 `runs/predict/v1-v3*-baseball-pt`）。model-only 推理段 416：
+  pt ≈2.4–2.7 ms、ORT-CPU ≈4.4–5.1 ms、TRT fp32 ≈0.8 ms、TRT fp16 ≈1.0–1.2 ms
+  （单图，含宿主负载）。
 
 ## 5. 对照实验（已完成）
 
@@ -269,5 +325,7 @@ NMS"路径。
 
 - [x] 最终 300 轮 run（§4.5 命令）——**2026-10-15 完成：16.52 / 30.44**（silu+softobj）与
       16.07 / 29.56（原版+softobj），已回填 §3 / §4.3 / §4.5
+- [x] v0.7.0 默认值复跑 300 轮（2026-10-26）——**16.15 / 29.93**（SiLU）与 16.03 / 29.59
+      （原版），对照见 §4.6；导出/推理抽检产物在 `runs/export` / `runs/predict`
 - [ ] 416 锚点重聚类（prior-fit 差 0.024，可选；COCO 形数据收益有限，见 spec 第 8 节）
 - [ ] 缝若能再收，回填 §2 / §4.3 的对照表
