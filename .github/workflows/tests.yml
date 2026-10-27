@@ -1,0 +1,41 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # opencv-python imports need libGL / glib on the runner.
+      - name: Install OpenCV system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0
+
+      # CPU-only torch: the default CUDA wheels are large and unused here.
+      # Installing it first keeps `requirements.txt` from pulling them in.
+      - name: Install PyTorch (CPU)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      # ultralytics is not installed: parity tests importorskip it and the
+      # smoke / repro / DDP gates stay off, so this runs the CPU core suite.
+      - name: Run tests
+        run: pytest tests/ -q

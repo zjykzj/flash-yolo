@@ -8,6 +8,7 @@
 > Core runtime is just PyTorch + NumPy — no monolithic abstractions, no ultralytics dependency.
 
 <p align="center">
+  <a href="https://github.com/zjykzj/flash-yolo/actions/workflows/tests.yml"><img src="https://github.com/zjykzj/flash-yolo/actions/workflows/tests.yml/badge.svg?branch=main" alt="Tests"></a>
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-0.7.0-blue.svg" alt="Version 0.7.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python 3.12"></a>
