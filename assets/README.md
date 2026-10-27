@@ -23,9 +23,29 @@ python scripts/infer.py --weights runs/train/train-flash-seg-100ep2/weights/best
 - `baseball_det.jpg` — detections rendered on `baseball.jpg`
 - `baseball_seg.jpg` — instance segmentation rendered on `baseball.jpg`
 
+## Animated demo
+
+`demo_det.gif` / `demo_seg.gif` — YOLO26n / YOLO26n-seg inference on a street clip.
+
+- Source: <https://www.pexels.com/video/15247002/> (Pexels license: free to use, attribution not
+  required)
+- Segment: 23.5–31.5 s of the 1920×1080 / 24 fps original, downscaled to 960×540 for inference
+- Output: 520×292, 10 fps, 80 frames, 96-color GIF (~4.7 MB each)
+- The original video and intermediate mp4 files are not stored in the repository.
+
+Rendered with:
+
+```bash
+python scripts/infer.py --weights weights/yolo26n.safetensors \
+    --video demo_clip_960x540.mp4 --output annotated_det.mp4
+python scripts/infer.py --weights weights/yolo26n-seg.safetensors \
+    --video demo_clip_960x540.mp4 --output annotated_seg.mp4
+```
+
 Usage:
 
-- Hero images in the README (the `*_det.jpg` / `*_seg.jpg` renders) and demo input for `scripts/infer.py`
+- README visuals: `demo_det.gif` / `demo_seg.gif` in the hero area; the `*_det.jpg` / `*_seg.jpg`
+  renders in the Detection / Segmentation usage sections; demo input for `scripts/infer.py`
 - Real-image test data for `tests/test_export_parity.py` (onnx vs pt consistency, `traffic.jpg`)
 
 Note: COCO images belong to their original photographers (per-image Flickr licenses; the COCO

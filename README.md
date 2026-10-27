@@ -16,10 +16,9 @@
 </p>
 
 <p align="center">
-  <img src="assets/traffic_det.jpg" width="49%" alt="flash-yolo detections — street traffic">
-  <img src="assets/baseball_det.jpg" width="49%" alt="flash-yolo detections — baseball">
+  <img src="assets/demo_det.gif" width="640" alt="YOLO26n detection demo — street traffic">
   <br>
-  <em>Detections by the 100-epoch Flash-YOLO checkpoint — COCO val2017 samples, 640 input</em>
+  <em>YOLO26n detection on a street clip — 640 input</em>
 </p>
 
 COCO val2017, official pycocotools (`scripts/eval.py`), 640 input. E2E = NMS-free default path;
@@ -34,10 +33,9 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
 | **Δ (Flash-YOLO vs YOLO26n, same budget)** | | **−2.45 (−7%)** | **−2.69 (−5%)** | | | **−0.60M (−23%)** | **−1.68 (−31%)** |
 
 <p align="center">
-  <img src="assets/traffic_seg.jpg" width="49%" alt="flash-yolo-seg instance segmentation — street traffic">
-  <img src="assets/baseball_seg.jpg" width="49%" alt="flash-yolo-seg instance segmentation — baseball">
+  <img src="assets/demo_seg.gif" width="640" alt="YOLO26n-seg instance segmentation demo — street traffic">
   <br>
-  <em>Instance segmentation by the 100-epoch Flash-YOLO-seg checkpoint — same COCO val2017 samples, 640 input</em>
+  <em>YOLO26n-seg instance segmentation on the same clip — 640 input</em>
 </p>
 
 | Model | Training | Box mAP50-95 | Box mAP50 | Mask mAP50-95 | Mask mAP50 | Params | GFLOPs |
@@ -225,6 +223,13 @@ python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.
 
 Full engine and output notes: [docs/infer.md](docs/infer.md).
 
+<p align="center">
+  <img src="assets/traffic_det.jpg" width="49%" alt="flash-yolo detections — street traffic">
+  <img src="assets/baseball_det.jpg" width="49%" alt="flash-yolo detections — baseball">
+  <br>
+  <em>Detections by the 100-epoch Flash-YOLO checkpoint — COCO val2017 samples, 640 input</em>
+</p>
+
 ### Segmentation
 
 Supported architectures: **YOLO26-seg** (n/s/m/l/x), **Flash-YOLO-seg**.
@@ -269,6 +274,13 @@ python scripts/infer.py --weights weights/flash-yolo-seg.safetensors \
 ```
 
 Full engine and output notes: [docs/infer.md](docs/infer.md).
+
+<p align="center">
+  <img src="assets/traffic_seg.jpg" width="49%" alt="flash-yolo-seg instance segmentation — street traffic">
+  <img src="assets/baseball_seg.jpg" width="49%" alt="flash-yolo-seg instance segmentation — baseball">
+  <br>
+  <em>Instance segmentation by the 100-epoch Flash-YOLO-seg checkpoint — same COCO val2017 samples, 640 input</em>
+</p>
 
 ## Documentation
 
