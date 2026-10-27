@@ -54,6 +54,18 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
 - Full latency (ORT-CPU / TensorRT fp32/fp16, b1/b8), deployment artifacts and provenance:
   [docs/weights.md](docs/weights.md).
 
+## Table of Contents
+
+- [Supported Models](#supported-models)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Usage](#usage)
+  - [Detection](#detection)
+  - [Segmentation](#segmentation)
+- [Documentation](#documentation)
+- [Citation](#citation)
+- [License](#license)
+
 ## Supported Models
 
 | Architecture | Task | Scale | Params | GFLOPs | Notes |
