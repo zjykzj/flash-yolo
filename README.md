@@ -159,6 +159,34 @@ The full manual starts at [docs/README.md](docs/README.md): train / val / export
 docker / FAQ, released weights and latency ([docs/weights.md](docs/weights.md)), and the
 per-architecture specs (YOLO26, Flash-YOLO / -seg, YOLOv3-tiny).
 
+## Citation
+
+If you use the YOLO26 architecture or its training recipe in your work, please cite the YOLO26
+paper. The YOLOv3-tiny variant follows the original YOLOv3 design (darknet cfg / `.weights`) —
+cite the YOLOv3 paper when referring to that architecture.
+
+```bibtex
+@article{jocher2026yolo26,
+  title   = {Ultralytics YOLO26: Unified Real-Time End-to-End Vision Models},
+  author  = {Jocher, Glenn and Qiu, Jing and Liu, Mengyu and Lyu, Shuai and Akyon, Fatih Cagatay and Kalfaoglu, Muhammet Esat},
+  journal = {arXiv preprint arXiv:2606.03748},
+  year    = {2026},
+  doi     = {10.48550/arXiv.2606.03748},
+  url     = {https://arxiv.org/abs/2606.03748}
+}
+```
+
+```bibtex
+@article{redmon2018yolov3,
+  title   = {YOLOv3: An Incremental Improvement},
+  author  = {Redmon, Joseph and Farhadi, Ali},
+  journal = {arXiv preprint arXiv:1804.02767},
+  year    = {2018},
+  doi     = {10.48550/arXiv.1804.02767},
+  url     = {https://arxiv.org/abs/1804.02767}
+}
+```
+
 ## License
 
 The code is licensed under **Apache-2.0** — see [LICENSE](LICENSE) for details.
