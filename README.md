@@ -64,6 +64,7 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
   - [Detection](#detection)
   - [Segmentation](#segmentation)
 - [Documentation](#documentation)
+- [Contributing](#contributing)
 - [Citation](#citation)
 - [License](#license)
 
@@ -274,6 +275,30 @@ Full engine and output notes: [docs/infer.md](docs/infer.md).
 The full manual starts at [docs/README.md](docs/README.md): train / val / export / infer / dataset /
 docker / FAQ, released weights and latency ([docs/weights.md](docs/weights.md)), and the
 per-architecture specs (YOLO26, Flash-YOLO / -seg, YOLOv3-tiny).
+
+## Contributing
+
+Issues and pull requests are welcome. For substantial changes, please open an issue first so the
+approach can be discussed before implementation.
+
+### Development setup
+
+```bash
+pip install -r requirements-dev.txt   # pytest + ultralytics (dev-time reference only)
+pytest tests/ -q                      # CPU core suite — the same command CI runs
+```
+
+Some suites are gated by environment variables:
+
+```bash
+FLASH_YOLO_SMOKE=1 pytest tests/test_train_smoke.py -q   # end-to-end train/export smoke, CPU ~2-5 min
+FLASH_YOLO_REPRO=1 pytest tests/test_train_repro.py -q   # bit-reproducible training (GPU recommended)
+FLASH_YOLO_DDP=1   pytest tests/test_distributed.py -q   # 2-process CPU gloo DDP
+```
+
+Please keep the independent-module structure and add tests for behavior changes. Do not copy code
+from the upstream ultralytics repository (AGPL-3.0) — [CONTRIBUTING.md](CONTRIBUTING.md) describes
+the full workflow and review expectations.
 
 ## Citation
 
