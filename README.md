@@ -73,82 +73,185 @@ current default recipe (SiLU + `--obj-iou-target`); the v0.6.0 recipe
 > `config/train.yaml` keeps `imgsz: 640` for every architecture, so the v3 protocol needs
 > `--imgsz 416` explicitly; from-scratch at 640 would also want re-clustered anchors.
 
-## Quick Start
+## Installation
+
+**Requirements:** Python 3.12 · PyTorch 2.x · NumPy · OpenCV. The core runtime is PyTorch + NumPy;
+ONNX Runtime and TensorRT are only needed for the corresponding deployment engines.
 
 ```bash
+git clone https://github.com/zjykzj/flash-yolo.git
+cd flash-yolo
 pip install -r requirements.txt
-python model/summary.py --model flash-yolo   # architecture sanity check, no data needed
 ```
 
-Datasets are described by a small yaml. Fill in the single machine-specific `path:` and
-`--data coco` resolves to the local descriptor:
+Optional development setup — runs the test suite and converts official checkpoints:
+
+```bash
+pip install -r requirements-dev.txt   # adds pytest + ultralytics (dev-time reference only)
+python model/summary.py --model flash-yolo   # architecture sanity check, no data needed
+pytest tests/ -q
+```
+
+A verified environment (Python 3.12, CUDA 13, TensorRT 11.4) is available as a Docker image:
+
+```bash
+docker build -t flash-yolo:dev .
+docker/run.sh                          # interactive shell, repo mounted at /workspace
+docker/run.sh pytest tests/            # run any command inside the container
+```
+
+See [docs/docker.md](docs/docker.md) for host requirements (NVIDIA driver ≥ 580, nvidia-container-toolkit).
+
+## Quick Start
+
+From a clean checkout to an annotated image — no dataset preparation, no ultralytics install.
+Download a released checkpoint from [Releases](https://github.com/zjykzj/flash-yolo/releases) and
+save it as `weights/flash-yolo.safetensors`.
+
+```bash
+# 1) run inference on the bundled sample
+python scripts/infer.py --weights weights/flash-yolo.safetensors \
+    --image assets/traffic.jpg
+
+# 2) open the result
+# -> runs/predict/predictN/traffic.jpg   (annotated image)
+# -> runs/predict/predictN/labels/traffic.txt
+```
+
+Segmentation works the same way — save the released segmentation checkpoint as
+`weights/flash-yolo-seg.safetensors` and the instance masks are overlaid:
+
+```bash
+python scripts/infer.py --weights weights/flash-yolo-seg.safetensors \
+    --image assets/traffic.jpg
+```
+
+Video, camera and RTSP streams are supported by the same script:
+
+```bash
+python scripts/infer.py --weights weights/flash-yolo.safetensors \
+    --video /path/to/video.mp4
+python scripts/infer.py --weights weights/flash-yolo.safetensors \
+    --video 0 --max-frames 300        # camera index / live stream
+```
+
+One-command export to ONNX (add `--trt` for a TensorRT engine):
+
+```bash
+python scripts/export.py --weights weights/flash-yolo.safetensors
+# -> runs/export/flash-yolo.onnx
+```
+
+Other released checkpoints and their metrics: [docs/weights.md](docs/weights.md).
+
+## Usage
+
+Both tasks read datasets through the same descriptor mechanism. Point `--data coco` at your local
+dataset root once:
 
 ```bash
 cp config/datasets/coco.yaml config/datasets/local/coco.yaml   # then edit `path:`
 ```
 
-See [docs/dataset.md](docs/dataset.md) for YOLO-format descriptors and segmentation labels,
-and [docs/docker.md](docs/docker.md) for the container environment.
+YOLO-format descriptors, segmentation labels and conversions are covered in
+[docs/dataset.md](docs/dataset.md).
 
-## Usage
+### Detection
 
-### Train
+Supported architectures: **YOLO26** (n/s/m/l/x), **Flash-YOLO**, **YOLOv3-tiny / -SiLU**.
+
+**Train**
 
 ```bash
-# detection — the repo's own lightweight architecture
-python scripts/train.py --data coco --model flash-yolo --name flash-coco-e100 --batch 64 --workers 16
-# -> runs/train/train-flash-coco-e100/  (best/last safetensors · results.csv · diag/ · samples/)
+# Flash-YOLO — this repo's lightweight architecture
+python scripts/train.py --data coco --model flash-yolo --name flash-coco-e100 --batch 32 --workers 8
 
-# segmentation
-python scripts/train.py --data coco --model yolo26-seg --name seg-coco --batch 64 --workers 16
-python scripts/train.py --data coco --model flash-yolo-seg --name flash-seg --batch 32 --workers 8
+# YOLO26 (n by default; --scale s/m/l/x for other sizes)
+python scripts/train.py --data coco --model yolo26 --name yolo26n-coco-e100 --batch 32 --workers 8
 
-# official COCO-stage recipe (needs Objects365 segmentation initialization)
-python scripts/train.py --data coco --recipe yolo26-seg-coco-ft --weights <objv1-seg.safetensors>
+# YOLOv3-tiny — darknet protocol (canonical 416 input, passed explicitly)
+python scripts/train.py --data coco --model yolov3-tiny --imgsz 416 --name v3tiny-coco-e300 --batch 32 --workers 8
 
-# multi-GPU DDP (training only; --batch is the GLOBAL batch, --workers is per GPU)
-python scripts/train.py --data coco --name ddp-coco --device 0,1 --batch 64 --workers 8
-# or: torchrun --standalone --nproc_per_node=2 scripts/train.py --data coco --batch 64
+# multi-GPU DDP: --batch is the GLOBAL batch (16 per GPU here), --workers is per GPU
+python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8
 
-# resume works across GPU counts / devices (1<->2 GPUs, CPU<->GPU)
-python scripts/train.py --data coco --device 0,1 --resume runs/train/train-ddp-coco/resume.pt
+# resume (works across GPU counts / devices)
+python scripts/train.py --data coco --device 0,1 --resume runs/train/train-<name>/resume.pt
 ```
 
-From-scratch / finetune / resume, DDP details and all recipe options: [docs/train.md](docs/train.md).
+Runs land in `runs/train/train-<name>/` (`best/last.safetensors`, `results.csv`, `diag/`, `samples/`).
+From-scratch / finetune / recipes / DDP details: [docs/train.md](docs/train.md).
 
-### Evaluate
+**Evaluate**
 
 ```bash
 python scripts/eval.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors --data coco
-# E2E by default; add --nms for the one-to-many + NMS path.
-# Segmentation checkpoints automatically produce Box + Mask tables.
+# E2E (NMS-free) by default; add --nms for the one-to-many + NMS path.
 ```
 
 `--split`, `--limit`, `--imgsz` and metric details: [docs/val.md](docs/val.md).
 
-### Export
+**Export**
 
 ```bash
 python scripts/export.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors --trt
-# -> runs/export/*.onnx + *.engine  (add --fp16 for half precision; segmentation exports two outputs)
+# --fp16 for half precision; --dynamic for a dynamic batch axis.
 ```
 
 ONNX / TensorRT options and output contracts: [docs/export.md](docs/export.md).
 
-### Inference
+**Infer**
 
 ```bash
 python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors \
-    --image assets/traffic.jpg
-# --engine onnx|trt switches runtime; --image accepts a file or a directory.
-# Annotated images + YOLO-txt labels are written under runs/predict/.
+    --image assets/traffic.jpg          # file or directory
+python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors \
+    --video 0 --max-frames 300          # file / RTSP URL / camera index
+```
 
-# Video / camera / RTSP stream -> annotated video under runs/predict/ (no per-frame labels)
-# --video takes your own file / stream URL / camera index; there is no bundled demo video.
-python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors \
-    --video /path/to/video.mp4
-python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors \
-    --video 0 --max-frames 300   # camera index / live stream
+Full engine and output notes: [docs/infer.md](docs/infer.md).
+
+### Segmentation
+
+Supported architectures: **YOLO26-seg** (n/s/m/l/x), **Flash-YOLO-seg**.
+
+**Data**
+
+COCO polygon annotations and YOLO-seg txt rows (`cls x1 y1 ...`) are both accepted; bbox-only
+rows fall back to rectangles. Format details and the COCO converter:
+[docs/dataset.md](docs/dataset.md).
+
+**Train**
+
+```bash
+python scripts/train.py --data coco --model yolo26-seg --name seg-coco --batch 32 --workers 8
+python scripts/train.py --data coco --model flash-yolo-seg --name flash-seg --batch 32 --workers 8
+
+# official COCO-stage recipe (needs the 365-class O365 segmentation initialization)
+python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
+    --weights <objv1-seg.safetensors> --batch 32 --workers 8
+```
+
+Segmentation memory/throughput notes (`--mask-ratio`, `--overlap-mask`, batch sizing):
+[docs/train.md](docs/train.md).
+
+**Evaluate** — checkpoints produce Box and Mask tables automatically:
+
+```bash
+python scripts/eval.py --weights runs/train/train-seg-coco/weights/best.safetensors --data coco
+```
+
+**Export** — the model has two outputs (detections + mask prototypes):
+
+```bash
+python scripts/export.py --weights runs/train/train-flash-seg/weights/best.safetensors --trt
+```
+
+**Infer** — masks are overlaid on the image; labels are written as normalized polygons:
+
+```bash
+python scripts/infer.py --weights weights/flash-yolo-seg.safetensors \
+    --image assets/traffic.jpg
 ```
 
 Full engine and output notes: [docs/infer.md](docs/infer.md).
