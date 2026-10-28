@@ -23,14 +23,18 @@
 
 COCO val2017, official pycocotools (`scripts/eval.py`), 640 input. E2E = NMS-free default path;
 NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO finetuning;
-"from scratch" rows use the built-in baseline recipe for 100 epochs — not like for like.
+"from scratch" rows use the built-in baseline recipe for 300 epochs — not like for like.
 
 | Model | Training | E2E mAP50-95 | E2E mAP50 | NMS mAP50-95 | NMS mAP50 | Params | GFLOPs |
 |---|---|---:|---:|---:|---:|---:|---:|
 | YOLO26n · official weights | O365 + COCO | **40.27** | 55.80 | **40.89** | 56.87 | 2.57M | 5.48 |
-| YOLO26n · this repo | 100 ep from scratch | 36.22 | 51.32 | 37.15 | 52.67 | 2.57M | 5.48 |
-| Flash-YOLO · this repo | 100 ep from scratch | 33.77 | 48.63 | 34.72 | 50.16 | 1.97M | 3.80 |
-| **Δ (Flash-YOLO vs YOLO26n, same budget)** | | **−2.45 (−7%)** | **−2.69 (−5%)** | | | **−0.60M (−23%)** | **−1.68 (−31%)** |
+| YOLO26n · this repo | 300 ep from scratch | **37.82** | **53.24** | **38.65** | **54.46** | 2.57M | 5.48 |
+| Flash-YOLO · this repo | 300 ep from scratch | **35.14** | **50.15** | **36.09** | **51.56** | 1.97M | 3.80 |
+| **Δ (Flash-YOLO vs YOLO26n, same budget)** | | **−2.68 (−7.1%)** | **−3.09 (−5.8%)** | | | **−0.60M (−23%)** | **−1.68 (−31%)** |
+
+- These are the 300-epoch from-scratch runs (batch 32, nbs 64, fp32, single GPU); the earlier
+  100-epoch results (36.22 / 33.77 E2E) are kept in [docs/weights.md](docs/weights.md) and
+  [docs/yolo26-runs.md](docs/yolo26-runs.md).
 
 <p align="center">
   <img src="assets/demo_seg.gif" width="640" alt="YOLO26n-seg instance segmentation demo — street traffic">
@@ -227,7 +231,7 @@ Full engine and output notes: [docs/infer.md](docs/infer.md).
   <img src="assets/traffic_det.jpg" width="49%" alt="flash-yolo detections — street traffic">
   <img src="assets/baseball_det.jpg" width="49%" alt="flash-yolo detections — baseball">
   <br>
-  <em>Detections by the 100-epoch Flash-YOLO checkpoint — COCO val2017 samples, 640 input</em>
+  <em>Detections by the 300-epoch Flash-YOLO checkpoint — COCO val2017 samples, 640 input</em>
 </p>
 
 ### Segmentation

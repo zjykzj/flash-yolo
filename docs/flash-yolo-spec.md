@@ -2,7 +2,7 @@
 
 > 定位：本项目自有轻量架构（**模型名 = 项目名**）。本文记录**创建过程**：设计目标、设计命题、
 > 第一轮筛选（S0–S4）的全部实验与结论、定稿结构事实与速度对拍。
-> 正式训练/评估数字（100 轮从零 run）与对照表见 README 的 Results 一节。
+> 正式训练/评估数字与对照表见 README 的 Results（300 轮）与 `weights.md`（100/300 轮）。
 
 ## 1. 设计目标（立项口径，2026-10-09）
 
@@ -140,6 +140,23 @@ b1 **13.2 vs 14.8 ms**、b8 **6.09 vs 8.27 ms/img**（flash-yolo vs yolo26n）�
   −23% 参数、−15% batch-8 fp32 延迟。
 - 两侧末 3 轮 in-training mAP 都平（≤0.0004 变化）→ 差距是**架构取舍**，不是预算不足。
 
+### 5.1 300 轮 run（2026-10-26 → 10-28）
+
+300 轮从零训练（batch 32，与 yolo26n 300 轮同配方/同预算，62 h 39 min）：
+
+| 路径 | 训练 | mAP@[.5:.95] | mAP@50 |
+|---|---|---|---|
+| YOLO26n 控制（同预算 300 ep） | 63 h 12 min | 37.82 | 53.24 |
+| **flash-yolo · E2E（NMS-free）** | 62 h 39 min | **35.14** | **50.15** |
+| **flash-yolo · NMS（o2m）** | 同上 | **36.09** | **51.56** |
+
+- 同预算差距 **−2.68（E2E）/ −3.09（mAP50）**，相对 −7.1% / −5.8%；100 轮时为 −2.45 / −2.69，
+  差距随预算轻微扩大但仍在同一量级。
+- 两侧末 5 轮（ep295→300）in-training mAP 都平（flash ≤0.0007、yolo26n ≤0.0012）→ 差距仍是
+  **架构取舍**，不是预算不足。
+- 配置：batch 32（nbs 64 → accum 2）、default 配方、v0.7.0 默认（MuSGD 0.2/1.0）、640、fp32、
+  seed 0；flash 与 yolo26n 两个检测 run 同卡（GPU 0）并发，对比口径一致。
+
 ## 6. 复现
 
 ```bash
@@ -147,6 +164,9 @@ b1 **13.2 vs 14.8 ms**、b8 **6.09 vs 8.27 ms/img**（flash-yolo vs yolo26n）�
 python scripts/train.py --data coco --model flash-yolo --name flash-coco-e100 --batch 64 --workers 16
 python scripts/eval.py --weights flash-yolo-e100-640.safetensors --data coco
 python scripts/eval.py --weights flash-yolo-e100-640.safetensors --data coco --nms
+
+# 300 轮（v1 战役，与 yolo26n 300 轮同预算；62 h 39 min，正式 35.14 / 50.15 E2E）
+python scripts/train.py --data coco --model flash-yolo --name v1-flash-yolo-e300 --batch 32 --epochs 300
 ```
 
 筛选 run 的命令见第 3 节；`flash-yolo.yaml` 是定稿结构（S2）。筛选变体属本地实验档案，

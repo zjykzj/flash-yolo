@@ -2,15 +2,14 @@
 
 Demo images in this directory are samples from the COCO dataset (val2017), picked for
 demo-friendly scenes; the `*_det.jpg` counterparts are detections rendered by `scripts/infer.py`
-with the **100-epoch from-scratch flash-yolo checkpoint** (COCO train2017, 33.77 mAP@[.5:.95]);
-the `*_seg.jpg` counterparts are instance segmentation rendered with the **100-epoch from-scratch
-flash-yolo-seg checkpoint** (Box 33.11 / Mask 28.24 mAP@[.5:.95]). Both use 640 input and the
-default inference threshold (conf 0.25). Rendered with:
+with the **300-epoch from-scratch flash-yolo checkpoint** (COCO train2017, 35.14 mAP@[.5:.95],
+E2E); the `*_seg.jpg` counterparts are instance segmentation rendered with the **100-epoch
+from-scratch flash-yolo-seg checkpoint** (Box 33.11 / Mask 28.24 mAP@[.5:.95]). Both use 640 input
+and the default inference threshold (conf 0.25). Rendered with:
 
 ```bash
-python scripts/train.py --data coco --model flash-yolo --name flash-coco-e100 --batch 64 --workers 16
-python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors --image assets/traffic.jpg
-python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors --image assets/baseball.jpg
+python scripts/infer.py --weights runs/train/train-v1-flash-yolo-e3002/weights/best.safetensors --image assets/traffic.jpg
+python scripts/infer.py --weights runs/train/train-v1-flash-yolo-e3002/weights/best.safetensors --image assets/baseball.jpg
 
 python scripts/infer.py --weights runs/train/train-flash-seg-100ep2/weights/best.safetensors --image assets/traffic.jpg
 python scripts/infer.py --weights runs/train/train-flash-seg-100ep2/weights/best.safetensors --image assets/baseball.jpg

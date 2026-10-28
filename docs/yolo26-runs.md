@@ -8,7 +8,8 @@
 
 - 官方 40.1（E2E）/ 40.9（NMS）= **Objects365v1 预训练 150 轮 + COCO 微调 245 轮**（n 档
   batch 128）的结果，**不是从零训练**——本页的从零数字与它不构成 like-for-like 对比。
-- 本仓库自己那条"从零 100 轮"基线是给"100 轮预算能买到什么"这个问题一个诚实回答。
+- 本仓库的从零基线：**100 轮 36.22 / 300 轮 37.82**（E2E，均 @640）——分别回答
+  "100/300 轮预算能买到什么"。
 
 ## 2. 官方权重验收（复现基线）
 
@@ -44,6 +45,7 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data coco --nms  
 | run | 时间 | 配置（640 输入） | 状态 | 训练中 best | 正式 mAP@[.5:.95] / mAP@50 |
 |---|---|---|---|---|---|
 | `yolo26n-from-scratch` | 10-07 20:44 → 10-08 11:03 | 100 ep · batch 64 · default 配方 · 14 h 18 m | 完成 | 0.3581 / 0.5065 | **36.22 / 51.32**（E2E）· **37.15 / 52.67**（NMS） |
+| `v1-yolo26n-e300`（`-e3002`） | 10-25 14:35 → 10-28 05:48 | 300 ep · batch 32（nbs 64 → accum 2）· default 配方 · 63 h 12 m | 完成 | 0.3740 / 0.5258（best 在 ep297） | **37.82 / 53.24**（E2E）· **38.65 / 54.46**（NMS） |
 | （早期）误用 `coco-ft` 微调档的 100 轮 | 2026-10 早期 | 100 ep · batch 64 | 完成（**产物未留存**） | — | 32.33 / —（E2E）· 33.29 / —（NMS） |
 | `yolo26n` | 10-08 14:36 | 100 ep 启动 | 第 1 轮内中断（无产物） | — | — |
 | `abcur` / `abcurb` | 10-08 16:31 | coco-tiny · 1 ep · `--val-limit 100` | 开发冒烟 | — | — |
@@ -56,8 +58,20 @@ python scripts/eval.py --weights yolo26n-from-scratch-e100-640.safetensors --dat
 python scripts/eval.py --weights yolo26n-from-scratch-e100-640.safetensors --data coco --nms
 ```
 
+> `v1-yolo26n-e300` 用 v0.7.0 默认（MuSGD 0.2/1.0）与 batch 32（nbs 64 → accumulate 2），
+> 与 100 轮 run 的 batch 64 / 旧 MuSGD 默认不同；梯度语义由 nbs 保证，数字差异主要来自预算。
+
+```bash
+# 从零 300 轮（v1 战役；63 h 12 m，正式 37.82 / 53.24 E2E · 38.65 / 54.46 NMS）
+python scripts/train.py --data coco --name v1-yolo26n-e300 --batch 32 --epochs 300
+python scripts/eval.py --weights runs/train/train-v1-yolo26n-e3002/weights/best.safetensors --data coco
+python scripts/eval.py --weights runs/train/train-v1-yolo26n-e3002/weights/best.safetensors --data coco --nms
+```
+
 **收敛观察**：100 轮最后 10 轮 FastMetrics 仍 **+0.0038 mAP / +0.0046 mAP50**——放缓但没平，
-说明 100 轮还没吃干净基线配方。这也是"官方 245 轮 + O365 预训练"不可直接对比的直观证据。
+说明 100 轮还没吃干净基线配方。300 轮最后 10 轮只剩 **+0.0012 / +0.0017**（ep295→300），
+末段（close_mosaic + lr→0）合计约 +0.1——300 轮已接近该配方的从零收敛上限。100 → 300 轮
+买到 **+1.60 / +1.92**（E2E）与 +1.50 / +1.79（NMS）。
 
 ## 4. 训练管线与官方的对齐
 
@@ -89,17 +103,19 @@ python scripts/eval.py --weights yolo26n-from-scratch-e100-640.safetensors --dat
    o2o cls P3 头出现 BN 掩蔽的复利增长（loss 全程正常而权重 1.8→1e10，~110 batch 内发散）。
    排查这类"loss 正常但权重爆"要盯**非 bias 权重的 |w|max**。
 
-## 6. 为什么还差 4 个点
+## 6. 为什么还差 2.5 个点
 
-- 36.22（本仓库从零 100 轮）vs 40.27（官方权重本管线）：差距全部来自**训练侧**，不含实现
-  差异——同一套代码跑官方权重就是 40.27，且 loss/梯度与官方双实现对照 <1%/<2%。
-- 两个已知来源：**O365 预训练**（官方全部 checkpoint 都有）+ **轮数预算**（100 vs 245）。
-- 100 轮未收敛（见第 3 节末 10 轮数据）支持"预算不足"这一半；O365 那一半本仓库无法提供
-  （缺数据集与算力），因此不宣称"从零可复现 40.1"。
+- 37.82（本仓库从零 300 轮）vs 40.27（官方权重本管线）：差距 2.45，全部来自**训练侧**，
+  不含实现差异——同一套代码跑官方权重就是 40.27，且 loss/梯度与官方双实现对照 <1%/<2%。
+- 两个已知来源：**O365 预训练**（官方全部 checkpoint 都有）+ **预算/微调轮数**（官方 =
+  O365 150 轮 + COCO 245 轮微调，不是从零 300 轮）。
+- 预算已被 100→300 轮的 +1.60 / +1.92 部分兑现；300 轮末段已经平（最后 10 轮 +0.0012），
+  继续加轮数的边际收益很小。剩余 2.45 主要是 O365 初始化——本仓库无法提供（缺数据集与算力），
+  因此不宣称"从零可复现 40.1"。
 
 ## 7. 备注
 
-- `runs/train/yolo26n-from-scratch/` 是唯一保留完整产物的从零 run（diag / samples / 周期
-  checkpoint / resume.pt 齐全），复盘与对照都用它。
+- `runs/train/yolo26n-from-scratch/`（100 ep）与 `runs/train/train-v1-yolo26n-e3002/`
+  （300 ep）保留完整产物（diag / samples / 周期 checkpoint / resume.pt 齐全），复盘与对照都用它们。
 - 早期"误用 coco-ft 档"的 100 轮 run 与增强修复前的基线 run 的产物未留存，本页记录的是
   当时写入 CLAUDE.md 的正式数字。

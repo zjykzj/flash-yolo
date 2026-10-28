@@ -1,8 +1,8 @@
 # 发布权重档案（Released checkpoints）
 
 > 权重与延迟的权威档案：4 份**从零自训**检测 checkpoint 的精度 / 速度 / 部署产物记录
-> （2026-10-15 复测），另附分割参考数字。2026-10-26 又补录了两份 v0.7.0 默认值复跑的
-> v3 权重（本地、未分发，见 §1.1）。
+> （2026-10-15 复测），另附分割参考数字。2026-10-26/28 补录了 v0.7.0 默认值的 300 轮 run
+> （v3 与检测，本地、未分发，见 §1.1 / §1.2）。
 > 权重本体随 GitHub [Releases](https://github.com/zjykzj/flash-yolo/releases) 分发（自训产物，
 > 官方来源的转换权重不随附——用 `scripts/download_weights.py` + `convert_weights.py` 自行获取）。
 > 训练过程与配方见 `yolov3-tiny-runs.md` / `yolo26-runs.md` / `flash-yolo-spec.md` /
@@ -23,7 +23,7 @@
 + COCO 微调）= **40.27 / 55.80**（E2E）· **40.89 / 56.87**（NMS）。v3 两行与官方 v3 的 mAP50-95
 差 0.42 / 0.87；mAP50 差 3.93 / 4.81。
 
-### 1.1 本地复跑（v0.7.0 默认，未随 Release 分发）
+### 1.1 v3 300 轮（v0.7.0 默认，未随 Release 分发）
 
 2026-10-25/26 用 v0.7.0 原样默认（MuSGD 0.2/1.0）复跑了两条 300 轮，配方与上表两份 v3
 权重逐项相同（batch 64 / nbs 64 / 416 / seed 0 / `--obj-iou-target`），唯一差异是 MuSGD
@@ -37,6 +37,23 @@
 对照：v0.6.0 批次同配方 = 16.52 / 30.44（SiLU）与 16.07 / 29.56（原版）——原版基本复现，
 SiLU 低 0.37 / 0.51；SiLU 相对原版的增益从 +0.45 / +0.88 缩小到 +0.12 / +0.34。分析见
 `yolov3-tiny-runs.md` §4.6。要复现 v0.6.0 数字，训练时加 `--muon-w 0.528 --sgd-w 0.674`。
+
+### 1.2 检测 300 轮（v0.7.0 默认，未随 Release 分发）
+
+2026-10-25 → 10-28 从零 300 轮（default 配方、640、batch 32、nbs 64、fp32、seed 0、v0.7.0
+默认 MuSGD 0.2/1.0），产物在本地 `runs/`：
+
+| 权重（本地路径） | 输出 | 训练 | 输入 | mAP50-95 | mAP50 | P / R |
+|---|---|---|---:|---:|---:|---:|
+| `runs/train/train-v1-yolo26n-e3002/weights/best.safetensors` | YOLO26n · E2E | 300 ep · 63 h 12 min | 640 | **37.82** | **53.24** | 0.6652 / 0.4984 |
+| 同上 · NMS（o2m） | | 同 run | 640 | 38.65 | 54.46 | 0.6752 / 0.5092 |
+| `runs/train/train-v1-flash-yolo-e3002/weights/best.safetensors` | Flash-YOLO · E2E | 300 ep · 62 h 39 min | 640 | **35.14** | **50.15** | 0.6245 / 0.4799 |
+| 同上 · NMS（o2m） | | 同 run | 640 | 36.09 | 51.56 | 0.6441 / 0.4910 |
+
+- 100 轮参考（§1 主表）：yolo26n 36.22 / 51.32（NMS 37.15 / 52.67）、flash 33.77 / 48.63
+  （NMS 34.72 / 50.16）→ 300 轮增益 +1.60 / +1.92 与 +1.37 / +1.52（E2E）。
+- 官方 yolo26n（O365 + COCO）E2E 40.27 / 55.80 → 从零 300 轮差 2.45 / 2.56。
+- 评估产物：`runs/val/val5`（yolo26n E2E）、`val7`（NMS）、`val6`（flash E2E）、`val8`（NMS）。
 
 ## 2. 分割参考（COCO val2017，Box + Mask，640）
 
@@ -91,6 +108,8 @@ COCO 微调；从零行与官方**不是同预算**。
 - 2026-10-26 复跑的两份 v3 权重与上表 v3 两行**架构与导出链路完全相同**，延迟不随权重数值
   变化，故不新增表行。本次抽检（416，单图 model-only）：pt ≈2.4–2.7 ms、ORT-CPU
   ≈4.4–5.1 ms、TRT fp32 ≈0.8 ms、TRT fp16 ≈1.0–1.2 ms，与上表同量级。
+- 2026-10-28 的两份检测 300 轮权重（§1.2）与 100 轮检测权重架构/导出链路相同，延迟不随权重
+  数值变化，不新增表行。
 
 ## 4. 部署产物（`runs/release-weights/`，与本页同批生成）
 
@@ -125,6 +144,8 @@ COCO 微调；从零行与官方**不是同预算**。
   （`version 0.5.0` · `commit 0baa0bf` · `describe v0.5.0-20-g0baa0bf`）
 - 两份 v0.7.0 复跑权重（本地）：header 自带 `arch/scale/nc/imgsz/names` + provenance
   （`version 0.7.0` · `commit e7cac56` · `describe v0.7.0-3-ge7cac56-dirty`）
+- 两份检测 300 轮权重（本地）：同 provenance（`version 0.7.0` · `commit e7cac56` ·
+  `describe v0.7.0-3-ge7cac56-dirty`）
 - `flash-yolo-e100-640`：自带 arch/scale/nc/imgsz（保存于 2026-10-11，无 provenance 字段）
 - `yolo26n-from-scratch-e100-640`：无 metadata（保存于 2026-10-08）——消费时需显式
   `--model yolo26 --scale n --imgsz 640`
