@@ -1,42 +1,53 @@
-# 文档索引
+# Flash-YOLO 文档
 
-本目录收录 Flash-YOLO 的使用手册、架构说明、权重档案、训练/评估记录与对齐验证。
-根目录 [README](../README.md) 只保留性能概览与四个环节的快速上手；完整细节从这里进入。
+根目录 [README](../README.md) 负责项目概览、安装与快速开始；本目录按 **数据 → 模型 → pipeline** 三条线组织完整手册。
 
-## 使用手册
+## 我该读哪一篇？
 
-| 文档 | 内容 |
+| 我想… | 读这里 |
 |---|---|
-| [train.md](train.md) | 训练入口、配方、增强、优化器、断点续训与复现 |
-| [val.md](val.md) | pycocotools 评估、FastMetrics、NMS 与评估口径 |
-| [export.md](export.md) | ONNX / TensorRT 导出、动态 batch、fp16 |
-| [infer.md](infer.md) | pt / onnx / trt 推理与 YOLO-txt 输出 |
-| [dataset.md](dataset.md) | COCO / YOLO 描述符、格式转换、分割标签 |
-| [docker.md](docker.md) | 容器环境与镜像构建 |
-| [faq.md](faq.md) | 跨模块常见问题与坑 |
+| 接入 COCO / YOLO 数据集 | [datasets/README.md](datasets/README.md) |
+| 选择或了解某个模型 | [models/README.md](models/README.md) |
+| 训练（从零 / 微调 / resume / DDP） | [pipeline/train.md](pipeline/train.md) |
+| 评估（pycocotools / E2E / NMS / Box+Mask） | [pipeline/eval.md](pipeline/eval.md) |
+| 导出 ONNX / TensorRT | [pipeline/export.md](pipeline/export.md) |
+| 图片 / 视频 / 流推理 | [pipeline/infer.md](pipeline/infer.md) |
+| 容器环境 | [docker.md](docker.md) |
+| 常见问题 | [faq.md](faq.md) |
+| 代码结构与扩展点 | [architecture.md](architecture.md) |
+| 与官方实现的对齐 / 测试闸门 | [development/alignment.md](development/alignment.md) |
 
-## 权重与验证
+## 目录
 
-| 文档 | 内容 |
-|---|---|
-| [weights.md](weights.md) | 发布 checkpoint、完整延迟表、部署产物与溯源 |
-| [alignment.md](alignment.md) | 与官方实现的对齐、数值验证、测试套件 |
-| [architecture.md](architecture.md) | 工程结构、模块职责、扩展点 |
+```text
+docs/
+├── datasets/
+│   ├── README.md      描述符 schema、--data 解析、公共约定
+│   ├── coco.md        COCO json（含 RLE / crowd / 缺失图）
+│   └── yolo.md        YOLO txt / YOLO-seg 多边形
+├── models/
+│   ├── README.md      模型矩阵、权重 metadata、公共结构约定
+│   ├── yolo26.md
+│   ├── yolo26-seg.md
+│   ├── flash-yolo.md
+│   ├── flash-yolo-seg.md
+│   └── yolov3-tiny.md 原版 + SiLU 变体
+├── pipeline/
+│   ├── README.md      公共 CLI / run 目录 / 引擎约定
+│   ├── train.md
+│   ├── eval.md
+│   ├── export.md
+│   └── infer.md
+├── development/
+│   └── alignment.md   官方权重对齐、训练内部 parity、测试
+├── docker.md
+├── faq.md
+└── architecture.md
+```
 
-## 架构设计
+## 口径约定
 
-| 文档 | 内容 |
-|---|---|
-| [yolo26-spec.md](yolo26-spec.md) | YOLO26 检测 / 分割结构与实现口径 |
-| [flash-yolo-spec.md](flash-yolo-spec.md) | Flash-YOLO 轻量检测架构 |
-| [flash-yolo-seg-spec.md](flash-yolo-seg-spec.md) | Flash-YOLO-seg 分割变体与 20/100 轮结果 |
-| [yolov3-tiny-spec.md](yolov3-tiny-spec.md) | YOLOv3-tiny / SiLU 的 darknet 结构与训练口径 |
-
-## 训练与实验记录
-
-| 文档 | 内容 |
-|---|---|
-| [yolo26-runs.md](yolo26-runs.md) | YOLO26 检测训练 run 与配方归因 |
-| [yolov3-tiny-runs.md](yolov3-tiny-runs.md) | YOLOv3-tiny 全部训练 run 与消融记录 |
-
-> `bake/` 是发布准备笔记（gitignored），不属于对外文档。
+- **正式指标** = `scripts/eval.py` + pycocotools，COCO val2017，640 输入（YOLOv3-tiny 原生 416，也支持 640 评估）。
+- **E2E** = NMS-free 默认路径（o2o 头）；**NMS** = one-to-many 头 + NMS。
+- **官方 YOLO26 权重**是 Objects365 预训练 + COCO 微调；从零训练数字与官方不是 like-for-like。
+- **训练 run 记录与消融细节**属于私有档案（`docs/bake/`，不进 git）；本目录只保留公开、可复现的结论与命令。
