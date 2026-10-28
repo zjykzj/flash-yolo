@@ -1,4 +1,5 @@
-# py312 验证环境的版本快照（2026-10-11）。
+# py312 验证环境的版本快照（2026-10-11；2026-10-28 补 matplotlib）。
+# 完整核心版本表（Python/torch/CUDA/TensorRT）见 docs/docker.md §1.1。
 # 仅 Docker 构建使用：requirements.txt 定"装什么"，本文件钉"装哪个版本"。
 # torch / torchvision 由 base 镜像提供；TensorRT 在 Dockerfile 里单独安装（NVIDIA 索引）。
 numpy==2.5.3
@@ -9,4 +10,5 @@ onnx==1.23.1
 onnxruntime==1.30.0
 pycocotools==2.0.11
 pytest==9.1.1
+matplotlib==3.11.2
 ultralytics==8.4.173

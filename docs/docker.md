@@ -10,11 +10,39 @@
 | 项 | 值 |
 |---|---|
 | 基础镜像 | `pytorch/pytorch:2.13.0-cuda13.0-cudnn9-runtime`（Python 3.12 + torch/torchvision） |
-| Python / torch / CUDA | 3.12 · torch 2.13.0+cu130 · CUDA 13.0 |
+| Python / torch / CUDA | 3.12.15 · torch 2.13.0+cu130 · CUDA 13.0 |
 | TensorRT | 11.4.0.106（NVIDIA 索引真包，默认含在镜像内） |
-| 其他依赖 | `requirements.txt` + `requirements-dev.txt`，版本由 `docker/constraints.txt` 钉死 |
+| 其他依赖 | `requirements.txt` + `requirements-dev.txt`（含 matplotlib），版本由 `docker/constraints.txt` 钉死 |
 | apt | `libgl1` / `libglib2.0-0`（opencv-python 导入依赖）+ git/curl |
 | 宿主 | Docker + **nvidia-container-toolkit** + NVIDIA 驱动 **>= 580**（CUDA 13），运行时 `--gpus all` |
+
+### 1.1 核心版本清单
+
+以下版本是当前 `py312` conda 环境的精确清单；Docker 镜像使用同一 torch/CUDA/TensorRT 与
+pip 依赖版本，但 Python / pip 的 patch 版本以 base image 为准（3.12 系列）。
+
+| 软件 | 版本 | 备注 |
+|---|---|---|
+| Python | **3.12.15** | conda env `py312`；Docker 为 3.12 系列 |
+| pip | **26.2.1** | conda 环境；Docker 以 base image 为准 |
+| torch | **2.13.0+cu130** | 由 base image 提供 |
+| torchvision | **0.28.0+cu130** | 由 base image 提供 |
+| CUDA | **13.0** | 需要驱动 >= 580 |
+| TensorRT | **11.4.0.106** | `tensorrt-cu13` / `-libs` / `-bindings`；可选 |
+| numpy | **2.5.3** | |
+| opencv-python | **4.13.0.92** | |
+| PyYAML | **6.0.3** | |
+| safetensors | **0.8.0** | |
+| onnx | **1.23.1** | |
+| onnxruntime | **1.30.0** | CPU 版 |
+| pycocotools | **2.0.11** | |
+| pytest | **9.1.1** | 开发期 |
+| matplotlib | **3.11.2** | 开发期 / 可选 |
+| ultralytics | **8.4.173** | 开发期，AGPL-3.0 |
+
+> `docker/constraints.txt` 只钉 pip 包；Python / torch / torchvision / CUDA / TensorRT 由
+> base image 或 Dockerfile 决定。CPU-only 复刻时把 torch 换成对应 CPU wheel，其余版本不变，
+> TensorRT 可跳过。
 
 镜像内自带一份源码快照（独立可用：推理 / demo / CI）；开发时 bind mount 覆盖它。
 

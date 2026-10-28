@@ -1,4 +1,6 @@
 # Flash-YOLO 运行时依赖
+# 已验证版本快照见 docker/constraints.txt（py312，2026-10-11）
+# torch 按目标环境选择 CPU/CUDA 版本（如 --index-url https://download.pytorch.org/whl/cpu）
 torch
 numpy
 opencv-python
@@ -7,3 +9,9 @@ safetensors
 onnx
 onnxruntime
 pycocotools  # Windows 上若编译失败可用 pycocotools-windows 替代
+
+# 可选依赖（按需单独安装；标注“替代”的不要与上面的默认项同时装）
+# matplotlib                 # 训练报告图（results.png / PR_curve.png / confusion_matrix）
+# onnxruntime-gpu            # GPU ONNX Runtime，替代 onnxruntime
+# opencv-python-headless     # 无 GUI 服务器，替代 opencv-python（--show 不可用）
+# tensorrt-cu13==11.4.0.106  # TensorRT 引擎；需 --index-url https://pypi.nvidia.com（见 docs/docker.md）

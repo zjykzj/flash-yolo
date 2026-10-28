@@ -80,7 +80,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--copy-paste-mode` | `off` | `off` / `box` / `flip`（官方分割 CopyPaste） |
 | `--freeze` | 0 | 冻结前 N 层 |
 | `--single-cls` | false | 单类训练 |
-| `--plots` | true | 结束写 results/PR/混淆矩阵（需 matplotlib） |
+| `--plots` | true | 结束写 results/PR/混淆矩阵（需 matplotlib；`requirements-dev.txt` 已含，运行时按需安装） |
 | `--channels-last` | true | NHWC 训练 |
 | `--stop-after` | 0 | 只跑前 N 轮（调度仍按 `epochs`） |
 | `--val-epochs` | 1 | 0 = 全程不验证 |
