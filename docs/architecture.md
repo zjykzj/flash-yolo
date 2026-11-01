@@ -28,7 +28,7 @@ tests/       核心套件 + env-gated smoke / repro / DDP
 utils/       engines/（base · pt · onnx · trt） · postprocess.py · anchors.py · iou.py
              visualize.py · plots.py · logger.py · paths.py · progress.py
 assets/      demo 图片、GIF 与渲染结果
-docs/        使用手册（本目录）· bake/ 私有档案（gitignored）
+docs/        使用手册（本目录）
 runs/        训练 / 评估 / 导出 / 推理产物（gitignored）
 ```
 

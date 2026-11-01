@@ -60,24 +60,31 @@
 | `flash-yolo-seg-e100-640` | 100 ep 从零 | 640 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/flash-yolo-seg-e100-640.safetensors) |
 
 - 本地 100 轮产物：`runs/train/train-flash-seg-100ep2/weights/best.safetensors`。
+- 本地 300 轮产物：`runs/train/train-v1-flash-yolo-seg-e300/weights/best.safetensors`
+  （未随 Release 分发）。
 - 权重 metadata 自带 `arch=flash-yolo-seg` / `scale=flash` / `nc` / `names` / `imgsz`，
   eval/infer/export 可自动解析。
 
 ## 5. 正式指标（COCO val2017 @640）
 
-100 轮从零（default 配方、batch 16、nbs 64、fp32、mask_ratio 4、seed 0）：
+两个从零预算点：100 轮（default 配方、batch 16、nbs 64、fp32、mask_ratio 4、seed 0）与
+300 轮（同配方、batch 32、nbs 64）：
 
-| 模型 | Params | GFLOPs | Box mAP50 | Box mAP50-95 | Mask mAP50 | Mask mAP50-95 |
-|---|---:|---:|---:|---:|---:|---:|
-| Flash-YOLO-seg | 2,528,248 | 7.6 | 47.96 | **33.11** | 45.34 | **28.24** |
-| YOLO26n-seg（同预算） | 3,126,280 | 9.3 | 51.03 | 35.69 | 48.61 | 30.52 |
-| Δ（相对） | −19.1% | −18.3% | −6.0% | **−7.2%** | −6.7% | **−7.5%** |
+| 训练 | 模型 | Params | GFLOPs | Box mAP50 | Box mAP50-95 | Mask mAP50 | Mask mAP50-95 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 100 ep | Flash-YOLO-seg | 2,528,248 | 7.6 | 47.96 | **33.11** | 45.34 | **28.24** |
+| 100 ep | YOLO26n-seg（同预算） | 3,126,280 | 9.3 | 51.03 | 35.69 | 48.61 | 30.52 |
+| 100 ep | Δ（相对） | −19.1% | −18.3% | −6.0% | **−7.2%** | −6.7% | **−7.5%** |
+| 300 ep | Flash-YOLO-seg | 2,528,248 | 7.6 | 50.74 | **35.05** | 48.14 | **29.98** |
+| 300 ep | YOLO26n-seg（同预算） | 3,126,280 | 9.3 | 53.69 | 37.90 | 51.16 | 32.37 |
+| 300 ep | Δ（相对） | −19.1% | −18.3% | −5.5% | **−7.5%** | −5.9% | **−7.4%** |
 
-- 架构代价与检测版同量级（检测 −7.1%），说明 PoolConv/DW stem 的取舍不随任务改变。
-- best 在末轮（ep100），曲线仍在上升；100 轮是预算点，不是收敛上限。
+- 架构代价与检测版同量级（检测 300 轮 −7.1%），说明 PoolConv/DW stem 的取舍不随任务改变。
+- 100 轮 best 在末轮（ep100），曲线仍在上升；300 轮 best 也在末轮（ep300），但末段已放缓
+  （最后 10 轮 +0.2 box / +0.1 mask）——两者都是预算点，不是收敛上限。
 - 20 轮对照：Flash-YOLO-seg Box 25.80 / Mask 22.07；YOLO26n-seg 27.80 / 23.95
   （mAP50-95，只用于相对比较）。
-- 不要与官方 O365 初始化权重（Box 39.67 / Mask 33.67）直接横比；同起点对照是上表第二行。
+- 不要与官方 O365 初始化权重（Box 39.67 / Mask 33.67）直接横比；同起点对照是上面同预算行。
 
 ## 6. 推理延迟
 

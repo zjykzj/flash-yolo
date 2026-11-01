@@ -33,8 +33,8 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
 | **Δ (Flash-YOLO vs YOLO26n, same budget)** | | **−2.68 (−7.1%)** | **−3.09 (−5.8%)** | | | **−0.60M (−23%)** | **−1.68 (−31%)** |
 
 - These are the 300-epoch from-scratch runs (batch 32, nbs 64, fp32, single GPU); the earlier
-  100-epoch results (36.22 / 33.77 E2E) are kept in [docs/weights.md](docs/weights.md) and
-  [docs/yolo26-runs.md](docs/yolo26-runs.md).
+  100-epoch results (36.22 / 33.77 E2E) are kept in [docs/models/yolo26.md](docs/models/yolo26.md)
+  and [docs/models/flash-yolo.md](docs/models/flash-yolo.md).
 
 <p align="center">
   <img src="assets/demo_seg.gif" width="640" alt="YOLO26n-seg instance segmentation demo — street traffic">
@@ -45,17 +45,18 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
 | Model | Training | Box mAP50-95 | Box mAP50 | Mask mAP50-95 | Mask mAP50 | Params | GFLOPs |
 |---|---|---:|---:|---:|---:|---:|---:|
 | YOLO26n-seg · official weights | O365 + COCO | **39.67** | 55.48 | **33.67** | 52.76 | 3.13M | 9.3 |
-| YOLO26n-seg · this repo | 100 ep from scratch | 35.69 | 51.03 | 30.52 | 48.61 | 3.13M | 9.3 |
-| Flash-YOLO-seg · this repo | 100 ep from scratch | 33.11 | 47.96 | 28.24 | 45.34 | 2.53M | 7.6 |
-| **Δ (Flash-YOLO-seg vs YOLO26n-seg, same budget)** | | **−2.58 (−7.2%)** | **−3.07 (−6.0%)** | **−2.28 (−7.5%)** | **−3.27 (−6.7%)** | **−0.60M (−19%)** | **−1.7 (−18%)** |
+| YOLO26n-seg · this repo | 300 ep from scratch | **37.90** | **53.69** | **32.37** | **51.16** | 3.13M | 9.3 |
+| Flash-YOLO-seg · this repo | 300 ep from scratch | **35.05** | **50.74** | **29.98** | **48.14** | 2.53M | 7.6 |
+| **Δ (Flash-YOLO-seg vs YOLO26n-seg, same budget)** | | **−2.85 (−7.5%)** | **−2.95 (−5.5%)** | **−2.39 (−7.4%)** | **−3.02 (−5.9%)** | **−0.60M (−19%)** | **−1.7 (−18%)** |
 
 - Official YOLO26n-seg training-time validator records 39.75 / 33.86 (Box / Mask mAP50-95);
   this pipeline reports 39.67 / 33.67 — a ~0.002 metric-implementation difference, not a model
   difference.
-- Flash-YOLO-seg and YOLO26n-seg rows use the same recipe and budget (100 ep, batch 16, nbs 64,
-  fp32); the 20-epoch ablation is in [docs/flash-yolo-seg-spec.md](docs/flash-yolo-seg-spec.md).
+- Flash-YOLO-seg and YOLO26n-seg rows use the same recipe and budget (300 ep, batch 32, nbs 64,
+  fp32); the 100-epoch results (35.69 / 30.52 and 33.11 / 28.24) and the 20-epoch ablation are in
+  [docs/models/flash-yolo-seg.md](docs/models/flash-yolo-seg.md).
 - Full latency (ORT-CPU / TensorRT fp32/fp16, b1/b8), deployment artifacts and provenance:
-  [docs/weights.md](docs/weights.md).
+  [docs/models/README.md](docs/models/README.md).
 
 ## Table of Contents
 
@@ -83,7 +84,8 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
 YOLOv3-tiny reference: official darknet weights evaluate at 17.16 / 35.90 (mAP50-95 / mAP50)
 @640 through this pipeline. From-scratch 300-epoch runs at 416 reach **16.15 / 29.93** with the
 current default recipe (SiLU + `--obj-iou-target`); the v0.6.0 recipe
-(`--muon-w 0.528 --sgd-w 0.674`) reaches 16.52 / 30.44. See [docs/weights.md](docs/weights.md).
+(`--muon-w 0.528 --sgd-w 0.674`) reaches 16.52 / 30.44. See
+[docs/models/yolov3-tiny.md](docs/models/yolov3-tiny.md).
 
 > YOLOv3-tiny's canonical input is **416** (darknet; the GFLOPs column is measured there).
 > `config/train.yaml` keeps `imgsz: 640` for every architecture, so the v3 protocol needs
@@ -158,7 +160,7 @@ python scripts/export.py --weights weights/flash-yolo.safetensors
 # -> runs/export/flash-yolo.onnx
 ```
 
-Other released checkpoints and their metrics: [docs/weights.md](docs/weights.md).
+Other released checkpoints and their metrics: [docs/models/README.md](docs/models/README.md).
 
 ## Usage
 
@@ -170,7 +172,7 @@ cp config/datasets/coco.yaml config/datasets/local/coco.yaml   # then edit `path
 ```
 
 YOLO-format descriptors, segmentation labels and conversions are covered in
-[docs/dataset.md](docs/dataset.md).
+[docs/datasets/README.md](docs/datasets/README.md).
 
 ### Detection
 
@@ -196,7 +198,7 @@ python scripts/train.py --data coco --device 0,1 --resume runs/train/train-<name
 ```
 
 Runs land in `runs/train/train-<name>/` (`best/last.safetensors`, `results.csv`, `diag/`, `samples/`).
-From-scratch / finetune / recipes / DDP details: [docs/train.md](docs/train.md).
+From-scratch / finetune / recipes / DDP details: [docs/pipeline/train.md](docs/pipeline/train.md).
 
 **Evaluate**
 
@@ -205,7 +207,7 @@ python scripts/eval.py --weights runs/train/train-flash-coco-e100/weights/best.s
 # E2E (NMS-free) by default; add --nms for the one-to-many + NMS path.
 ```
 
-`--split`, `--limit`, `--imgsz` and metric details: [docs/val.md](docs/val.md).
+`--split`, `--limit`, `--imgsz` and metric details: [docs/pipeline/eval.md](docs/pipeline/eval.md).
 
 **Export**
 
@@ -214,7 +216,7 @@ python scripts/export.py --weights runs/train/train-flash-coco-e100/weights/best
 # --fp16 for half precision; --dynamic for a dynamic batch axis.
 ```
 
-ONNX / TensorRT options and output contracts: [docs/export.md](docs/export.md).
+ONNX / TensorRT options and output contracts: [docs/pipeline/export.md](docs/pipeline/export.md).
 
 **Infer**
 
@@ -225,7 +227,7 @@ python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.
     --video 0 --max-frames 300          # file / RTSP URL / camera index
 ```
 
-Full engine and output notes: [docs/infer.md](docs/infer.md).
+Full engine and output notes: [docs/pipeline/infer.md](docs/pipeline/infer.md).
 
 <p align="center">
   <img src="assets/traffic_det.jpg" width="49%" alt="flash-yolo detections — street traffic">
@@ -242,7 +244,7 @@ Supported architectures: **YOLO26-seg** (n/s/m/l/x), **Flash-YOLO-seg**.
 
 COCO polygon annotations and YOLO-seg txt rows (`cls x1 y1 ...`) are both accepted; bbox-only
 rows fall back to rectangles. Format details and the COCO converter:
-[docs/dataset.md](docs/dataset.md).
+[docs/datasets/README.md](docs/datasets/README.md).
 
 **Train**
 
@@ -256,7 +258,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 ```
 
 Segmentation memory/throughput notes (`--mask-ratio`, `--overlap-mask`, batch sizing):
-[docs/train.md](docs/train.md).
+[docs/pipeline/train.md](docs/pipeline/train.md).
 
 **Evaluate** — checkpoints produce Box and Mask tables automatically:
 
@@ -277,19 +279,19 @@ python scripts/infer.py --weights weights/flash-yolo-seg.safetensors \
     --image assets/traffic.jpg
 ```
 
-Full engine and output notes: [docs/infer.md](docs/infer.md).
+Full engine and output notes: [docs/pipeline/infer.md](docs/pipeline/infer.md).
 
 <p align="center">
   <img src="assets/traffic_seg.jpg" width="49%" alt="flash-yolo-seg instance segmentation — street traffic">
   <img src="assets/baseball_seg.jpg" width="49%" alt="flash-yolo-seg instance segmentation — baseball">
   <br>
-  <em>Instance segmentation by the 100-epoch Flash-YOLO-seg checkpoint — same COCO val2017 samples, 640 input</em>
+  <em>Instance segmentation by the 300-epoch Flash-YOLO-seg checkpoint — same COCO val2017 samples, 640 input</em>
 </p>
 
 ## Documentation
 
 The full manual starts at [docs/README.md](docs/README.md): train / val / export / infer / dataset /
-docker / FAQ, released weights and latency ([docs/weights.md](docs/weights.md)), and the
+docker / FAQ, released weights and latency ([docs/models/README.md](docs/models/README.md)), and the
 per-architecture specs (YOLO26, Flash-YOLO / -seg, YOLOv3-tiny).
 
 ## Contributing
@@ -352,4 +354,4 @@ The code is licensed under **Apache-2.0** — see [LICENSE](LICENSE) for details
   `scripts/download_weights.py` for personal use.
 - **From-scratch detection checkpoints** are published as safetensors on
   [Releases](https://github.com/zjykzj/flash-yolo/releases); the exact list, profiles and the
-  segmentation status (local-only for now) are in [docs/weights.md](docs/weights.md).
+  segmentation status (local-only for now) are in [docs/models/README.md](docs/models/README.md).

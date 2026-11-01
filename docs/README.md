@@ -50,4 +50,4 @@ docs/
 - **正式指标** = `scripts/eval.py` + pycocotools，COCO val2017，640 输入（YOLOv3-tiny 原生 416，也支持 640 评估）。
 - **E2E** = NMS-free 默认路径（o2o 头）；**NMS** = one-to-many 头 + NMS。
 - **官方 YOLO26 权重**是 Objects365 预训练 + COCO 微调；从零训练数字与官方不是 like-for-like。
-- **训练 run 记录与消融细节**属于私有档案（`docs/bake/`，不进 git）；本目录只保留公开、可复现的结论与命令。
+- **训练 run 记录与消融细节**属于私有档案（不进 git）；本目录只保留公开、可复现的结论与命令。

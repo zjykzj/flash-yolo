@@ -50,6 +50,9 @@ backbone/neck 与检测版**逐行相同**（官方 yaml diff 的唯一一行是
 |---|---|---|---|
 | `yolo26n-seg-from-scratch-e100-640` | 100 ep 从零 | 640 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolo26n-seg-from-scratch-e100-640.safetensors) |
 
+本轮 300 轮从零产物只在本地（`runs/train/train-v1-yolo26n-seg-e3002/weights/best.safetensors`），
+尚未随 Release 分发。
+
 官方权重不随 Release 分发，需自行下载：
 
 ```bash
@@ -77,10 +80,12 @@ python scripts/convert_weights.py --src weights/yolo26n-objv1-seg.pt \
 |---|---:|---:|---:|---:|
 | 官方权重（O365 + COCO） | **39.67** | 55.48 | **33.67** | 52.76 |
 | 从零 100 ep | 35.69 | 51.03 | 30.52 | 48.61 |
+| 从零 300 ep | **37.90** | **53.69** | **32.37** | **51.16** |
 
 - 官方训练期 validator 记录 box 39.75 / mask 33.86；本管线 39.67 / 33.67，差 ~0.002
   属指标实现噪声。
-- 从零 100 轮是预算点，不是收敛上限；与 Flash-YOLO-seg 的同预算对照见
+- 100/300 轮都是预算点（同一 default 配方，batch 16 / 32、nbs 64）；300 轮末段斜率已明显
+  放缓（最后 10 轮 +0.2 box / +0.3 mask），best 在 ep295。与 Flash-YOLO-seg 的同预算对照见
   [flash-yolo-seg.md](flash-yolo-seg.md)。
 - 完整官方 245 轮尚未跑：单卡 `mask_ratio=1` 约 5.2 img/s，DDP 可扩但数据管线先饱和。
 
