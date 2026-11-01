@@ -10,7 +10,7 @@
   "No YOLO26 checkpoint was trained on COCO from random weights … a from-scratch comparison
   against those numbers is not like for like"。
 - 本仓库的复现口径 = 同权重、同前后处理、同 pycocotools 指标、同硬件重跑官方权重；
-  外加同预算的从零训练基线（见 §4）。
+  从零训练结果见 §4。
 - 代码为独立重写（Apache-2.0），不复制 ultralytics 代码；ultralytics 仅作开发期数值对照。
 
 ## 2. 结构（n 档）
@@ -53,7 +53,7 @@
 
 | 权重 | 训练 | 输入 | 下载 |
 |---|---|---|---|
-| `yolo26n-from-scratch-e100-640` | 100 ep 从零 | 640 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolo26n-from-scratch-e100-640.safetensors) |
+| `yolo26n-from-scratch-e300-640` | 300 ep 从零 | 640 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolo26n-from-scratch-e300-640.safetensors) |
 
 官方权重（O365 预训练 + COCO 微调）不随 Release 分发，需自行下载并转换：
 
@@ -68,25 +68,20 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data coco
 - `strict=True` 全 key 匹配是结构对齐的第一道闸门；成功即证明拓扑一致。
 - 本地产物 metadata 自带 `arch=yolo26` / `scale` / `nc` / `imgsz` / `names`，
   eval/infer/export 可自动解析。
-- 本地 300 轮产物（未发布）：
-  `runs/train/train-v1-yolo26n-e3002/weights/best.safetensors`。
 
 ## 4. 正式指标（COCO val2017 @640）
 
 | 训练 | E2E mAP50-95 | E2E mAP50 | NMS mAP50-95 | NMS mAP50 |
 |---|---:|---:|---:|---:|
 | 官方权重（O365 + COCO） | **40.27** | 55.80 | **40.89** | 56.87 |
-| 从零 100 ep | 36.22 | 51.32 | 37.15 | 52.67 |
 | 从零 300 ep | **37.82** | **53.24** | **38.65** | **54.46** |
 
 - 官方发布值 40.1 / 40.9 与本管线 40.27 / 40.89 的 ~0.1 差是指标实现噪声。
-- 从零 300 轮相对 100 轮增益 +1.60 / +1.92（E2E）；末段已接近该配方的从零收敛上限。
-- 与 Flash-YOLO 的同预算对照见 [flash-yolo.md](flash-yolo.md)。
 
 ## 5. 推理延迟
 
 > 口径：**model-only**（不含前后处理），输入 640；b1 = 单图，b8 = batch 8 每图平均。
-> 引擎 init 已做 warmup，数字为重复测量的稳态值；同一架构不同权重的延迟相同（100/300 ep 均适用）。
+> 引擎 init 已做 warmup，数字为重复测量的稳态值；同一架构不同权重的延迟相同。
 
 ### 云服务器 / 工作站
 
@@ -110,9 +105,9 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data coco
 
 ```bash
 python scripts/train.py --data coco --model yolo26 --name yolo26n-coco --batch 32 --workers 8
-python scripts/eval.py --weights runs/train/train-yolo26n-coco/weights/best.safetensors --data coco
-python scripts/export.py --weights runs/train/train-yolo26n-coco/weights/best.safetensors --trt
-python scripts/infer.py --weights runs/train/train-yolo26n-coco/weights/best.safetensors \
+python scripts/eval.py --weights yolo26n-from-scratch-e300-640.safetensors --data coco
+python scripts/export.py --weights yolo26n-from-scratch-e300-640.safetensors --trt
+python scripts/infer.py --weights yolo26n-from-scratch-e300-640.safetensors \
     --image assets/traffic.jpg
 ```
 

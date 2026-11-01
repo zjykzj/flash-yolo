@@ -32,10 +32,8 @@
 
 | 权重 | 训练 | 输入 | 下载 |
 |---|---|---|---|
-| `flash-yolo-e100-640` | 100 ep 从零 | 640 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/flash-yolo-e100-640.safetensors) |
+| `flash-yolo-e300-640` | 300 ep 从零 | 640 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/flash-yolo-e300-640.safetensors) |
 
-- 本地 300 轮产物（未发布）：
-  `runs/train/train-v1-flash-yolo-e3002/weights/best.safetensors`。
 - 权重 metadata 自带 `arch=flash-yolo` / `scale=flash` / `nc` / `imgsz` / `names`，
   eval/infer/export 可自动解析。
 
@@ -43,25 +41,12 @@
 
 | 训练 | E2E mAP50-95 | E2E mAP50 | NMS mAP50-95 | NMS mAP50 | Params | GFLOPs |
 |---|---:|---:|---:|---:|---:|---:|
-| 从零 100 ep | 33.77 | 48.63 | 34.72 | 50.16 | 1.97M | 3.80 |
 | 从零 300 ep | **35.14** | **50.15** | **36.09** | **51.56** | 1.97M | 3.80 |
-
-同预算对照（300 ep，唯一变量 = 架构）：
-
-| 模型 | E2E mAP50-95 | 训练时长 |
-|---|---:|---:|
-| YOLO26n | 37.82 | 63 h 12 min |
-| **Flash-YOLO** | **35.14** | 62 h 39 min |
-| Δ | **−2.68（−7.1%）** | |
-
-- 100 轮时差距 −2.45（−7%）；300 轮轻微扩大到 −2.68，仍在同一量级。
-- 两侧末段曲线都平（最后 10 轮变化 ≤0.0012）→ 差距是**架构取舍**，不是预算不足。
-- 交换代价：−23% 参数、−31% GFLOPs；实际延迟收益小于 FLOPs。
 
 ## 5. 推理延迟
 
 > 口径：**model-only**（不含前后处理），输入 640；b1 = 单图，b8 = batch 8 每图平均。
-> 引擎 init 已做 warmup，数字为重复测量的稳态值；同一架构不同权重的延迟相同（100/300 ep 均适用）。
+> 引擎 init 已做 warmup，数字为重复测量的稳态值；同一架构不同权重的延迟相同。
 
 ### 云服务器 / 工作站
 
@@ -91,12 +76,12 @@ python model/summary.py --model flash-yolo
 python scripts/train.py --data coco --model flash-yolo --name flash-coco-e300 --batch 32 --workers 8
 
 # 评估（E2E / NMS）
-python scripts/eval.py --weights runs/train/train-flash-coco-e300/weights/best.safetensors --data coco
-python scripts/eval.py --weights runs/train/train-flash-coco-e300/weights/best.safetensors --data coco --nms
+python scripts/eval.py --weights flash-yolo-e300-640.safetensors --data coco
+python scripts/eval.py --weights flash-yolo-e300-640.safetensors --data coco --nms
 
 # 导出 / 推理
-python scripts/export.py --weights runs/train/train-flash-coco-e300/weights/best.safetensors --trt
-python scripts/infer.py --weights runs/train/train-flash-coco-e300/weights/best.safetensors \
+python scripts/export.py --weights flash-yolo-e300-640.safetensors --trt
+python scripts/infer.py --weights flash-yolo-e300-640.safetensors \
     --image assets/traffic.jpg
 ```
 

@@ -84,5 +84,5 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 
 - 官方 YOLO26 / YOLO26-seg 权重是 **Objects365v1 预训练 + COCO 微调**，不是从零训练；
   把从零数字和官方数字放在一起比较不是 like-for-like。
-- 从零训练的预算点（100 / 300 轮）、权重下载与延迟见各模型页。
+- 各模型页给出最终结果（300 轮从零）、权重下载与延迟；跨模型的同预算对照见根 README 的 Results。
 - 正式指标一律以 `scripts/eval.py`（pycocotools）为准；训练中的 FastMetrics 只用于趋势与选 best。

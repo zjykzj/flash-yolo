@@ -32,9 +32,7 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
 | Flash-YOLO · this repo | 300 ep from scratch | **35.14** | **50.15** | **36.09** | **51.56** | 1.97M | 3.80 |
 | **Δ (Flash-YOLO vs YOLO26n, same budget)** | | **−2.68 (−7.1%)** | **−3.09 (−5.8%)** | | | **−0.60M (−23%)** | **−1.68 (−31%)** |
 
-- These are the 300-epoch from-scratch runs (batch 32, nbs 64, fp32, single GPU); the earlier
-  100-epoch results (36.22 / 33.77 E2E) are kept in [docs/models/yolo26.md](docs/models/yolo26.md)
-  and [docs/models/flash-yolo.md](docs/models/flash-yolo.md).
+- These are the 300-epoch from-scratch runs (batch 32, nbs 64, fp32, single GPU).
 
 <p align="center">
   <img src="assets/demo_seg.gif" width="640" alt="Flash-YOLO-seg instance segmentation demo — street traffic">
@@ -53,8 +51,7 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
   this pipeline reports 39.67 / 33.67 — a ~0.002 metric-implementation difference, not a model
   difference.
 - Flash-YOLO-seg and YOLO26n-seg rows use the same recipe and budget (300 ep, batch 32, nbs 64,
-  fp32); the 100-epoch results (35.69 / 30.52 and 33.11 / 28.24) and the 20-epoch ablation are in
-  [docs/models/flash-yolo-seg.md](docs/models/flash-yolo-seg.md).
+  fp32); model details in [docs/models/flash-yolo-seg.md](docs/models/flash-yolo-seg.md).
 - Full latency (ORT-CPU / TensorRT fp32/fp16, b1/b8), deployment artifacts and provenance:
   [docs/models/README.md](docs/models/README.md).
 
@@ -83,8 +80,7 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
 
 YOLOv3-tiny reference: official darknet weights evaluate at 17.16 / 35.90 (mAP50-95 / mAP50)
 @640 through this pipeline. From-scratch 300-epoch runs at 416 reach **16.15 / 29.93** with the
-current default recipe (SiLU + `--obj-iou-target`); the v0.6.0 recipe
-(`--muon-w 0.528 --sgd-w 0.674`) reaches 16.52 / 30.44. See
+current default recipe (SiLU + `--obj-iou-target`). See
 [docs/models/yolov3-tiny.md](docs/models/yolov3-tiny.md).
 
 > YOLOv3-tiny's canonical input is **416** (darknet; the GFLOPs column is measured there).
@@ -123,12 +119,12 @@ See [docs/docker.md](docs/docker.md) for host requirements (NVIDIA driver ≥ 58
 ## Quick Start
 
 From a clean checkout to an annotated image — no dataset preparation, no ultralytics install.
-Download a released checkpoint from [Releases](https://github.com/zjykzj/flash-yolo/releases) and
-save it as `weights/flash-yolo.safetensors`.
+Download `flash-yolo-e300-640.safetensors` from
+[Releases](https://github.com/zjykzj/flash-yolo/releases) into the repository root.
 
 ```bash
 # 1) run inference on the bundled sample
-python scripts/infer.py --weights weights/flash-yolo.safetensors \
+python scripts/infer.py --weights flash-yolo-e300-640.safetensors \
     --image assets/traffic.jpg
 
 # 2) open the result
@@ -136,28 +132,28 @@ python scripts/infer.py --weights weights/flash-yolo.safetensors \
 # -> runs/predict/predictN/labels/traffic.txt
 ```
 
-Segmentation works the same way — save the released segmentation checkpoint as
-`weights/flash-yolo-seg.safetensors` and the instance masks are overlaid:
+Segmentation works the same way — use `flash-yolo-seg-e300-640.safetensors` and the instance
+masks are overlaid:
 
 ```bash
-python scripts/infer.py --weights weights/flash-yolo-seg.safetensors \
+python scripts/infer.py --weights flash-yolo-seg-e300-640.safetensors \
     --image assets/traffic.jpg
 ```
 
 Video, camera and RTSP streams are supported by the same script:
 
 ```bash
-python scripts/infer.py --weights weights/flash-yolo.safetensors \
+python scripts/infer.py --weights flash-yolo-e300-640.safetensors \
     --video /path/to/video.mp4
-python scripts/infer.py --weights weights/flash-yolo.safetensors \
+python scripts/infer.py --weights flash-yolo-e300-640.safetensors \
     --video 0 --max-frames 300        # camera index / live stream
 ```
 
 One-command export to ONNX (add `--trt` for a TensorRT engine):
 
 ```bash
-python scripts/export.py --weights weights/flash-yolo.safetensors
-# -> runs/export/flash-yolo.onnx
+python scripts/export.py --weights flash-yolo-e300-640.safetensors
+# -> runs/export/flash-yolo-e300-640.onnx
 ```
 
 Other released checkpoints and their metrics: [docs/models/README.md](docs/models/README.md).
@@ -182,10 +178,10 @@ Supported architectures: **YOLO26** (n/s/m/l/x), **Flash-YOLO**, **YOLOv3-tiny /
 
 ```bash
 # Flash-YOLO — this repo's lightweight architecture
-python scripts/train.py --data coco --model flash-yolo --name flash-coco-e100 --batch 32 --workers 8
+python scripts/train.py --data coco --model flash-yolo --name flash-coco-e300 --batch 32 --workers 8
 
 # YOLO26 (n by default; --scale s/m/l/x for other sizes)
-python scripts/train.py --data coco --model yolo26 --name yolo26n-coco-e100 --batch 32 --workers 8
+python scripts/train.py --data coco --model yolo26 --name yolo26n-coco-e300 --batch 32 --workers 8
 
 # YOLOv3-tiny — darknet protocol (canonical 416 input, passed explicitly)
 python scripts/train.py --data coco --model yolov3-tiny --imgsz 416 --name v3tiny-coco-e300 --batch 32 --workers 8
@@ -203,7 +199,7 @@ From-scratch / finetune / recipes / DDP details: [docs/pipeline/train.md](docs/p
 **Evaluate**
 
 ```bash
-python scripts/eval.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors --data coco
+python scripts/eval.py --weights flash-yolo-e300-640.safetensors --data coco
 # E2E (NMS-free) by default; add --nms for the one-to-many + NMS path.
 ```
 
@@ -212,7 +208,7 @@ python scripts/eval.py --weights runs/train/train-flash-coco-e100/weights/best.s
 **Export**
 
 ```bash
-python scripts/export.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors --trt
+python scripts/export.py --weights flash-yolo-e300-640.safetensors --trt
 # --fp16 for half precision; --dynamic for a dynamic batch axis.
 ```
 
@@ -221,9 +217,9 @@ ONNX / TensorRT options and output contracts: [docs/pipeline/export.md](docs/pip
 **Infer**
 
 ```bash
-python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors \
+python scripts/infer.py --weights flash-yolo-e300-640.safetensors \
     --image assets/traffic.jpg          # file or directory
-python scripts/infer.py --weights runs/train/train-flash-coco-e100/weights/best.safetensors \
+python scripts/infer.py --weights flash-yolo-e300-640.safetensors \
     --video 0 --max-frames 300          # file / RTSP URL / camera index
 ```
 
@@ -263,13 +259,13 @@ Segmentation memory/throughput notes (`--mask-ratio`, `--overlap-mask`, batch si
 **Evaluate** — checkpoints produce Box and Mask tables automatically:
 
 ```bash
-python scripts/eval.py --weights runs/train/train-seg-coco/weights/best.safetensors --data coco
+python scripts/eval.py --weights flash-yolo-seg-e300-640.safetensors --data coco
 ```
 
 **Export** — the model has two outputs (detections + mask prototypes):
 
 ```bash
-python scripts/export.py --weights runs/train/train-flash-seg/weights/best.safetensors --trt
+python scripts/export.py --weights flash-yolo-seg-e300-640.safetensors --trt
 ```
 
 **Infer** — masks are overlaid on the image; labels are written as normalized polygons:

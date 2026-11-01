@@ -85,8 +85,8 @@ wh = anchor · exp(t)               # tw/th 取原始 logits，clamp(±8) 防 ex
 
 | 权重 | 训练 | 输入 | 下载 |
 |---|---|---|---|
-| `yolov3-tiny-softobj-e300-416` | 300 ep 从零 · 原版 + objectness | 416 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolov3-tiny-softobj-e300-416.safetensors) |
-| `yolov3-tiny-silu-softobj-e300-416` | 300 ep 从零 · SiLU + objectness | 416 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolov3-tiny-silu-softobj-e300-416.safetensors) |
+| `yolov3-tiny-e300-416` | 300 ep 从零 · 原版 + IoU-aware objectness | 416 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolov3-tiny-e300-416.safetensors) |
+| `yolov3-tiny-silu-e300-416` | 300 ep 从零 · SiLU + IoU-aware objectness | 416 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolov3-tiny-silu-e300-416.safetensors) |
 
 官方 darknet `.weights` 不随 Release 分发，需自行下载并转换：
 
@@ -94,10 +94,6 @@ wh = anchor · exp(t)               # tw/th 取原始 logits，clamp(±8) 防 ex
 python scripts/download_weights.py --model yolov3-tiny
 python scripts/convert_weights.py --src weights/yolov3-tiny.weights --dst weights/yolov3-tiny.safetensors
 ```
-
-本地 v0.7.0 300 轮产物（未发布）：
-`runs/train/train-v1-yolov3-tiny-silu-e300-416-softobj3/weights/best.safetensors` /
-`runs/train/train-v1-yolov3-tiny-e300-416-softobj2/weights/best.safetensors`。
 
 ### darknet `.weights` 转换细节
 
@@ -115,9 +111,8 @@ python scripts/convert_weights.py --src weights/yolov3-tiny.weights --dst weight
 |---|---|---:|---:|
 | 官方 darknet 权重 | 640 | **17.16** | **35.90** |
 | 官方 darknet 权重 | 416 | 16.94 | 34.37 |
-| 从零 300 ep（SiLU + obj-iou，v0.7 默认） | 416 | 16.15 | 29.93 |
-| 从零 300 ep（原版 + obj-iou，v0.7 默认） | 416 | 16.03 | 29.59 |
-| 从零 300 ep（SiLU，v0.6 配方 0.528/0.674） | 416 | 16.52 | 30.44 |
+| 从零 300 ep（SiLU + obj-iou） | 416 | 16.15 | 29.93 |
+| 从零 300 ep（原版 + obj-iou） | 416 | 16.03 | 29.59 |
 
 - 官方发布的 33.1 AP50 是 **COCO test-dev @416** 口径；同权重本管线 640 比 416 高，
   两者不可直接相减。
@@ -161,6 +156,10 @@ python scripts/eval.py --weights weights/yolov3-tiny.safetensors --data coco
 # 从零训练（推荐 SiLU + obj-iou-target；416 原生输入）
 python scripts/train.py --data coco --model yolov3-tiny-silu --imgsz 416 \
     --obj-iou-target --name v3tiny-e300 --batch 32 --workers 8
+
+# 已发布权重：评估 / 推理
+python scripts/eval.py --weights yolov3-tiny-silu-e300-416.safetensors --data coco
+python scripts/infer.py --weights yolov3-tiny-silu-e300-416.safetensors --image assets/traffic.jpg
 
 # 锚点覆盖判定 / 重聚类
 python scripts/compute_anchors.py --data coco
