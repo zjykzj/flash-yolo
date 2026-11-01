@@ -14,37 +14,18 @@
   一个 depthwise 3×3 补回空间混合，几乎不花算力。
 - 与 YOLO26n 的差异清单就两条：六处下采样 → PoolConv、stem → DW 3×3 + 1×1；
   C3k2 / SPPF / C2PSA / Detect 与三个检测层原样不动。
+- 结构取舍的结论：DW stem 在同算力下有效；neck 缩容与 LiteBlock 均劣于定稿结构。
 
-## 2. 第一轮筛选（S0–S4）
-
-20 轮、640、batch 32、同 default 配方、同 seed；指标为训练中 FastMetrics（只用于相对排序，
-20 轮未收敛，绝对数字不作数）：
-
-| Run | 设计 | GFLOPs | mAP50-95 | mAP50 |
-|---|---|---|---:|---:|
-| S0 | YOLO26n（对照） | 5.48 | 29.22 | 42.45 |
-| S1 | 六处 PoolConv，stem 仅 1×1 投影 | 3.79 | 26.25 | 38.92 |
-| **S2** | S1 + DW stem（现役 `flash-yolo.yaml`） | 3.80 | **26.92** | **39.67** |
-| S3 | S1 + neck 通道 ×0.75 | 3.09 | 25.00 | 37.66 |
-| S4 | S1 + neck C3k2 → LiteBlock | 3.00 | 21.83 | 34.55 |
-
-结论：
-
-1. **DW stem 有效**：同算力下 S2 比 S1 高 +0.67 mAP，几乎不花算力。
-2. **neck 通道 ×0.75** 是“更省”的备选（−18% GFLOPs 换 −1.9 点），本轮不作为主设计。
-3. **LiteBlock 在 neck 失败**（同算力低 3.2 点），淘汰。
-4. 定稿选 **S2**。
-
-## 3. 定稿结构
+## 2. 定稿结构
 
 25 行 yaml（比 YOLO26n 多一行：stem 拆成 DW 3×3 + 1×1），262 层模块树：
 
 - 规模：**1,974,248 参数（1.97M，−23% vs YOLO26n）· 3.80 GFLOPs @640（−31%）**。
 - 检测层 P3/P4/P5 与 Detect 头原样保留；权重键与 YOLO26 前缀一一对应，构建/引擎/训练
   链路零特判。
-- 速度：b1 与 YOLO26n 接近（per-run 开销主导），b8 优势明显；完整延迟见 §6。
+- 速度：b1 与 YOLO26n 接近（per-run 开销主导），b8 优势明显；完整延迟见 §5。
 
-## 4. 权重下载
+## 3. 权重下载
 
 下载链接固定到 **v1.0.0**（下一个发布版本；发布前会 404，可先用 Releases 页面的当前版本）。
 资产名固定，发新版时统一替换 tag 即可。
@@ -58,7 +39,7 @@
 - 权重 metadata 自带 `arch=flash-yolo` / `scale=flash` / `nc` / `imgsz` / `names`，
   eval/infer/export 可自动解析。
 
-## 5. 正式指标（COCO val2017 @640）
+## 4. 正式指标（COCO val2017 @640）
 
 | 训练 | E2E mAP50-95 | E2E mAP50 | NMS mAP50-95 | NMS mAP50 | Params | GFLOPs |
 |---|---:|---:|---:|---:|---:|---:|
@@ -77,7 +58,7 @@
 - 两侧末段曲线都平（最后 10 轮变化 ≤0.0012）→ 差距是**架构取舍**，不是预算不足。
 - 交换代价：−23% 参数、−31% GFLOPs；实际延迟收益小于 FLOPs。
 
-## 6. 推理延迟
+## 5. 推理延迟
 
 > 口径：**model-only**（不含前后处理），输入 640；b1 = 单图，b8 = batch 8 每图平均。
 > 引擎 init 已做 warmup，数字为重复测量的稳态值；同一架构不同权重的延迟相同（100/300 ep 均适用）。
@@ -100,7 +81,7 @@
 |---|---|---:|---:|
 | （CPU 型号待填） | ONNX Runtime · fp32 | 待测 | 待测 |
 
-## 7. 用法
+## 6. 用法
 
 ```bash
 # 结构自检（无需数据）
@@ -119,7 +100,7 @@ python scripts/infer.py --weights runs/train/train-flash-coco-e300/weights/best.
     --image assets/traffic.jpg
 ```
 
-## 8. 注意
+## 7. 注意
 
 - `flash-yolo` 只有 `flash` 单档，不要传 `--scale`。
 - 结构改动只在 backbone/neck；新增算子（PoolConv/DW stem）在 `model/basic/` 与

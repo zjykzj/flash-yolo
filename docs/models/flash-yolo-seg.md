@@ -82,8 +82,6 @@
 - 架构代价与检测版同量级（检测 300 轮 −7.1%），说明 PoolConv/DW stem 的取舍不随任务改变。
 - 100 轮 best 在末轮（ep100），曲线仍在上升；300 轮 best 也在末轮（ep300），但末段已放缓
   （最后 10 轮 +0.2 box / +0.1 mask）——两者都是预算点，不是收敛上限。
-- 20 轮对照：Flash-YOLO-seg Box 25.80 / Mask 22.07；YOLO26n-seg 27.80 / 23.95
-  （mAP50-95，只用于相对比较）。
 - 不要与官方 O365 初始化权重（Box 39.67 / Mask 33.67）直接横比；同起点对照是上面同预算行。
 
 ## 6. 推理延迟
@@ -124,6 +122,6 @@ python scripts/infer.py --weights runs/train/train-flash-seg/weights/best.safete
 ## 8. 注意
 
 - 单档 `flash`，不要传 `--scale`。
-- 分割训练由 loader 与验证主导，架构差异在吞吐上不可辨（约 4.16 h / 20 轮，batch 32）。
+- 分割训练由 loader 与验证主导，架构差异在吞吐上不可辨。
 - 跨设备（CUDA vs CPU oneDNN）对齐会有 1e-3~4e-3 的原始输出差，掩码边界可能翻转；
   同运行时比较或走 TensorRT。

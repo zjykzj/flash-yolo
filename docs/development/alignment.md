@@ -65,7 +65,7 @@ onnx(CPU) 原始输出相对差 ~1e-6，跨设备（CUDA vs CPU oneDNN）为 1e-
 - **数据格式**：COCO-json 与 YOLO-txt 加载器在同一批图上框完全一致（0 差异），训练侧统计
   逐项相等（14205 / 14205）。
 
-完整历史坑见 [../pipeline/train.md](../pipeline/train.md)、
+相关规则见 [../pipeline/train.md](../pipeline/train.md)、
 [../pipeline/eval.md](../pipeline/eval.md) 与各模型页。
 
 ## 4. 运行时一致性
