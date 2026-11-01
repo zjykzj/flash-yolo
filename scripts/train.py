@@ -66,7 +66,7 @@ def _build_parser():
     parser.add_argument("--model", dest="model", default=None, choices=sorted(ARCHS),
                         help="architecture (default: train.yaml `model`, yolo26)")
     parser.add_argument("--cfg", dest="cfg_path", default=None,
-                        help="model yaml path override (custom structure; screening/experiment variants)")
+                        help="model yaml path override (custom structure variants)")
     parser.add_argument("--recipe", default=None, help="recipe name (config/recipes/<name>.yaml) or a .yaml path; "
                                                        "default = the built-in baseline (config/train.yaml values)")
     parser.add_argument("--single-cls", dest="single_cls", action=argparse.BooleanOptionalAction, default=None,

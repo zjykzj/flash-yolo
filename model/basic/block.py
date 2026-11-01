@@ -146,7 +146,7 @@ class LiteBlock(nn.Module):
     """轻量块（flash-yolo）：1×1 -> DW 3×3 -> 1×1
 
     无 expansion 的深度可分离块；同通道下 GFLOPs 约为 C3k2 的 2/3，
-    用于 neck 的容量-算力配平（设计流程见 scripts/search_arch.py 的 S4 候选）。
+    用于 neck 的容量-算力配平。
     """
 
     def __init__(self, c1, c2):

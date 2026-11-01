@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Resume across world size / device**: `resume.pt` now records world_size/device and loads through CPU, so continuing a run from 1 GPU on 2 GPUs (or CPU↔GPU) works; same-world-size resume stays bit-identical.
 - **Distributed training (DDP)**: `--device 0,1` or torchrun now trains detection and segmentation on multiple GPUs (`--batch` is global, per-GPU = batch/world_size). Single-GPU runs stay bit-identical; multi-GPU runs are reproducible per world size but not vs single GPU (no SyncBatchNorm).
 
+### Removed
+
+- **Internal design-search tooling**: `scripts/search_arch.py` is no longer shipped; the architecture it produced is already fixed in `config/models/flash-yolo.yaml`.
+
 ### Fixed
 
 - **Image-mode `--output`**: a single-image run now honors an explicit output filename (`.jpg`/`.png`/… or an existing file) and accepts a directory path; previously a directory was silently treated as a file path (only its parent was used) and the source filename always overrode the requested name. `labels/` now follows the output image's stem.
@@ -94,14 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Multi-scale training + step LR schedule (with a `yolov3-tiny-darknet` recipe)**: `multi_scale: r` jitters each batch's input size within imgsz×(1±r) (quantized to stride multiples), and `lr_schedule: step` adds darknet step decay beside the linear/cosine curves (also via CLI); the recipe bundles both for the yolov3-tiny residual-gap experiment with single-variable toggles.
-- **Flash-YOLO — the framework's own lightweight architecture**: a pooled-downsampling redesign (`PoolConv` = max-pool + 1×1, replacing every stride-2 3×3 conv) plus a channel-projection stem, budgeting **3.8 GFLOPs / 1.97M params @640** (−31%/−23% vs yolo26n) and beating yolo26n at batch-1 CPU/CUDA-graph inference (+45% ORT-CPU, +11% torch-CPU, +11% CUDA-graph). `scripts/search_arch.py` searches the design space, `LiteBlock` joins `model/basic`, and `--cfg` trains unregistered variant yamls for screening.
+- **Flash-YOLO — the framework's own lightweight architecture**: a pooled-downsampling redesign (`PoolConv` = max-pool + 1×1, replacing every stride-2 3×3 conv) plus a channel-projection stem, budgeting **3.8 GFLOPs / 1.97M params @640** (−31%/−23% vs yolo26n) and beating yolo26n at batch-1 CPU/CUDA-graph inference (+45% ORT-CPU, +11% torch-CPU, +11% CUDA-graph). The design space was explored with an internal search tool (not shipped), `LiteBlock` joins `model/basic`, and `--cfg` trains unregistered variant yamls.
 - **TensorRT inference — the three-engine matrix is complete**: `TRTEngine` joins the PyTorch and ONNX-Runtime-CPU engines behind the shared `predict` contract; `--trt` chains safetensors → onnx → `.engine` in one command and `eval.py`/`infer.py` take `--engine trt`. Batch-1 fp32: flash-yolo **1.35 ms** vs yolo26n 1.52 ms (+12.6% throughput). `tensorrt` is an optional dependency; a built engine is bound to the build machine's GPU + TRT version.
 
 ### Changed
 
 - **onnxruntime sessions use a bounded thread pool**: `intra_op_num_threads` ≤16 / `inter_op_num_threads` 1 instead of ORT's core-count default — on container hosts that over-report CPU counts the default pool ran the engine 15-20× slow (120-196 ms → 10-14 ms per 640² image, batch 1); inference numbers unchanged.
-- **flash-yolo adopts the DW-stem design**: the round-1 screening promoted S2 (depthwise-3×3 stem, +0.67 mAP at equal GFLOPs, batch-1 latency unchanged) into `config/models/flash-yolo.yaml`; the pre-promotion structure stays as `flash-yolo-s1.yaml`.
-- **README training documentation**: a Training Results section (from-scratch commands + metric tables for YOLO26n and YOLOv3-tiny, official weights through the same pipeline) and a Flash-YOLO section with the design premise and screening table.
+- **flash-yolo adopts the DW-stem design**: the depthwise-3×3 stem (+0.67 mAP at equal GFLOPs, batch-1 latency unchanged) is now part of `config/models/flash-yolo.yaml`.
+- **README training documentation**: a Training Results section (from-scratch commands + metric tables for YOLO26n and YOLOv3-tiny, official weights through the same pipeline) and a Flash-YOLO section with the design premise and structure summary.
 
 ### Fixed
 

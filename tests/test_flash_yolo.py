@@ -44,8 +44,8 @@ def test_gflops_budget_below_yolo26n():
 def test_flash_yolo_yaml_builds():
     """现役结构 flash-yolo.yaml 能组装 + 前向（yaml 回归闸门）
 
-    筛选变体（S1/S3/S4）是本地实验档案（config/models/screening/，gitignored），不随仓库分发，
-    也不在测试契约内——S2 即现役 flash-yolo.yaml。
+    历史筛选变体属于私有实验档案，不随仓库分发，也不在测试契约内——现役结构即
+    flash-yolo.yaml。
     """
     model = DetectionModel(cfg_path=ROOT / "config" / "models" / "flash-yolo.yaml", scale="flash", imgsz=320)
     model.eval()

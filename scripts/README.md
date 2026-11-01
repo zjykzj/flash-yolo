@@ -64,15 +64,6 @@
 [models/yolov3-tiny.md](../docs/models/yolov3-tiny.md)（锚点判定口径）·
 [faq.md](../docs/faq.md)
 
-## 6. 架构设计
-
-场景：设计新的轻量 backbone / neck。
-
-- `search_arch.py` —— 按维度组合生成变体 yaml（写到 `/tmp`，不改 `config/`、不注册
-  `ARCHS`），比较 GFLOPs / params / 逐层表；方案确认后再手工落到 `config/models/`。
-
-文档：[architecture.md](../docs/architecture.md)
-
 ## 共同约定
 
 - 控制台第一行是解析后的参数预览；参数以 `--help` 与各文档为准。

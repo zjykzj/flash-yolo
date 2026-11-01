@@ -23,7 +23,7 @@ train/       assigner.py（TAL+STAL） · loss/（家族×任务） · optimizer
              ema.py · lr.py · checkpoint.py · validator.py · metrics.py · trainer.py
 scripts/     train · eval · export · infer · download_weights · convert_weights
              compute_anchors · make_coco_subset · convert_coco_seg · bench_io
-             compare_official · search_arch
+             compare_official
 tests/       核心套件 + env-gated smoke / repro / DDP
 utils/       engines/（base · pt · onnx · trt） · postprocess.py · anchors.py · iou.py
              visualize.py · plots.py · logger.py · paths.py · progress.py
