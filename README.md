@@ -16,9 +16,9 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo_det.gif" width="640" alt="YOLO26n detection demo — street traffic">
+  <img src="assets/demo_det.gif" width="640" alt="Flash-YOLO detection demo — street traffic">
   <br>
-  <em>YOLO26n detection on a street clip — 640 input</em>
+  <em>Flash-YOLO detection on a street clip — 640 input</em>
 </p>
 
 COCO val2017, official pycocotools (`scripts/eval.py`), 640 input. E2E = NMS-free default path;
@@ -37,9 +37,9 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
   and [docs/models/flash-yolo.md](docs/models/flash-yolo.md).
 
 <p align="center">
-  <img src="assets/demo_seg.gif" width="640" alt="YOLO26n-seg instance segmentation demo — street traffic">
+  <img src="assets/demo_seg.gif" width="640" alt="Flash-YOLO-seg instance segmentation demo — street traffic">
   <br>
-  <em>YOLO26n-seg instance segmentation on the same clip — 640 input</em>
+  <em>Flash-YOLO-seg instance segmentation on the same clip — 640 input</em>
 </p>
 
 | Model | Training | Box mAP50-95 | Box mAP50 | Mask mAP50-95 | Mask mAP50 | Params | GFLOPs |

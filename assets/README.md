@@ -3,16 +3,18 @@
 Demo images in this directory are samples from the COCO dataset (val2017), picked for
 demo-friendly scenes; the `*_det.jpg` counterparts are detections rendered by `scripts/infer.py`
 with the **300-epoch from-scratch flash-yolo checkpoint** (COCO train2017, 35.14 mAP@[.5:.95],
-E2E); the `*_seg.jpg` counterparts are instance segmentation rendered with the **100-epoch
-from-scratch flash-yolo-seg checkpoint** (Box 33.11 / Mask 28.24 mAP@[.5:.95]). Both use 640 input
+E2E); the `*_seg.jpg` counterparts are instance segmentation rendered with the **300-epoch
+from-scratch flash-yolo-seg checkpoint** (Box 35.05 / Mask 29.98 mAP@[.5:.95]). Both use 640 input
 and the default inference threshold (conf 0.25). Rendered with:
 
 ```bash
-python scripts/infer.py --weights runs/train/train-v1-flash-yolo-e3002/weights/best.safetensors --image assets/traffic.jpg
-python scripts/infer.py --weights runs/train/train-v1-flash-yolo-e3002/weights/best.safetensors --image assets/baseball.jpg
+# detection checkpoint (flash-yolo)
+python scripts/infer.py --weights flash-yolo-e300-640.safetensors --image assets/traffic.jpg
+python scripts/infer.py --weights flash-yolo-e300-640.safetensors --image assets/baseball.jpg
 
-python scripts/infer.py --weights runs/train/train-flash-seg-100ep2/weights/best.safetensors --image assets/traffic.jpg
-python scripts/infer.py --weights runs/train/train-flash-seg-100ep2/weights/best.safetensors --image assets/baseball.jpg
+# segmentation checkpoint (flash-yolo-seg)
+python scripts/infer.py --weights flash-yolo-seg-e300-640.safetensors --image assets/traffic.jpg
+python scripts/infer.py --weights flash-yolo-seg-e300-640.safetensors --image assets/baseball.jpg
 ```
 
 - `traffic.jpg` — COCO val2017 `000000336232.jpg` (dense street traffic: bus, cars, motorcycle, people)
@@ -24,21 +26,27 @@ python scripts/infer.py --weights runs/train/train-flash-seg-100ep2/weights/best
 
 ## Animated demo
 
-`demo_det.gif` / `demo_seg.gif` — YOLO26n / YOLO26n-seg inference on a street clip.
+`demo_det.gif` / `demo_seg.gif` — Flash-YOLO / Flash-YOLO-seg inference on a street clip
+(300-epoch from-scratch checkpoints: 35.14 mAP@[.5:.95] detection; Box 35.05 / Mask 29.98
+segmentation).
 
 - Source: <https://www.pexels.com/video/15247002/> (Pexels license: free to use, attribution not
   required)
 - Segment: 23.5–31.5 s of the 1920×1080 / 24 fps original, downscaled to 960×540 for inference
-- Output: 520×292, 10 fps, 80 frames, 96-color GIF (~4.7 MB each)
+- Output: 520×292, 10 fps, 80 frames, 96-color GIF (~4.2 MB / ~3.9 MB)
 - The original video and intermediate mp4 files are not stored in the repository.
 
 Rendered with:
 
 ```bash
-python scripts/infer.py --weights weights/yolo26n.safetensors \
+# detection checkpoint
+python scripts/infer.py --weights flash-yolo-e300-640.safetensors \
     --video demo_clip_960x540.mp4 --output annotated_det.mp4
-python scripts/infer.py --weights weights/yolo26n-seg.safetensors \
+# segmentation checkpoint
+python scripts/infer.py --weights flash-yolo-seg-e300-640.safetensors \
     --video demo_clip_960x540.mp4 --output annotated_seg.mp4
+
+# GIF: fps=10, scale=520:292, 96-color palette (ffmpeg palettegen/paletteuse)
 ```
 
 Usage:
