@@ -5,9 +5,7 @@
 > pipeline: train (single-GPU / DDP) · evaluate · export · infer (image / video / stream).
 > Raw dataset in, TensorRT engine out.**
 >
-> Core runtime is just PyTorch + NumPy — no monolithic abstractions, no ultralytics dependency.
-> Independent Apache-2.0 implementation: official weights, recipes and numbers are upstream
-> assets used for reproduction only (never redistributed).
+> Core runtime is just PyTorch + NumPy — no monolithic abstractions, no extra installs.
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
@@ -127,7 +125,7 @@ See [docs/docker.md](docs/docker.md) for host requirements (NVIDIA driver ≥ 58
 
 ## Quick Start
 
-From a clean checkout to an annotated image — no dataset preparation, no ultralytics install.
+From a clean checkout to an annotated image — no dataset preparation, no training required.
 Download `flash-yolo-e300-640.safetensors` from
 [Releases](https://github.com/zjykzj/flash-yolo/releases) into the repository root.
 
@@ -192,9 +190,6 @@ python scripts/train.py --data coco --model flash-yolo --name flash-coco-e300 --
 # YOLO26 (n by default; --scale s/m/l/x for other sizes)
 python scripts/train.py --data coco --model yolo26 --name yolo26n-coco-e300 --batch 32 --workers 8
 
-# YOLOv3-tiny — darknet protocol (canonical 416 input, passed explicitly)
-python scripts/train.py --data coco --model yolov3-tiny --imgsz 416 --name v3tiny-coco-e300 --batch 32 --workers 8
-
 # multi-GPU DDP: --batch is the GLOBAL batch (16 per GPU here), --workers is per GPU
 python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8
 
@@ -203,7 +198,7 @@ python scripts/train.py --data coco --device 0,1 --resume runs/train/train-<name
 ```
 
 Runs land in `runs/train/train-<name>/` (`best/last.safetensors`, `results.csv`, `diag/`, `samples/`).
-From-scratch / finetune / recipes / DDP details: [docs/pipeline/train.md](docs/pipeline/train.md).
+From-scratch / finetune / DDP details: [docs/pipeline/train.md](docs/pipeline/train.md).
 
 **Evaluate**
 
@@ -256,10 +251,6 @@ rows fall back to rectangles. Format details and the COCO converter:
 ```bash
 python scripts/train.py --data coco --model yolo26-seg --name seg-coco --batch 32 --workers 8
 python scripts/train.py --data coco --model flash-yolo-seg --name flash-seg --batch 32 --workers 8
-
-# official COCO-stage recipe (needs the 365-class O365 segmentation initialization)
-python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
-    --weights <objv1-seg.safetensors> --batch 32 --workers 8
 ```
 
 Segmentation memory/throughput notes (`--mask-ratio`, `--overlap-mask`, batch sizing):
@@ -321,7 +312,7 @@ FLASH_YOLO_DDP=1   pytest tests/test_distributed.py -q   # 2-process CPU gloo DD
 ```
 
 Please keep the independent-module structure and add tests for behavior changes. Do not copy code
-from the upstream ultralytics repository (AGPL-3.0) — [CONTRIBUTING.md](CONTRIBUTING.md) describes
+from the upstream repository (AGPL-3.0) — [CONTRIBUTING.md](CONTRIBUTING.md) describes
 the full workflow and review expectations.
 
 ## Citation
@@ -355,9 +346,3 @@ cite the YOLOv3 paper when referring to that architecture.
 ## License
 
 The code is licensed under **Apache-2.0** — see [LICENSE](LICENSE) for details.
-
-- **Official YOLO26 weights** (AGPL-3.0) are not distributed here; download them with
-  `scripts/download_weights.py` under Ultralytics' license terms.
-- **From-scratch checkpoints** (detection + segmentation) are published as safetensors on
-  [Releases](https://github.com/zjykzj/flash-yolo/releases); the exact list and profiles are in
-  [docs/models/README.md](docs/models/README.md).
