@@ -16,10 +16,12 @@ yolov3-tiny：单输出解码 (B, NA, 5+nc)——obj×cls 与按类 NMS 在外�
     python scripts/export.py --weights weights/yolo26n.safetensors --trt [--fp16]   # 顺带构建 TensorRT engine
 
 --trt：onnx 导出后继续构建序列化 engine（与构建机 GPU/TRT 版本绑定、不跨机移植；换机需重构建）。
---fp16：额外导出半精度图 <stem>.fp16.onnx（model.half()）并据此构建 fp16 引擎 <stem>.fp16.engine——
-TRT 11 已移除 FP16 builder flag，精度由 strongly-typed 网络的张量类型决定，所以 fp16 = 半精度 onnx
-+ strongly-typed 构建；fp32 与 fp16 两套产物文件名不同、可共存。fp16 是有损的部署取向：先跑
-scripts/eval.py 对比精度再决定是否采用（引擎输出统一转回 fp32，下游契约不变）。
+--fp16：引擎改为 fp16 构建（需 --trt）：另导半精度图 <stem>.fp16.onnx（model.half()）并据此
+构建 <stem>.fp16.engine。每次调用只建一套引擎——`--trt` 建 fp32、`--trt --fp16` 建 fp16，
+要两套各跑一次；TRT 11 已移除 FP16 builder flag，精度由 strongly-typed 网络的张量类型决定，
+所以 fp16 = 半精度 onnx + strongly-typed 构建；fp32 与 fp16 两套产物文件名不同、可共存。
+fp16 是有损的部署取向：先跑 scripts/eval.py 对比精度再决定是否采用（引擎输出统一转回
+fp32，下游契约不变）。
 """
 
 import argparse
@@ -58,8 +60,7 @@ def main():
     parser.add_argument("--trt", action="store_true",
                         help="also build a TensorRT engine (.engine) from the exported onnx (needs tensorrt + CUDA)")
     parser.add_argument("--fp16", action="store_true",
-                        help="fp16 deployment: also export a half-precision onnx and build the engine from it "
-                             "(requires --trt)")
+                        help="build the fp16 engine from a half-precision onnx instead of fp32 (requires --trt)")
     args = parser.parse_args()
 
     arch, scale = resolve_arch_scale(args.weights, args.model, args.scale)
