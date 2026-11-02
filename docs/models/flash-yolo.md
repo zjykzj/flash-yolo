@@ -64,7 +64,10 @@
 
 | 平台 | 运行时 / 精度 | b1 | b8（每图） |
 |---|---|---:|---:|
-| （CPU 型号待填） | ONNX Runtime · fp32 | 待测 | 待测 |
+| RTX 4060 Laptop | TensorRT 11.4 · fp32 | 3.07 ms | 1.25 ms |
+| RTX 4060 Laptop | TensorRT 11.4 · fp16 | 3.32 ms | 0.535 ms |
+
+- b1 为三轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
 
 ## 6. 用法
 

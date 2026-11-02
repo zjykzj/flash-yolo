@@ -104,7 +104,10 @@ python scripts/convert_weights.py --src weights/yolo26n-objv1-seg.pt \
 
 | 平台 | 运行时 / 精度 | b1 | b8（每图） |
 |---|---|---:|---:|
-| （CPU 型号待填） | ONNX Runtime · fp32 | 待测 | 待测 |
+| RTX 4060 Laptop | TensorRT 11.4 · fp32 | 4.16 ms | 2.01 ms |
+| RTX 4060 Laptop | TensorRT 11.4 · fp16 | 3.73 ms | 0.791 ms |
+
+- b1 为三轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
 
 > 掩码解码与 IoU 目前主要在 CPU；部署时的端到端延迟显著高于 model-only，需单独测量。
 

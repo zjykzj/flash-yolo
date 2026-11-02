@@ -93,7 +93,10 @@
 
 | 平台 | 运行时 / 精度 | b1 | b8（每图） |
 |---|---|---:|---:|
-| （CPU 型号待填） | ONNX Runtime · fp32 | 待测 | 待测 |
+| RTX 4060 Laptop | TensorRT 11.4 · fp32 | 4.07 ms | 1.85 ms |
+| RTX 4060 Laptop | TensorRT 11.4 · fp16 | 3.77 ms | 0.702 ms |
+
+- b1 为三轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
 
 > 掩码解码与 IoU 目前主要在 CPU；部署时的端到端延迟显著高于 model-only，需单独测量。
 

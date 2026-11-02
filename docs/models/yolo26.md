@@ -99,7 +99,10 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data coco
 
 | 平台 | 运行时 / 精度 | b1 | b8（每图） |
 |---|---|---:|---:|
-| （CPU 型号待填） | ONNX Runtime · fp32 | 待测 | 待测 |
+| RTX 4060 Laptop | TensorRT 11.4 · fp32 | 3.63 ms | 1.40 ms |
+| RTX 4060 Laptop | TensorRT 11.4 · fp16 | 3.41 ms | 0.606 ms |
+
+- b1 为三轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
 
 ## 6. 用法
 

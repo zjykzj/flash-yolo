@@ -141,9 +141,15 @@ python scripts/convert_weights.py --src weights/yolov3-tiny.weights --dst weight
 
 ### 本地笔记本
 
-| 平台 | 运行时 / 精度 | b1 | b8（每图） |
-|---|---|---:|---:|
-| （CPU 型号待填） | ONNX Runtime · fp32 | 待测 | 待测 |
+| 权重 | 平台 / 运行时 | 精度 | b1 | b8（每图） |
+|---|---|---|---:|---:|
+| v3-SiLU + objectness | RTX 4060 Laptop · TensorRT 11.4 | fp32 | 1.53 ms | 0.620 ms |
+| v3-SiLU + objectness | RTX 4060 Laptop · TensorRT 11.4 | fp16 | 1.97 ms | 0.197 ms |
+| v3 原版 + objectness | RTX 4060 Laptop · TensorRT 11.4 | fp32 | 1.47 ms | 0.615 ms |
+| v3 原版 + objectness | RTX 4060 Laptop · TensorRT 11.4 | fp16 | 1.99 ms | 0.193 ms |
+
+- b1 为三轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
+- fp16 在 b1 反而慢（1.99 vs 1.47 ms，与 5090 同现象）→ b1 用 fp32、b8 用 fp16。
 
 ## 9. 用法
 
