@@ -27,8 +27,7 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
   `flash`, `yolov3-tiny` only `tiny` — passing `--scale` for those warns and does nothing.
 - Structures live in `config/models/<model>.yaml`; `--cfg` can point at a custom yaml (custom
   variants).
-- Each model page pins its download links to **v1.0.0** (the next release); asset names are
-  fixed — swap the tag at release time.
+- Each model page's download links point to the **v1.0.0** release assets.
 
 ## 2. Shared structure conventions
 

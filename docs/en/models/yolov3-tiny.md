@@ -92,8 +92,7 @@ wh = anchor · exp(t)               # tw/th use the raw logits, clamp(±8) again
 
 ## 6. Weight download and conversion
 
-Download links are pinned to **v1.0.0** (the next release; 404 until then — use the current
-version on the Releases page). Asset names are fixed; swap the tag at release time.
+Download links point to the **v1.0.0** release assets.
 
 | Weights | Training | Input | Download |
 |---|---|---|---|

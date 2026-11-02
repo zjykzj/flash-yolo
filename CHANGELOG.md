@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-11-02
 
 ### Added
 
@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Resume across world size / device**: `resume.pt` now records world_size/device and loads through CPU, so continuing a run from 1 GPU on 2 GPUs (or CPU↔GPU) works; same-world-size resume stays bit-identical.
 - **Distributed training (DDP)**: `--device 0,1` or torchrun now trains detection and segmentation on multiple GPUs (`--batch` is global, per-GPU = batch/world_size). Single-GPU runs stay bit-identical; multi-GPU runs are reproducible per world size but not vs single GPU (no SyncBatchNorm).
 - **Bilingual documentation**: a full English manual under `docs/en/` joins the Chinese one (moved unchanged to `docs/zh/`), and `README.zh-CN.md` mirrors the English README — GitHub's language picker switches between the two.
+- **From-scratch 300-epoch checkpoints**: six models (yolo26n / yolo26n-seg, flash-yolo / flash-yolo-seg, yolov3-tiny / -silu) trained with the built-in default recipe are published as the v1.0.0 release assets, with per-model COCO val2017 metrics and latency profiles on the model pages.
 
 ### Removed
 

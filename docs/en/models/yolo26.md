@@ -52,8 +52,7 @@
 
 ## 3. Weight download and initialization
 
-Download links are pinned to **v1.0.0** (the next release; 404 until then — use the current
-version on the Releases page). Asset names are fixed; swap the tag at release time.
+Download links point to the **v1.0.0** release assets.
 
 | Weights | Training | Input | Download |
 |---|---|---|---|

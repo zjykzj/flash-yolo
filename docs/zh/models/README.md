@@ -25,7 +25,7 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 - `yolo26` / `yolo26-seg` 有 `n/s/m/l/x` 档位；`flash-yolo` / `flash-yolo-seg` 只有 `flash`，
   `yolov3-tiny` 只有 `tiny`——对这些架构传 `--scale` 会告警且不生效。
 - 结构定义在 `config/models/<model>.yaml`；`--cfg` 可指向自定义 yaml（自定义变体）。
-- 各模型页的权重下载链接固定到 **v1.0.0**（下一个发布版本）；资产名固定，发版时统一替换 tag。
+- 各模型页的权重下载链接指向 **v1.0.0** 发布资产。
 
 ## 2. 公共结构约定
 
