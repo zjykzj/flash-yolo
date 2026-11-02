@@ -15,7 +15,6 @@
 | 图片 / 视频 / 流推理 | [pipeline/infer.md](pipeline/infer.md) |
 | 容器环境 | [docker.md](docker.md) |
 | 常见问题 | [faq.md](faq.md) |
-| 代码结构与扩展点 | [architecture.md](architecture.md) |
 | 与官方实现的对齐 / 测试闸门 | [development/alignment.md](development/alignment.md) |
 
 ## 目录
@@ -42,8 +41,7 @@ docs/
 ├── development/
 │   └── alignment.md   官方权重对齐、训练内部 parity、测试
 ├── docker.md
-├── faq.md
-└── architecture.md
+└── faq.md
 ```
 
 ## 口径约定
