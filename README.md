@@ -6,6 +6,8 @@
 > Raw dataset in, TensorRT engine out.**
 >
 > Core runtime is just PyTorch + NumPy — no monolithic abstractions, no ultralytics dependency.
+> Independent Apache-2.0 implementation: official weights, recipes and numbers are upstream
+> assets used for reproduction only (never redistributed).
 
 <p align="center">
   <a href="https://github.com/zjykzj/flash-yolo/actions/workflows/tests.yml"><img src="https://github.com/zjykzj/flash-yolo/actions/workflows/tests.yml/badge.svg?branch=main" alt="Tests"></a>

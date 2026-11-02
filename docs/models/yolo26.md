@@ -11,7 +11,7 @@
   against those numbers is not like for like"。
 - 本仓库的复现口径 = 同权重、同前后处理、同 pycocotools 指标、同硬件重跑官方权重；
   从零训练结果见 §4。
-- 代码为独立重写（Apache-2.0），不复制 ultralytics 代码；ultralytics 仅作开发期数值对照。
+- 文中「官方」指 Ultralytics 发布的 YOLO26 权重/配方/指标，本仓库不分发。
 
 ## 2. 结构（n 档）
 

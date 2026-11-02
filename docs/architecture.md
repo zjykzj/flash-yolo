@@ -1,8 +1,7 @@
 # 工程结构与模块职责
 
-> 设计原则：每个模块独立、完整、可单独阅读——不复制 ultralytics 的 monolith，运行时不依赖它。
-> 核心运行时只有 **PyTorch + NumPy**；`pycocotools`（评估）、`onnx` / `onnxruntime`
-> （导出 / 推理）、TensorRT（GPU 部署）都是可选依赖。
+> 设计原则：每个模块独立、完整、可单独阅读。核心运行时只有 **PyTorch + NumPy**；
+> `pycocotools`（评估）、`onnx` / `onnxruntime`（导出 / 推理）、TensorRT（GPU 部署）都是可选依赖。
 
 ## 1. 目录结构
 
