@@ -32,7 +32,7 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
 | YOLO26n · official weights | O365 + COCO | **40.27** | 55.80 | **40.89** | 56.87 | 2.57M | 5.48 |
 | YOLO26n · this repo | 300 ep from scratch | **37.82** | **53.24** | **38.65** | **54.46** | 2.57M | 5.48 |
 | Flash-YOLO · this repo | 300 ep from scratch | **35.14** | **50.15** | **36.09** | **51.56** | 1.97M | 3.80 |
-| **Δ (Flash-YOLO vs YOLO26n, same budget)** | | **−2.68 (−7.1%)** | **−3.09 (−5.8%)** | | | **−0.60M (−23%)** | **−1.68 (−31%)** |
+| **Δ (Flash-YOLO vs YOLO26n, same budget)** | | **−2.68 (−7.1%)** | **−3.09 (−5.8%)** | **−2.56 (−6.6%)** | **−2.90 (−5.3%)** | **−0.60M (−23%)** | **−1.68 (−31%)** |
 
 - These are the 300-epoch from-scratch runs (batch 32, nbs 64, fp32, single GPU).
 
@@ -52,8 +52,8 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
 - Official YOLO26n-seg training-time validator records 39.75 / 33.86 (Box / Mask mAP50-95);
   this pipeline reports 39.67 / 33.67 — a ~0.002 metric-implementation difference, not a model
   difference.
-- Flash-YOLO-seg and YOLO26n-seg rows use the same recipe and budget (300 ep, batch 32, nbs 64,
-  fp32); model details in [docs/models/flash-yolo-seg.md](docs/models/flash-yolo-seg.md).
+- The two from-scratch rows use the same recipe and budget (300 ep, batch 32, nbs 64, fp32);
+  model details in [docs/models/flash-yolo-seg.md](docs/models/flash-yolo-seg.md).
 - Full latency (ORT-CPU / TensorRT fp32/fp16, b1/b8), deployment artifacts and provenance:
   [docs/models/README.md](docs/models/README.md).
 
@@ -273,7 +273,7 @@ python scripts/export.py --weights flash-yolo-seg-e300-640.safetensors --trt
 **Infer** — masks are overlaid on the image; labels are written as normalized polygons:
 
 ```bash
-python scripts/infer.py --weights weights/flash-yolo-seg.safetensors \
+python scripts/infer.py --weights flash-yolo-seg-e300-640.safetensors \
     --image assets/traffic.jpg
 ```
 
@@ -289,8 +289,9 @@ Full engine and output notes: [docs/pipeline/infer.md](docs/pipeline/infer.md).
 ## Documentation
 
 The full manual starts at [docs/README.md](docs/README.md): train / val / export / infer / dataset /
-docker / FAQ, released weights and latency ([docs/models/README.md](docs/models/README.md)), and the
-per-architecture specs (YOLO26, Flash-YOLO / -seg, YOLOv3-tiny).
+docker / FAQ, released weights and latency ([docs/models/README.md](docs/models/README.md)),
+per-architecture specs (YOLO26, Flash-YOLO / -seg, YOLOv3-tiny), and the verification evidence
+against the official implementation ([docs/development/alignment.md](docs/development/alignment.md)).
 
 ## Contributing
 
@@ -349,7 +350,7 @@ cite the YOLOv3 paper when referring to that architecture.
 The code is licensed under **Apache-2.0** — see [LICENSE](LICENSE) for details.
 
 - **Official YOLO26 weights** (AGPL-3.0) are not distributed here; download them with
-  `scripts/download_weights.py` for personal use.
-- **From-scratch detection checkpoints** are published as safetensors on
-  [Releases](https://github.com/zjykzj/flash-yolo/releases); the exact list, profiles and the
-  segmentation status (local-only for now) are in [docs/models/README.md](docs/models/README.md).
+  `scripts/download_weights.py` under Ultralytics' license terms.
+- **From-scratch checkpoints** (detection + segmentation) are published as safetensors on
+  [Releases](https://github.com/zjykzj/flash-yolo/releases); the exact list and profiles are in
+  [docs/models/README.md](docs/models/README.md).
