@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Video / stream inference**: `scripts/infer.py --video <file|url|index>` writes an annotated video, with `--max-frames` for live streams and `--show` for preview. Image and directory modes are unchanged.
 - **Resume across world size / device**: `resume.pt` now records world_size/device and loads through CPU, so continuing a run from 1 GPU on 2 GPUs (or CPU↔GPU) works; same-world-size resume stays bit-identical.
 - **Distributed training (DDP)**: `--device 0,1` or torchrun now trains detection and segmentation on multiple GPUs (`--batch` is global, per-GPU = batch/world_size). Single-GPU runs stay bit-identical; multi-GPU runs are reproducible per world size but not vs single GPU (no SyncBatchNorm).
+- **Bilingual documentation**: a full English manual under `docs/en/` joins the Chinese one (moved unchanged to `docs/zh/`), and `README.zh-CN.md` mirrors the English README — GitHub's language picker switches between the two.
 
 ### Removed
 

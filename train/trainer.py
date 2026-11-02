@@ -68,7 +68,7 @@ def set_deterministic(enabled):
     开（默认）：关 cuDNN autotune + 确定性算法 —— `warn_only=True` 表示遇到没有确定性实现的算子
     只告警不中断训练；CUBLAS 工作区固定（cuBLAS 句柄创建前生效）；不再给新分配张量填 NaN（torch≥2.2）。
     关（--no-deterministic）：逐项还原默认值（benchmark=True，速度优先，同 seed 两跑有末位差异）。
-    实测代价（yolo26n@640 b16 channels_last）：纯算力口径 ~3-5%、端到端在噪声内 —— 见 docs/train.md §5。
+    实测代价（yolo26n@640 b16 channels_last）：纯算力口径 ~3-5%、端到端在噪声内 —— 见 docs/zh/pipeline/train.md §5。
     """
     torch.backends.cudnn.benchmark = not enabled
     if enabled:

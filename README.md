@@ -46,12 +46,12 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
   this pipeline reports 39.67 / 33.67 — a ~0.002 metric-implementation difference, not a model
   difference.
 - The two from-scratch rows use the same recipe and budget (300 ep, batch 32, nbs 64, fp32);
-  model details in [docs/models/flash-yolo-seg.md](docs/models/flash-yolo-seg.md).
-- Deployment artifacts and provenance: [docs/models/README.md](docs/models/README.md).
+  model details in [docs/models/flash-yolo-seg.md](docs/en/models/flash-yolo-seg.md).
+- Deployment artifacts and provenance: [docs/models/README.md](docs/en/models/README.md).
 
 **Inference latency** — model-only, 640 input (ORT-CPU = Xeon 8470Q · fp32; TRT = RTX 5090 · fp16;
 b8 = batch-8 per-image). Full protocol and per-model tables:
-[docs/models/README.md](docs/models/README.md).
+[docs/models/README.md](docs/en/models/README.md).
 
 | Model | ORT-CPU b1 | ORT-CPU b8 | TRT fp16 b8 |
 |---|---:|---:|---:|
@@ -88,7 +88,7 @@ b8 = batch-8 per-image). Full protocol and per-model tables:
 YOLOv3-tiny reference: official darknet weights evaluate at 17.16 / 35.90 (mAP50-95 / mAP50)
 @640 through this pipeline. From-scratch 300-epoch runs at 416 reach **16.15 / 29.93** with the
 current default recipe (SiLU + `--obj-iou-target`). See
-[docs/models/yolov3-tiny.md](docs/models/yolov3-tiny.md).
+[docs/models/yolov3-tiny.md](docs/en/models/yolov3-tiny.md).
 
 > YOLOv3-tiny's canonical input is **416** (darknet; the GFLOPs column is measured there).
 > `config/train.yaml` keeps `imgsz: 640` for every architecture, so the v3 protocol needs
@@ -121,7 +121,7 @@ docker/run.sh                          # interactive shell, repo mounted at /wor
 docker/run.sh pytest tests/            # run any command inside the container
 ```
 
-See [docs/docker.md](docs/docker.md) for host requirements (NVIDIA driver ≥ 580, nvidia-container-toolkit).
+See [docs/docker.md](docs/en/docker.md) for host requirements (NVIDIA driver ≥ 580, nvidia-container-toolkit).
 
 ## Quick Start
 
@@ -163,7 +163,7 @@ python scripts/export.py --weights flash-yolo-e300-640.safetensors
 # -> runs/export/flash-yolo-e300-640.onnx
 ```
 
-Other released checkpoints and their metrics: [docs/models/README.md](docs/models/README.md).
+Other released checkpoints and their metrics: [docs/models/README.md](docs/en/models/README.md).
 
 ## Usage
 
@@ -175,7 +175,7 @@ cp config/datasets/coco.yaml config/datasets/local/coco.yaml   # then edit `path
 ```
 
 YOLO-format descriptors, segmentation labels and conversions are covered in
-[docs/datasets/README.md](docs/datasets/README.md).
+[docs/datasets/README.md](docs/en/datasets/README.md).
 
 ### Detection
 
@@ -198,7 +198,7 @@ python scripts/train.py --data coco --device 0,1 --resume runs/train/train-<name
 ```
 
 Runs land in `runs/train/train-<name>/` (`best/last.safetensors`, `results.csv`, `diag/`, `samples/`).
-From-scratch / finetune / DDP details: [docs/pipeline/train.md](docs/pipeline/train.md).
+From-scratch / finetune / DDP details: [docs/pipeline/train.md](docs/en/pipeline/train.md).
 
 **Evaluate**
 
@@ -207,7 +207,7 @@ python scripts/eval.py --weights flash-yolo-e300-640.safetensors --data coco
 # E2E (NMS-free) by default; add --nms for the one-to-many + NMS path.
 ```
 
-`--split`, `--limit`, `--imgsz` and metric details: [docs/pipeline/eval.md](docs/pipeline/eval.md).
+`--split`, `--limit`, `--imgsz` and metric details: [docs/pipeline/eval.md](docs/en/pipeline/eval.md).
 
 **Export**
 
@@ -216,7 +216,7 @@ python scripts/export.py --weights flash-yolo-e300-640.safetensors --trt
 # --fp16 for half precision; --dynamic for a dynamic batch axis.
 ```
 
-ONNX / TensorRT options and output contracts: [docs/pipeline/export.md](docs/pipeline/export.md).
+ONNX / TensorRT options and output contracts: [docs/pipeline/export.md](docs/en/pipeline/export.md).
 
 **Infer**
 
@@ -227,7 +227,7 @@ python scripts/infer.py --weights flash-yolo-e300-640.safetensors \
     --video 0 --max-frames 300          # file / RTSP URL / camera index
 ```
 
-Full engine and output notes: [docs/pipeline/infer.md](docs/pipeline/infer.md).
+Full engine and output notes: [docs/pipeline/infer.md](docs/en/pipeline/infer.md).
 
 <p align="center">
   <img src="assets/traffic_det.jpg" width="49%" alt="flash-yolo detections — street traffic">
@@ -244,7 +244,7 @@ Supported architectures: **YOLO26-seg** (n/s/m/l/x), **Flash-YOLO-seg**.
 
 COCO polygon annotations and YOLO-seg txt rows (`cls x1 y1 ...`) are both accepted; bbox-only
 rows fall back to rectangles. Format details and the COCO converter:
-[docs/datasets/README.md](docs/datasets/README.md).
+[docs/datasets/README.md](docs/en/datasets/README.md).
 
 **Train**
 
@@ -254,7 +254,7 @@ python scripts/train.py --data coco --model flash-yolo-seg --name flash-seg --ba
 ```
 
 Segmentation memory/throughput notes (`--mask-ratio`, `--overlap-mask`, batch sizing):
-[docs/pipeline/train.md](docs/pipeline/train.md).
+[docs/pipeline/train.md](docs/en/pipeline/train.md).
 
 **Evaluate** — checkpoints produce Box and Mask tables automatically:
 
@@ -275,7 +275,7 @@ python scripts/infer.py --weights flash-yolo-seg-e300-640.safetensors \
     --image assets/traffic.jpg
 ```
 
-Full engine and output notes: [docs/pipeline/infer.md](docs/pipeline/infer.md).
+Full engine and output notes: [docs/pipeline/infer.md](docs/en/pipeline/infer.md).
 
 <p align="center">
   <img src="assets/traffic_seg.jpg" width="49%" alt="flash-yolo-seg instance segmentation — street traffic">
@@ -286,10 +286,10 @@ Full engine and output notes: [docs/pipeline/infer.md](docs/pipeline/infer.md).
 
 ## Documentation
 
-The full manual starts at [docs/README.md](docs/README.md): train / val / export / infer / dataset /
-docker / FAQ, released weights and latency ([docs/models/README.md](docs/models/README.md)),
+The full manual starts at [docs/README.md](docs/en/README.md): train / val / export / infer / dataset /
+docker / FAQ, released weights and latency ([docs/models/README.md](docs/en/models/README.md)),
 per-architecture specs (YOLO26, Flash-YOLO / -seg, YOLOv3-tiny), and the verification evidence
-against the official implementation ([docs/development/alignment.md](docs/development/alignment.md)).
+against the official implementation ([docs/development/alignment.md](docs/en/development/alignment.md)).
 
 ## Contributing
 
