@@ -18,9 +18,10 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo_det.gif" width="640" alt="Flash-YOLO detection demo — street traffic">
+  <img src="assets/demo_det.gif" width="49%" alt="Flash-YOLO detection demo — street traffic">
+  <img src="assets/demo_seg.gif" width="49%" alt="Flash-YOLO-seg instance segmentation demo — street traffic">
   <br>
-  <em>Flash-YOLO detection on a street clip — 640 input</em>
+  <em>Flash-YOLO detection (left) and Flash-YOLO-seg instance segmentation (right) on a street clip — 640 input</em>
 </p>
 
 COCO val2017, official pycocotools (`scripts/eval.py`), 640 input. E2E = NMS-free default path;
@@ -35,12 +36,6 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
 | **Δ (Flash-YOLO vs YOLO26n, same budget)** | | **−2.68 (−7.1%)** | **−3.09 (−5.8%)** | **−2.56 (−6.6%)** | **−2.90 (−5.3%)** | **−0.60M (−23%)** | **−1.68 (−31%)** |
 
 - These are the 300-epoch from-scratch runs (batch 32, nbs 64, fp32, single GPU).
-
-<p align="center">
-  <img src="assets/demo_seg.gif" width="640" alt="Flash-YOLO-seg instance segmentation demo — street traffic">
-  <br>
-  <em>Flash-YOLO-seg instance segmentation on the same clip — 640 input</em>
-</p>
 
 | Model | Training | Box mAP50-95 | Box mAP50 | Mask mAP50-95 | Mask mAP50 | Params | GFLOPs |
 |---|---|---:|---:|---:|---:|---:|---:|
