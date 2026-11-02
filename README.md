@@ -49,8 +49,20 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
   difference.
 - The two from-scratch rows use the same recipe and budget (300 ep, batch 32, nbs 64, fp32);
   model details in [docs/models/flash-yolo-seg.md](docs/models/flash-yolo-seg.md).
-- Full latency (ORT-CPU / TensorRT fp32/fp16, b1/b8), deployment artifacts and provenance:
-  [docs/models/README.md](docs/models/README.md).
+- Deployment artifacts and provenance: [docs/models/README.md](docs/models/README.md).
+
+**Inference latency** — model-only, 640 input (ORT-CPU = Xeon 8470Q · fp32; TRT = RTX 5090 · fp16;
+b8 = batch-8 per-image). Full protocol and per-model tables:
+[docs/models/README.md](docs/models/README.md).
+
+| Model | ORT-CPU b1 | ORT-CPU b8 | TRT fp16 b8 |
+|---|---:|---:|---:|
+| YOLO26n | 14.6 ms | 6.86 ms | 0.135 ms |
+| Flash-YOLO | 13.2 ms | 5.84 ms | 0.123 ms |
+| Δ | −10% | −15% | −9% |
+| YOLO26n-seg | 16.8 ms | 12.0 ms | 0.148 ms |
+| Flash-YOLO-seg | 14.9 ms | 10.8 ms | 0.136 ms |
+| Δ | −11% | −10% | −8% |
 
 ## Table of Contents
 
