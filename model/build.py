@@ -12,12 +12,12 @@ import torch.nn as nn
 import yaml
 
 from model.basic import C2PSA, C3k2, Conv, DWConv, LeakyConv, LiteBlock, PoolConv, SPPF
-from model.head import Detect, Segment26, V3Detect
+from model.head import Detect, Segment26, V3Detect, YOLOESegment26
 
-__all__ = ["DetectionModel", "build_model", "build_yolo26", "build_yolo26_seg", "build_yolov3_tiny",
-           "arch_display_name", "arch_task", "ARCHS", "YOLO26_FAMILY", "YOLO26_CONFIG_PATH",
-           "YOLO26_SEG_CONFIG_PATH", "V3_CONFIG_PATH", "V3_SILU_CONFIG_PATH", "FLASH_CONFIG_PATH",
-           "FLASH_SEG_CONFIG_PATH"]
+__all__ = ["DetectionModel", "build_model", "build_yolo26", "build_yolo26_seg", "build_yoloe26_seg",
+           "build_yolov3_tiny", "arch_display_name", "arch_task", "ARCHS", "YOLO26_FAMILY",
+           "YOLOE26_FAMILY", "YOLO26_CONFIG_PATH", "YOLO26_SEG_CONFIG_PATH", "YOLOE26_CONFIG_PATH",
+           "V3_CONFIG_PATH", "V3_SILU_CONFIG_PATH", "FLASH_CONFIG_PATH", "FLASH_SEG_CONFIG_PATH"]
 
 
 class Concat(nn.Module):
@@ -48,6 +48,7 @@ MODULES = {
     "Detect": Detect,
     "Segment26": Segment26,
     "V3Detect": V3Detect,
+    "YOLOESegment26": YOLOESegment26,
 }
 
 # 通道保持型算子（args[0] 不是输出通道）：上采样 / 下采样池化 / padding 胶水层
@@ -62,6 +63,8 @@ V3_SILU_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "model
 FLASH_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "flash-yolo.yaml"
 # 分割版：backbone+neck 与 flash-yolo.yaml 逐行相同，只换最后一行 Segment26（与 yolo26-seg 同构）
 FLASH_SEG_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "flash-yolo-seg.yaml"
+# YOLOE-26：backbone+neck 与 yolo26-seg.yaml 逐行相同，只换 YOLOESegment26 头（官方 yoloe-26-seg.yaml 口径）
+YOLOE26_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yoloe-26-seg.yaml"
 
 # 架构注册表：name -> yaml 路径 + 默认档位 + 展示名模板 + 任务（detect|segment）
 # task 是"任务轴"：引擎/后处理/评估按它分派（差异处加参数，不复制链路），不在各处比 arch 名字。
@@ -75,10 +78,15 @@ ARCHS = {
     "flash-yolo": {"cfg": FLASH_CONFIG_PATH, "default_scale": "flash", "display": "Flash-YOLO", "task": "detect"},
     "flash-yolo-seg": {"cfg": FLASH_SEG_CONFIG_PATH, "default_scale": "flash",
                        "display": "Flash-YOLO-seg", "task": "segment"},
+    "yoloe-26": {"cfg": YOLOE26_CONFIG_PATH, "default_scale": "n", "display": "YOLOE-26{scale}-seg",
+                 "task": "segment"},
 }
 
 # yolo26 系头（Detect/Segment26 双分支 / E2E，含 flash-yolo 与分割版）：--nms/--raw 门控与解码分派按此判定
 YOLO26_FAMILY = {"yolo26", "yolo26-seg", "flash-yolo", "flash-yolo-seg"}
+# YOLOE-26 系（YOLOESegment26）：E2E 解码与 yolo26 系同口径（max_det=1000），但 raw/NMS 暂不开放
+# （pf 原始输出列数随提案过滤随图变化）——--nms/--raw 对 yoloe 直接拒绝（CLI 侧用本集合判定）
+YOLOE26_FAMILY = {"yoloe-26"}
 
 
 def arch_display_name(arch, scale):
@@ -102,14 +110,14 @@ class DetectionModel(nn.Module):
     state_dict key = `model.{i}.{属性路径}`，与官方 checkpoint 零映射对齐。
     """
 
-    def __init__(self, cfg_path=None, scale="n", imgsz=640, nc=None):
+    def __init__(self, cfg_path=None, scale="n", imgsz=640, nc=None, prompt_free=None):
         super().__init__()
         cfg_path = cfg_path or YOLO26_CONFIG_PATH
         with open(cfg_path) as f:
             cfg = yaml.safe_load(f)
-        self.model, self.save = self._parse(cfg, scale, imgsz, nc)
+        self.model, self.save = self._parse(cfg, scale, imgsz, nc, prompt_free)
 
-    def _parse(self, d, scale, imgsz=640, nc=None):
+    def _parse(self, d, scale, imgsz=640, nc=None, prompt_free=None):
         """解析 backbone+head 行列表，应用缩放规则（depth · width · max_channels，源自论文）
 
         imgsz、nc 是训练侧的数据事实（先验尺寸 / 数据集类别数），默认 None/640 保留
@@ -117,7 +125,10 @@ class DetectionModel(nn.Module):
         """
         if scale not in d["scales"]:
             raise ValueError(f"scale {scale!r} not in {sorted(d['scales'])}")
-        depth, width, max_ch = d["scales"][scale]
+        scale_spec = d["scales"][scale]
+        depth, width, max_ch = scale_spec[:3]
+        # pf 布局的提案卷积输出通道（仅 yoloe-26 yaml 使用；缺省 512 = 官方新口径）
+        pf_channels = int(scale_spec[3]) if len(scale_spec) > 3 else 512
         rows = d["backbone"] + d["head"]
         # 路由归一化（parse 期做一次，forward 只认 -1 与绝对索引）：相对负数 -k -> i-k；
         # 同时前移登记 save——凡被引用的层（不限于 Concat/Detect 输入）forward 时都按其暂存
@@ -171,6 +182,23 @@ class DetectionModel(nn.Module):
                 m_.bias_init(imgsz)  # 只初始化 cv2/cv3 先验（cv4 不设先验，官方口径）
                 c2 = None
                 args = [nc_, nm, npr, d["reg_max"], d["end2end"], det_ch]
+            elif name == "YOLOESegment26":
+                det_ch = [ch[x] for x in f]
+                nc_ = d["nc"] if nc is None else nc
+                # nm/embed 是任务常数不缩放；npr（proto 中间通道）随 width 缩放（同 Segment26 口径）。
+                # pf 布局由顶层 prompt_free 决定（None = yaml 默认）；vocab_size 是 pf 烘焙词汇数
+                # （官方 RAM++ = 4585；与 metadata names 长度的对账在 model/weights.py::apply_meta）。
+                # 不 bias_init：pf 词汇来自烘焙权重，文本布局 M2 再议（官方 pf 头无可设先验的末层）。
+                nm, npr, embed = int(args[1]), make_divisible(min(int(args[2]), max_ch) * width), int(args[3])
+                pf = d["prompt_free"] if prompt_free is None else prompt_free
+                vocab_size = int(d.get("vocab_size") or 0)
+                if pf and vocab_size <= 0:
+                    raise ValueError("prompt_free=true requires a positive `vocab_size` in the yaml")
+                m_ = m(nc_, nm, npr, embed, d["reg_max"], d["end2end"], det_ch,
+                       prompt_free=pf, vocab_size=vocab_size, pf_channels=pf_channels)
+                m_.stride = torch.tensor([8 * 2**i for i in range(len(det_ch))])
+                c2 = None
+                args = [nc_, nm, npr, embed, d["reg_max"], d["end2end"], det_ch]
             elif name == "V3Detect":
                 det_ch = [ch[x] for x in f]
                 nc_ = d["nc"] if nc is None else nc
@@ -233,15 +261,16 @@ class DetectionModel(nn.Module):
         return [x if j == -1 else y[j] for j in f]
 
 
-def build_model(arch="yolo26", scale=None, imgsz=640, nc=None, cfg_path=None):
+def build_model(arch="yolo26", scale=None, imgsz=640, nc=None, cfg_path=None, prompt_free=None):
     """按架构注册表构建模型（原始构造：不 eval、不改 end2end 状态）
 
-    scale=None 用架构默认档位（yolo26: n / yolov3-tiny: tiny）；cfg_path 显式覆盖 yaml。
+    scale=None 用架构默认档位（yolo26: n / yolov3-tiny: tiny）；cfg_path 显式覆盖 yaml；
+    prompt_free 仅 yoloe-26 生效（None = yaml 默认），其余架构忽略。
     """
     spec = ARCHS.get(arch)
     if spec is None:
         raise ValueError(f"unknown arch {arch!r}; available: {sorted(ARCHS)}")
-    return DetectionModel(cfg_path or spec["cfg"], scale or spec["default_scale"], imgsz, nc)
+    return DetectionModel(cfg_path or spec["cfg"], scale or spec["default_scale"], imgsz, nc, prompt_free)
 
 
 def build_yolo26(scale="n", cfg_path=None, imgsz=640, nc=None):
@@ -271,4 +300,19 @@ def build_yolov3_tiny(nc=None, imgsz=640, cfg_path=None):
     """构建 YOLOv3-tiny（eval 模式；前向即完成解码，无 end2end 开关）"""
     model = build_model("yolov3-tiny", imgsz=imgsz, nc=nc, cfg_path=cfg_path)
     model.eval()
+    return model
+
+
+def build_yoloe26_seg(scale="n", cfg_path=None, imgsz=640, nc=None, prompt_free=None):
+    """构建 YOLOE-26-seg（eval 模式 + E2E；前向返回 (检测输出, 原型) 二元组）
+
+    prompt_free=None 按 yaml 默认（false）；加载 pf 权重时调用方（PtEngine）经
+    weights.prompt_mode_from_weights 解析后显式传 True——pf 是 M1 支持范围，
+    文本布局只建结构（前向 M2）。
+    """
+    model = build_model("yoloe-26", scale, imgsz, nc, cfg_path, prompt_free=prompt_free)
+    model.eval()
+    head = model.model[-1]
+    if isinstance(head, YOLOESegment26) and getattr(head, "one2one_cv2", None) is not None:
+        head.end2end = True
     return model

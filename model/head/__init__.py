@@ -3,6 +3,7 @@
 家族短名对照表（文件名里的家族名 -> config/models 里的架构）：
     yolo26_*  ->  yolo26 / yolo26-seg / flash-yolo（flash-yolo 复用 yolo26 系的 Detect 头）
     v3_*      ->  yolov3-tiny / yolov3-tiny-silu（silu 只换算子，头不动）
+    yoloe26_* ->  yoloe-26（YOLOE-26，官方只有 seg 权重；头 = YOLOESegment26）
 
 命名规则（新增头时照此办理）：
     1. 文件名 = <家族>_<任务>.py；任务取官方词表（detect / seg / pose / obb / cls / depth / sem）
@@ -15,7 +16,8 @@
 """
 
 from model.head.v3_detect import V3Detect, decode_level
-from model.head.yolo26_detect import Detect
+from model.head.yolo26_detect import Detect, e2e_topk
 from model.head.yolo26_seg import Proto26, Segment26
+from model.head.yoloe26_seg import YOLOESegment26
 
-__all__ = ["Detect", "Segment26", "Proto26", "V3Detect", "decode_level"]
+__all__ = ["Detect", "Segment26", "Proto26", "V3Detect", "YOLOESegment26", "decode_level", "e2e_topk"]

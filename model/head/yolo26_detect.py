@@ -15,7 +15,35 @@ import torch.nn as nn
 from model.basic import Conv, DWConv
 from utils.anchors import make_anchors, dist2bbox
 
-__all__ = ["Detect"]
+__all__ = ["Detect", "e2e_topk"]
+
+
+def e2e_topk(boxes, scores, max_det, extra=None):
+    """E2E 两阶段 top-k（唯一实现：Detect 与 YOLOE pf 路径共用）
+
+    Args:
+        boxes: (B, N, 4) xyxy（已解码像素坐标）
+        scores: (B, N, C) sigmoid 概率
+        max_det: 输出行数上限
+        extra: (B, N, E) 随同一次选择取回的附加通道（分割 = mask 系数），None 表示无
+    Returns:
+        (B, k, 6 [+ E]) [x1, y1, x2, y2, score, cls, extra...]，k = min(max_det, N)
+    """
+    n = scores.shape[1]
+    k = min(max_det, n)
+    nc = scores.shape[2]
+    # 第一轮：每 anchor 取最大类分，选 top-k anchor
+    ori_idx = scores.max(dim=-1)[0].topk(k, dim=1)[1]            # (B, k)
+    cand = scores.gather(1, ori_idx.unsqueeze(-1).expand(-1, -1, nc))
+    # 第二轮：在 k*C 候选中取全局 top-k（同一 anchor 可带不同类别出现）
+    top_scores, idx = cand.flatten(1).topk(k, dim=1)
+    cls = (idx % nc).float().unsqueeze(-1)                       # (B, k, 1)
+    anchor_idx = ori_idx.gather(1, idx // nc)                    # (B, k)
+    out = [boxes.gather(1, anchor_idx.unsqueeze(-1).expand(-1, -1, 4)),
+           top_scores.unsqueeze(-1), cls]
+    if extra is not None:
+        out.append(extra.gather(1, anchor_idx.unsqueeze(-1).expand(-1, -1, extra.shape[-1])))
+    return torch.cat(out, dim=-1)  # (B, k, 6 [+ E])
 
 
 class Detect(nn.Module):
@@ -107,32 +135,20 @@ class Detect(nn.Module):
         return {"boxes": boxes, "scores": scores}
 
     def _e2e_postprocess(self, y, feats):
-        """E2E 解码：ltrb -> xyxy（像素坐标）-> 两阶段 top-k -> (B, max_det, 6 [+ nm 系数])
+        """E2E 解码：ltrb -> xyxy（像素坐标）-> 两阶段 top-k（e2e_topk，唯一实现）
 
         分割头（yolo26_seg.py::Segment26）复用本实现：`mask_coefficient` 存在时按**同一次**
-        top-k 选择取回并追加到末维——E2E 选择只有这一份实现。
+        top-k 选择取回并追加到末维。YOLOE pf 路径（yoloe26_seg.py::YOLOESegment26）在
+        LRPC 过滤后同样调用 e2e_topk——E2E 选择只有这一份实现。
         """
         anchors, strides = make_anchors(feats, self.stride, 0.5)
         boxes = dist2bbox(y["boxes"], anchors.unsqueeze(0)) * strides  # (B, 4, N) xyxy
         boxes = boxes.permute(0, 2, 1)                                # (B, N, 4)
         scores = y["scores"].permute(0, 2, 1).sigmoid()               # (B, N, nc)
-
-        n = scores.shape[1]
-        k = min(self.max_det, n)
-        # 第一轮：每 anchor 取最大类分，选 top-k anchor
-        ori_idx = scores.max(dim=-1)[0].topk(k, dim=1)[1]            # (B, k)
-        cand = scores.gather(1, ori_idx.unsqueeze(-1).expand(-1, -1, self.nc))
-        # 第二轮：在 k*80 候选中取全局 top-k（同一 anchor 可带不同类别出现）
-        top_scores, idx = cand.flatten(1).topk(k, dim=1)
-        cls = (idx % self.nc).float().unsqueeze(-1)                  # (B, k, 1)
-        anchor_idx = ori_idx.gather(1, idx // self.nc)               # (B, k)
-        out_boxes = boxes.gather(1, anchor_idx.unsqueeze(-1).expand(-1, -1, 4))
-        out = [out_boxes, top_scores.unsqueeze(-1), cls]
+        extra = None
         if "mask_coefficient" in y:  # 分割头：系数按同一组 anchor 索引取回
-            nm = y["mask_coefficient"].shape[1]
-            coeff = y["mask_coefficient"].permute(0, 2, 1)  # (B, N, nm)
-            out.append(coeff.gather(1, anchor_idx.unsqueeze(-1).expand(-1, -1, nm)))
-        return torch.cat(out, dim=-1)  # (B, k, 6 [+ nm])
+            extra = y["mask_coefficient"].permute(0, 2, 1)  # (B, N, nm)
+        return e2e_topk(boxes, scores, self.max_det, extra)
 
     def postprocess_val(self, preds, feats):
         """验证输出契约：每图 (M, 6) [x1,y1,x2,y2,conf,cls] numpy（letterbox 像素）
