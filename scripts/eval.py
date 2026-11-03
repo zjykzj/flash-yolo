@@ -32,6 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
+import numpy as np
 import torch
 
 from config import __version__
@@ -39,8 +40,8 @@ from config.datasets import load_dataset
 from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from data.build import build_eval_dataset
 from data.scan import scan_summary
-from eval.coco_evaluator import CocoEvaluator
-from model.build import ARCHS, YOLO26_FAMILY, arch_display_name, arch_task
+from eval.coco_evaluator import CocoEvaluator, build_vocab_map
+from model.build import ARCHS, YOLO26_FAMILY, YOLOE26_FAMILY, arch_display_name, arch_task
 from model.weights import arch_has_scale, load_meta, resolve_arch_scale, resolve_imgsz
 from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_file_only, log_params, redirect_prints, setup_logging
@@ -113,6 +114,18 @@ def main():
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
     if args.agnostic_nms and not args.nms:
         parser.error("--agnostic-nms only affects the NMS path — pass --nms as well")
+    # YOLOE pf：词汇名字必须来自权重 metadata（烘焙词汇），据此建 vocab index -> 数据集类别的映射
+    vocab_map = None
+    if arch in YOLOE26_FAMILY:
+        vocab_names = load_meta(args.weights).get("names")
+        if not vocab_names:
+            parser.error(f"{arch} evaluation needs the vocabulary names in the weights metadata "
+                         "(convert with scripts/convert_weights.py)")
+        try:
+            vocab_map = build_vocab_map(vocab_names, list(spec.names.values()),
+                                        getattr(spec, "vocab_synonyms", None) or {})
+        except ValueError as e:
+            parser.error(str(e))
 
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 构建后以 engine.imgsz 为准，onnx 取图内 shape）
     imgsz = resolve_imgsz(args.weights, args.imgsz)
@@ -140,7 +153,12 @@ def main():
     with redirect_prints(logger):
         engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
-    mode = ("E2E (NMS-free)" if end2end else "o2m+NMS") if arch in YOLO26_FAMILY else "decode+NMS"
+    if arch in YOLOE26_FAMILY:
+        mode = "E2E (prompt-free)"
+    elif arch in YOLO26_FAMILY:
+        mode = "E2E (NMS-free)" if end2end else "o2m+NMS"
+    else:
+        mode = "decode+NMS"
     logger.info(bold(f"{arch_display_name(arch, scale)} · {engine.summary_line} · "
                      f"{mode} · engine {args.engine}"))
 
@@ -182,6 +200,13 @@ def main():
         image = dataset.load_image(i)
         timings["load"].append((time.monotonic() - t_load) * 1e3)
         dets, tseg = engine.predict_timed(image, conf_thres=args.conf, iou_thres=args.iou)
+        if vocab_map is not None:  # yoloe pf：词汇类别 -> 数据集类别（只保留数据集里的类）
+            keep = np.isin(dets.class_ids, list(vocab_map))
+            dets.class_ids = np.array([vocab_map[c] for c in dets.class_ids[keep]], dtype=np.int64)
+            dets.boxes = dets.boxes[keep]
+            dets.scores = dets.scores[keep]
+            if dets.masks is not None:
+                dets.masks = dets.masks[keep]
         for _head, evaluator in evaluators:
             evaluator.update(dataset.image_id(i), dets)
         for k in ("preprocess", "inference", "postprocess"):
@@ -247,6 +272,8 @@ def main():
         ]
     elif arch in YOLO26_FAMILY:
         ref_lines = ["Reference: Flash-YOLO (this repo's own design) — GFLOPs below yolo26n by design"]
+    elif arch in YOLOE26_FAMILY:
+        ref_lines = ["Reference: official yoloe-26-seg-pf — LVIS/COCO numbers per the ultralytics docs"]
     else:
         ref_lines = ["Reference: official darknet yolov3-tiny = 33.1 AP50 (COCO test-dev, 416; val2017 here)"]
     for line in ("", speed_line, model_line, done_line, *ref_lines):

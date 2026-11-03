@@ -23,7 +23,31 @@ from pycocotools import mask as mask_utils
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
-__all__ = ["CocoEvaluator", "encode_mask_rle"]
+__all__ = ["CocoEvaluator", "build_vocab_map", "encode_mask_rle"]
+
+
+def build_vocab_map(vocab_names, dataset_names, synonyms=None):
+    """YOLOE pf 评估映射：数据集类别名 -> 词汇索引
+
+    返回 {vocab_idx: dataset_idx}（推理侧 Detections.class_ids 是词汇索引、评估器要的是
+    数据集索引 0..nc-1，此函数是两者之间的唯一桥梁，scripts/eval.py 用）。
+    类别名先在词汇里精确匹配，再走 synonyms（数据集类名 -> 词汇名，来自数据集描述符的
+    vocab_synonyms 字段）；仍不中 -> ValueError（列出缺失类别名，诚实报错而非静默丢类）。
+    """
+    v2i = {n: i for i, n in enumerate(vocab_names)}
+    mapping, missing = {}, []
+    for j, n in enumerate(dataset_names):
+        hit = n if n in v2i else (synonyms or {}).get(n)
+        if hit is None or hit not in v2i:
+            missing.append(n)
+        else:
+            mapping[v2i[hit]] = j
+    if missing:
+        raise ValueError(f"dataset classes not in the model vocabulary "
+                         f"({len(missing)}/{len(dataset_names)}): {missing[:10]}"
+                         f"{'...' if len(missing) > 10 else ''} — add vocab_synonyms entries "
+                         f"to the dataset descriptor")
+    return mapping
 
 # COCOeval 数组索引：area 'all' = 0；maxDets=100 = 2（params.maxDets=[1,10,100]）
 _AREA_ALL, _MAXDET_100 = 0, 2

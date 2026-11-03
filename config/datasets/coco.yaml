@@ -3,9 +3,23 @@
 #   本机使用 -> 复制到 config/datasets/local/coco.yaml（gitignored）并把 path 填成实际根目录，
 #               之后 `--data coco` 即可（local/ 优先于本模板）
 #   直接指定 -> python scripts/train.py --data /path/to/coco.yaml
-# schema：format / path / names / train·val·test{images, ann(coco), labels(yolo)}
+# schema：format / path / names / vocab_synonyms / train·val·test{images, ann(coco), labels(yolo)}
 format: coco
 path: ""
+# COCO 类名 -> 开放词汇模型词汇名（YOLOE pf 评估映射用）：RAM++ 词汇与 COCO 命名有差异，
+# 逐条已实测（键 = COCO 名，值 = 词汇里的精确名；"dinning table" 是官方词汇自身的拼写）
+vocab_synonyms:
+  airplane: plane
+  fire hydrant: hydrant
+  suitcase: luggage
+  skis: ski
+  potted plant: houseplant
+  dining table: dinning table
+  toilet: toilet bowl
+  tv: television
+  cell phone: smartphone
+  refrigerator: fridge
+  teddy bear: teddy
 train:
   images: images/train2017
   ann: annotations/instances_train2017.json

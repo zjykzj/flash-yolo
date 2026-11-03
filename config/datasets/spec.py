@@ -5,6 +5,7 @@ schema（完整模板见 config/datasets/coco.yaml）：
     format: coco | yolo       # 必填：标注读取方式
     path: ""                  # 数据集根；相对路径以本 yaml 所在目录为基准；空 = 只用绝对路径
     names: [...] | {0: ...}   # 必填：index = 类别 id，长度 = nc（列表或映射等价）
+    vocab_synonyms: {..: ..}  # 可选：数据集类名 -> 开放词汇模型词汇名（评估映射用；见 coco.yaml）
     train:                    # 角色键：train / val / test（test 接受但当前不消费）
       images: images/train2017                   # coco: 图片目录；yolo: 目录或 .txt 图片清单
       ann: annotations/instances_train2017.json  # coco 必填；yolo 禁止
@@ -14,7 +15,7 @@ schema（完整模板见 config/datasets/coco.yaml）：
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -54,6 +55,7 @@ class DatasetSpec:
     root: Path | None  # `path:`（空 = None）
     names: dict[int, str]  # 0..nc-1 -> 类别名
     roles: dict[str, RoleSpec]
+    vocab_synonyms: dict[str, str] = field(default_factory=dict)  # 数据集类名 -> 词汇名（可选）
 
     @property
     def nc(self):
@@ -172,7 +174,7 @@ def parse_descriptor(path, name=None) -> DatasetSpec:
     """描述符 yaml -> DatasetSpec（完整校验；解析出的路径全部为绝对路径）"""
     path = Path(path).resolve()
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    for k in sorted(set(raw) - {"format", "path", "names", *ROLES}):
+    for k in sorted(set(raw) - {"format", "path", "names", "vocab_synonyms", *ROLES}):
         if isinstance(raw[k], dict):
             raise ValueError(f"{path.name}: unknown role {k!r}; roles must be one of {list(ROLES)}")
         logger.warning(f"{path.name} 未识别字段（忽略）: {k}")
@@ -197,7 +199,13 @@ def parse_descriptor(path, name=None) -> DatasetSpec:
     if not roles:
         raise ValueError(f"{path.name}: no roles defined; add at least a `train:` block")
 
-    return DatasetSpec(name=name or path.stem, source=path, format=fmt, root=root, names=names, roles=roles)
+    vocab_synonyms = raw.get("vocab_synonyms") or {}
+    if not isinstance(vocab_synonyms, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) and k and v for k, v in vocab_synonyms.items()):
+        raise ValueError(f"{path.name}: 'vocab_synonyms' must be a non-empty {{dataset name: vocab name}} mapping")
+
+    return DatasetSpec(name=name or path.stem, source=path, format=fmt, root=root, names=names, roles=roles,
+                       vocab_synonyms=vocab_synonyms)
 
 
 def load_dataset(name_or_path) -> DatasetSpec:
