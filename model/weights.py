@@ -20,7 +20,7 @@ from config.inference import IMGSZ
 
 __all__ = ["load_weights", "load_weights_finetune", "save_weights", "scale_from_weights",
            "arch_from_weights", "arch_has_scale", "resolve_arch_scale", "resolve_imgsz", "load_meta",
-           "encode_meta", "encode_anchors", "apply_meta", "provenance_meta"]
+           "encode_meta", "encode_anchors", "apply_meta", "prompt_mode_from_weights", "provenance_meta"]
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +32,16 @@ _SCALE_RE = re.compile(r"yolo26([nsmlx])($|[-_.])", re.I)
 _ARCH_RE = re.compile(r"(yolov3-tiny-silu|yolov3-tiny|flash-yolo-seg|flash-yolo)($|[-_.])", re.I)
 # 任务后缀：yolo26n-seg（官方分割权重命名）。先于档位判定：yolo26 系里带 -seg 归 yolo26-seg
 _TASK_SUFFIX_RE = re.compile(r"yolo26[nsmlx](?:[-_.][a-z0-9]+)*[-_.]seg($|[-_.])", re.I)
+# YOLOE-26（官方只有 seg 权重；-seg-pf = prompt-free 变体）：yoloe-26n-seg-pf -> arch yoloe-26。
+# 注意官方命名里档位字母直接跟在 "yoloe-26" 后（yoloe-26n，无分隔符），arch 正则必须允许
+# 可选的档位字母（否则 "yoloe-26n..." 匹配不上、掉进 yolo26 兜底）
+_YOLOE_ARCH_RE = re.compile(r"yoloe-26(?:[nsmlx])?($|[-_.])", re.I)
+_YOLOE_SCALE_RE = re.compile(r"yoloe-26([nsmlx])($|[-_.])", re.I)
 # 带档位维度（scale 参与解析）的架构；其余架构档位固定（v3: tiny / flash-yolo: flash）
-_SCALED_ARCHS = ("yolo26", "yolo26-seg")
+_SCALED_ARCHS = ("yolo26", "yolo26-seg", "yoloe-26")
 
-_META_STR_KEYS = ("arch", "scale", "version", "repo", "commit", "describe")  # header 直读字符串
-_META_INT_KEYS = ("nc", "imgsz")        # int() 还原
+_META_STR_KEYS = ("arch", "scale", "version", "repo", "commit", "describe", "prompt_mode")  # header 直读字符串
+_META_INT_KEYS = ("nc", "imgsz", "pf_channels")  # int() 还原
 _META_JSON_KEYS = ("names", "anchors")  # JSON 解码（写入侧统一 json.dumps）
 
 
@@ -114,6 +119,9 @@ def scale_from_weights(path):
     处报尺寸不匹配要好。
     """
     m = _SCALE_RE.search(Path(path).stem)
+    if m:
+        return m.group(1).lower()
+    m = _YOLOE_SCALE_RE.search(Path(path).stem)
     return m.group(1).lower() if m else None
 
 
@@ -122,10 +130,13 @@ def arch_from_weights(path):
 
     yolo26 系带任务后缀时归到对应任务架构：`yolo26n-seg.safetensors` -> "yolo26-seg"
     （先判后缀，再看其它架构名——档位正则不区分任务，只有后缀能区分）。
+    YOLOE-26：`yoloe-26n-seg-pf.safetensors` -> "yoloe-26"（26 家族只有 seg 权重）。
     """
     stem = Path(path).stem
     if _TASK_SUFFIX_RE.search(stem):
         return "yolo26-seg"
+    if _YOLOE_ARCH_RE.search(stem):
+        return "yoloe-26"
     m = _ARCH_RE.search(stem)
     return m.group(1).lower() if m else None
 
@@ -166,6 +177,19 @@ def resolve_imgsz(weights, imgsz=None):
     return int(load_meta(weights).get("imgsz") or IMGSZ)
 
 
+def prompt_mode_from_weights(weights, meta=None):
+    """YOLOE 的 prompt 模式解析：metadata `prompt_mode` > 文件名 -pf 后缀；认不出返回 None
+
+    返回 "pf" / "text" / None（None = 非 YOLOE 权重或无法判定，调用方回退 yaml 默认）。
+    """
+    meta = load_meta(weights) if meta is None else meta
+    if meta.get("prompt_mode"):
+        return meta["prompt_mode"]
+    if "-pf" in Path(weights).stem.lower():
+        return "pf"
+    return None
+
+
 def apply_meta(model, meta):
     """把 metadata 中"结构级"参数应用到已构建的模型，返回实际应用的键名列表
 
@@ -183,6 +207,21 @@ def apply_meta(model, meta):
                              f"{tuple(head.anchors.shape)} — incompatible checkpoint")
         head.anchors = t
         applied.append("anchors")
+    # YOLOE pf：metadata names 长度必须等于头内烘焙词汇数（yaml vocab_size 对账的另一半）
+    names = meta.get("names")
+    if names and getattr(head, "lrpc", None) is not None:
+        v = head.lrpc[0].vocab.out_features
+        if len(names) != v:
+            raise ValueError(f"weights metadata names ({len(names)}) != head vocab size ({v}) — "
+                             "incompatible prompt-free vocabulary")
+        applied.append("vocab")
+    # YOLOE pf：提案卷积通道数对账（官方不同版本资产 pf 形状不同，n=512 / s=1）
+    pf_channels = meta.get("pf_channels")
+    if pf_channels and getattr(head, "lrpc", None) is not None:
+        if pf_channels != head.lrpc[0].pf.out_channels:
+            raise ValueError(f"weights metadata pf_channels ({pf_channels}) != head "
+                             f"({head.lrpc[0].pf.out_channels}) — check the scale's pf_channels in the yaml")
+        applied.append("pf_channels")
     return applied
 
 

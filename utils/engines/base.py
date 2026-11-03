@@ -18,7 +18,7 @@ import torch
 
 from config.inference import CONF_THRES, IMGSZ, IOU_THRES, MAX_DET
 from data.preprocess import preprocess
-from model.build import YOLO26_FAMILY
+from model.build import YOLO26_FAMILY, YOLOE26_FAMILY
 from utils.postprocess import decode_raw, non_max_suppression, process_mask, scale_boxes, v3_detections
 
 __all__ = ["Detections", "BaseEngine", "resolve_device", "device_label"]
@@ -70,11 +70,11 @@ def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres, a
     if task == "segment":
         out, proto = out
     coeff = None
-    if arch not in YOLO26_FAMILY:
+    if arch not in YOLO26_FAMILY and arch not in YOLOE26_FAMILY:
         # out: (NA, 5+nc) [x1,y1,x2,y2, obj, cls...]；最终分 = obj×cls，按类 NMS
         det = v3_detections(out, conf_thres or CONF_THRES, iou_thres, MAX_DET)
         boxes, scores, cls = det[:, :4], det[:, 4], det[:, 5].astype(np.int64)
-    elif end2end:
+    elif end2end or arch in YOLOE26_FAMILY:  # yoloe 只有 E2E 口径（raw 列数随提案过滤变化，不开放）
         # out: (300, 6 [+ nm]) [x1, y1, x2, y2, conf, cls, 系数...]，图内 top-k 已完成
         mask = out[:, 4] > (conf_thres if conf_thres is not None else 0.25)
         boxes, scores, cls = out[mask][:, :4], out[mask][:, 4], out[mask][:, 5].astype(np.int64)

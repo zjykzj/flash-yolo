@@ -51,13 +51,23 @@ def _convert_pt(src, dst):
     sd = model.float().state_dict()
 
     # 架构从文件名推（`yolo26n-seg.pt` -> "yolo26-seg"；认不出按检测口径 "yolo26"）
-    meta = {"arch": arch_from_weights(src) or "yolo26", **provenance_meta()}  # 出处：version/repo[/commit/describe]
+    arch = arch_from_weights(src) or "yolo26"
+    meta = {"arch": arch, **provenance_meta()}  # 出处：version/repo[/commit/describe]
     if scale_from_weights(src):
         meta["scale"] = scale_from_weights(src)
     names = getattr(model, "names", None)
     if names:
         names = list(names.values()) if isinstance(names, dict) else list(names)
         meta["names"], meta["nc"] = names, len(names)
+    if arch == "yoloe-26":
+        # pf 判定 = 头内是否有 lrpc（官方 set_vocab 的产物）；nc 写 yaml 结构值而非活 nc——
+        # pf 权重活 nc = 烘焙词汇数（4585），不是模型结构类别数（构建头要的是 yaml 的 80）
+        head = model.model[-1]
+        meta["prompt_mode"] = "pf" if hasattr(head, "lrpc") else "text"
+        meta["nc"] = int(model.yaml.get("nc", 80))
+        if hasattr(head, "lrpc"):
+            # 提案卷积通道数：官方不同版本资产形状不同（n=512 / s=1），随权重走 + apply_meta 对账
+            meta["pf_channels"] = int(head.lrpc[0].pf.weight.shape[0])
     save_file(sd, dst, metadata=encode_meta(meta))
     return sd
 

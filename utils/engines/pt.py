@@ -6,7 +6,7 @@ import torch
 
 from config.inference import IMGSZ
 from model.build import arch_task, build_model
-from model.weights import apply_meta, load_meta, load_weights
+from model.weights import apply_meta, load_meta, load_weights, prompt_mode_from_weights
 from utils.engines.base import BaseEngine, resolve_device
 
 __all__ = ["PtEngine"]
@@ -32,8 +32,13 @@ class PtEngine(BaseEngine):
         self.end2end = end2end
         meta = load_meta(weights)  # 可选 metadata：缺失 = 空 dict
         self.imgsz = int(imgsz) if imgsz is not None else int(meta.get("imgsz") or IMGSZ)
+        # YOLOE：prompt 模式经 metadata/文件名解析（pf -> lrpc 布局；text -> 文本布局，前向 M2）
+        prompt_free = None
+        if model == "yoloe-26":
+            pm = prompt_mode_from_weights(weights, meta)
+            prompt_free = True if pm == "pf" else (False if pm == "text" else None)
         self.model = build_model(model, scale, imgsz=self.imgsz,
-                                 nc=nc if nc is not None else meta.get("nc"))
+                                 nc=nc if nc is not None else meta.get("nc"), prompt_free=prompt_free)
         for key in apply_meta(self.model, meta):  # v3 anchors 随权重（yaml 为原版也能还原训练值）
             logger.info(f"weights metadata applied: {key}")
         head = self.model.model[-1]
