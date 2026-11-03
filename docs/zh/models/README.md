@@ -11,6 +11,7 @@
 | Flash-YOLO | 检测 | flash（单档） | 1.97M | 3.80 | [flash-yolo.md](flash-yolo.md) |
 | Flash-YOLO-seg | 实例分割 | flash（单档） | 2.53M | 7.6 | [flash-yolo-seg.md](flash-yolo-seg.md) |
 | YOLOv3-tiny / -SiLU | 检测 | tiny（单档） | 8.85M | 5.56 @416 | [yolov3-tiny.md](yolov3-tiny.md) |
+| YOLOE-26 | 开放词汇分割（prompt-free） | n / s / m / l / x | 7.84M (n) | 16.0 (n) | [yoloe.md](yoloe.md) |
 
 选择方式：
 
@@ -22,8 +23,9 @@ python scripts/train.py --data coco --model flash-yolo-seg
 python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 ```
 
-- `yolo26` / `yolo26-seg` 有 `n/s/m/l/x` 档位；`flash-yolo` / `flash-yolo-seg` 只有 `flash`，
-  `yolov3-tiny` 只有 `tiny`——对这些架构传 `--scale` 会告警且不生效。
+- `yolo26` / `yolo26-seg` / `yoloe-26` 有 `n/s/m/l/x` 档位；`flash-yolo` / `flash-yolo-seg` 只有
+  `flash`，`yolov3-tiny` 只有 `tiny`——对这些架构传 `--scale` 会告警且不生效。
+- `yoloe-26` 目前只支持 prompt-free（-pf）权重；`--nms` / `--raw` 不适用（见 yoloe.md）。
 - 结构定义在 `config/models/<model>.yaml`；`--cfg` 可指向自定义 yaml（自定义变体）。
 - 各模型页的权重下载链接指向 **v1.0.0** 发布资产。
 

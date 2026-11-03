@@ -12,6 +12,7 @@ details live on their own pages.
 | Flash-YOLO | detection | flash (single) | 1.97M | 3.80 | [flash-yolo.md](flash-yolo.md) |
 | Flash-YOLO-seg | instance segmentation | flash (single) | 2.53M | 7.6 | [flash-yolo-seg.md](flash-yolo-seg.md) |
 | YOLOv3-tiny / -SiLU | detection | tiny (single) | 8.85M | 5.56 @416 | [yolov3-tiny.md](yolov3-tiny.md) |
+| YOLOE-26 | open-vocabulary segmentation (prompt-free) | n / s / m / l / x | 7.84M (n) | 16.0 (n) | [yoloe.md](yoloe.md) |
 
 How to pick:
 
@@ -23,8 +24,11 @@ python scripts/train.py --data coco --model flash-yolo-seg
 python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 ```
 
-- `yolo26` / `yolo26-seg` have the `n/s/m/l/x` scales; `flash-yolo` / `flash-yolo-seg` only
-  `flash`, `yolov3-tiny` only `tiny` — passing `--scale` for those warns and does nothing.
+- `yolo26` / `yolo26-seg` / `yoloe-26` have the `n/s/m/l/x` scales; `flash-yolo` /
+  `flash-yolo-seg` only `flash`, `yolov3-tiny` only `tiny` — passing `--scale` for those warns
+  and does nothing.
+- `yoloe-26` currently supports prompt-free (-pf) weights only; `--nms` / `--raw` do not apply
+  (see yoloe.md).
 - Structures live in `config/models/<model>.yaml`; `--cfg` can point at a custom yaml (custom
   variants).
 - Each model page's download links point to the **v1.0.0** release assets.
