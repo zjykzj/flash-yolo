@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-11-03
+
+### Added
+
+- **YOLOE-26 (prompt-free)**: open-vocabulary instance segmentation joins the model matrix — the official `yoloe-26*-seg-pf.pt` checkpoints convert, strict-load, and run bit-identical against the official fp32 forward.
+- **Vocabulary mapping for evaluation**: dataset class names map onto the baked 4,585-name vocabulary by exact match with a `vocab_synonyms` fallback (11 COCO entries built into `config/datasets/coco.yaml`); missing classes error out instead of silently dropping.
+- **YOLOE-26 export**: the E2E fused graph + prototypes exports with the official conf=0 static proposal path; onnx and pt agree on every valid detection above conf=0.25.
+- **Bilingual model page**: `docs/zh/models/yoloe.md` and `docs/en/models/yoloe.md` document structure, usage, verification and known limits; the model matrix lists the new architecture.
+
 ## [1.0.0] - 2026-11-02
 
 ### Added
