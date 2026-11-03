@@ -24,7 +24,7 @@ import torch
 
 from config import __version__
 from config.datasets import load_dataset, load_names
-from model.build import ARCHS, YOLO26_FAMILY, arch_display_name
+from model.build import ARCHS, YOLO26_FAMILY, YOLOE26_FAMILY, arch_display_name
 from model.weights import arch_has_scale, load_meta, resolve_arch_scale, resolve_imgsz
 from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_params, setup_logging
@@ -230,7 +230,7 @@ def main():
     )
     parser.add_argument("--device", default=None, help="pt engine device (default auto)")
     parser.add_argument("--scale", default=None,
-                        help="model scale (yolo26 only: n/s/m/l/x; default: inferred from the weights filename)")
+                        help="model scale (yolo26/yoloe-26: n/s/m/l/x; default: inferred from the weights filename)")
     parser.add_argument("--data", default=None,
                         help="dataset descriptor (name or .yaml): sets nc and label names for models "
                              "trained on a non-COCO dataset (default: COCO, nc from the model yaml)")
@@ -278,6 +278,15 @@ def main():
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
     if args.agnostic_nms and not args.nms:
         parser.error("--agnostic-nms only affects the NMS path — pass --nms as well")
+    if arch in YOLOE26_FAMILY:  # pf 词汇即权重：名字必须来自烘焙词汇，--data/COCO 名不适用
+        vocab_names = meta.get("names")
+        if not vocab_names:
+            parser.error(f"{arch} needs the vocabulary names in the weights metadata "
+                         "(convert with scripts/convert_weights.py)")
+        if args.data:
+            logger.warning("--data is ignored for yoloe-26: class names come from the baked vocabulary")
+        names = {i: n for i, n in enumerate(vocab_names)}
+        nc = None  # 头结构用 yaml nc（80），不随数据集走
 
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 内部同一规则，构建后以 engine.imgsz 为准）
     imgsz = resolve_imgsz(args.weights, args.imgsz)
@@ -328,7 +337,12 @@ def main():
         kwargs["nc"] = nc  # onnx 图内置类别数，只有 pt 引擎需要重建头
     engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
-    mode = ("E2E (NMS-free)" if end2end else "o2m+NMS") if arch in YOLO26_FAMILY else "decode+NMS"
+    if arch in YOLOE26_FAMILY:
+        mode = "E2E (prompt-free)"
+    elif arch in YOLO26_FAMILY:
+        mode = "E2E (NMS-free)" if end2end else "o2m+NMS"
+    else:
+        mode = "decode+NMS"
     logger.info(bold(f"{arch_display_name(arch, scale)} · {engine.summary_line} · "
                      f"{mode} · engine {args.engine}"))
 

@@ -33,8 +33,9 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
 import torch
 
-from model.weights import arch_has_scale, load_meta, load_weights, resolve_arch_scale, resolve_imgsz
-from model.build import ARCHS, YOLO26_FAMILY, arch_task, build_model
+from model.weights import (arch_has_scale, load_meta, load_weights, prompt_mode_from_weights,
+                           resolve_arch_scale, resolve_imgsz)
+from model.build import ARCHS, YOLO26_FAMILY, YOLOE26_FAMILY, arch_task, build_model
 from utils.logger import get_logger, log_params, setup_logging
 
 setup_logging()
@@ -83,11 +84,20 @@ def main():
                nc=nc if nc is not None else 80, opset=args.opset,
                dynamic=args.dynamic, raw=args.raw, trt=args.trt, fp16=args.fp16)
 
-    model = build_model(arch, scale, nc=nc)
+    # YOLOE：prompt 模式经 metadata/文件名解析（pf -> lrpc 布局；文本布局前向 M2，导出暂不支持）
+    prompt_free = None
+    if arch in YOLOE26_FAMILY:
+        pm = prompt_mode_from_weights(args.weights, meta)
+        if pm not in (None, "pf"):
+            parser.error(f"yoloe-26 export currently supports prompt-free weights only (got mode={pm!r})")
+        prompt_free = True if pm == "pf" else None
+    model = build_model(arch, scale, nc=nc, prompt_free=prompt_free)
     load_weights(model, args.weights, strict=True)
     head = model.model[-1]
     if hasattr(head, "end2end"):  # V3Detect 无此开关（前向即解码）
         head.end2end = not args.raw
+    if hasattr(head, "export"):  # yoloe：export 标志 -> conf=0 静态路径（提案过滤全锚点通过，官方口径）
+        head.export = True
     model.eval()
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -108,7 +118,9 @@ def main():
             opset_version=args.opset,
             dynamo=False,  # TorchScript 导出器：权重内嵌单文件；dynamo 默认把权重拆到 .onnx.data
         )
-    if arch not in YOLO26_FAMILY:
+    if arch in YOLOE26_FAMILY:
+        mode = "E2E prompt-free + prototypes"
+    elif arch not in YOLO26_FAMILY:
         mode = "decoded (v3)"
     elif arch_task(arch) == "segment":
         mode = ("raw NMS path + prototypes" if args.raw else "E2E fused + prototypes")
