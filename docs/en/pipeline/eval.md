@@ -13,12 +13,14 @@ python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data coco 
 python scripts/eval.py --weights w.safetensors --data coco --imgsz 416                  # input size
 python scripts/eval.py --weights w.safetensors --data coco --split val --limit 100      # subset
 python scripts/eval.py --weights weights/yolo26n-seg.safetensors --data coco            # Box + Mask
+python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco       # pf vocab mapping
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis          # text prompts (1203 classes)
 ```
 
 | Argument | Default | Description |
 |---|---|---|
 | `--weights` | — | `.safetensors` / `.onnx` / `.engine` |
-| `--data` | — | descriptor (see [../datasets/README.md](../datasets/README.md)) |
+| `--data` | — | descriptor (see [../datasets/README.md](../datasets/README.md)); yoloe text mode uses its names as the prompts |
 | `--split` | `val` | role key (train/val/test) |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--model` / `--scale` | inferred from weights | pass explicitly when nothing can be inferred |
@@ -83,7 +85,20 @@ Segmentation weights automatically produce two tables: the same results evaluate
 mAP50). The official training-time validator records box 0.3975 / mask 0.3386 — the ~0.002 gap
 is metric-implementation noise.
 
-## 6. Reference baselines (COCO val2017)
+## 6. YOLOE (open-vocabulary)
+
+- **prompt-free (`-pf` weights)**: the head's baked 4,585-name vocabulary is mapped onto the
+  dataset classes — exact name match first, `vocab_synonyms` fallback (11 COCO entries built
+  into the descriptor), missing classes error out; predictions outside the dataset classes are
+  dropped (the `CocoEvaluator` contract is unchanged).
+- **text prompts (`-seg` weights)**: the dataset's own names become the prompts
+  (`set_classes`); `--data lvis` evaluates against the 1,203 LVIS categories
+  (`config/datasets/lvis.yaml`, first-synonym names — the official LVIS prompt convention).
+  Requires `--engine pt` and `mobileclip2_b.safetensors` next to the model weights.
+- Both modes report Box + Mask tables like the other segmentation architectures.
+- Model details: [../models/yoloe.md](../models/yoloe.md).
+
+## 7. Reference baselines (COCO val2017)
 
 | Weights | Input | E2E mAP50-95 / mAP50 | NMS mAP50-95 / mAP50 |
 |---|---|---|---|
@@ -95,7 +110,7 @@ is metric-implementation noise.
 The full weight list, download links and latency live on the model pages
 ([../models/README.md](../models/README.md)).
 
-## 7. Gotchas
+## 8. Gotchas
 
 - **`--limit` must restrict GT too**: the evaluator aligns the subset via `params.imgIds` — keep
   this in mind when editing the metrics code yourself.

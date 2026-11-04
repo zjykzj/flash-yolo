@@ -11,6 +11,12 @@ python scripts/export.py --weights weights/yolo26n.safetensors              # de
 python scripts/export.py --weights weights/yolo26n.safetensors --raw        # raw head output
 python scripts/export.py --weights weights/yolo26n.safetensors --dynamic    # dynamic batch
 python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov3-tiny
+
+# yoloe prompt-free: E2E graph with the conf=0 static proposal path (official convention)
+python scripts/export.py --weights weights/yoloe-26n-seg-pf.safetensors
+# yoloe text mode: the prompts are fused into the cls conv — a single-input, class-locked ONNX
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car"
 ```
 
 | Argument | Default | Description |
@@ -19,6 +25,7 @@ python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov
 | `--out` | `runs/export/<stem>.onnx` | output path |
 | `--raw` | off | export the raw head `(B, 4+nc, N)` (yolo26 only; errors for v3) |
 | `--dynamic` | off | dynamic batch axis; default fixed batch 1 |
+| `--classes` | — | yoloe-26 text mode: class names to lock into the exported model (required) |
 | `--model` / `--scale` | inferred from filename | architecture / scale |
 | `--nc` | metadata > model yaml | rebuild the head for non-COCO models |
 | `--imgsz` | metadata > 640 | export input size |
@@ -35,10 +42,16 @@ python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov
 | yolo26-seg / flash-yolo-seg | `output0 (B, 300, 6+nm)` + `output1 (B, nm, H/4, W/4)` | coefficients appended; prototypes a separate branch |
 | seg `--raw` | `output0 (B, 4+nc+nm, N)` + `output1` | masks decoded by `process_mask` |
 | yolov3-tiny | `(B, NA, 5+nc)` | NA = 3·ΣH·W; obj×cls and NMS outside |
+| yoloe pf | `output0 (B, 1000, 6+nm)` + `output1 (B, nm, H/4, W/4)` | E2E, **max_det=1000**, conf=0 static proposal path |
+| yoloe text (`--classes`) | `output0 (B, 300, 6+nm)` + `output1` | single input: the text embeddings are fused into the cls conv (BN folded, reprta removed); the exported model rejects new prompts |
 
 - Training artifacts carry metadata, so `--scale` / `--nc` can be omitted; the onnx file itself
   carries no metadata — onnx inference still needs `--model` / `--scale` (and `--data` for
   non-COCO nc).
+- yoloe text-mode export runs the full prompt chain (tokenize → MobileCLIP2-B → reprta+L2) —
+  `mobileclip2_b.safetensors` must sit next to the model weights — then fuses the result into
+  the cls conv, so the onnx has no text-encoder dependency. Fuse equivalence is verified:
+  fused pt vs unfused 1.8e-6, onnx vs fused 6e-5, zero class flips above conf=0.25.
 - **TorchScript exporter**: since torch 2.9 `torch.onnx.export` defaults to the dynamo exporter,
   whose `external_data=True` splits even ~10MB models into `.onnx.data`. This script pins
   `dynamo=False` (weights embedded, single file, `dynamic_axes` native). Fallback: dynamo +

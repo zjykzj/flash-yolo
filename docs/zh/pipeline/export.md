@@ -10,6 +10,12 @@ python scripts/export.py --weights weights/yolo26n.safetensors              # �
 python scripts/export.py --weights weights/yolo26n.safetensors --raw        # 原始头输出
 python scripts/export.py --weights weights/yolo26n.safetensors --dynamic    # 动态 batch
 python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov3-tiny
+
+# yoloe prompt-free：E2E 图，conf=0 静态提案口径（官方同款）
+python scripts/export.py --weights weights/yoloe-26n-seg-pf.safetensors
+# yoloe 文本模式：prompt 融合进分类卷积——单输入、类锁定 ONNX
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car"
 ```
 
 | 参数 | 默认 | 说明 |
@@ -18,6 +24,7 @@ python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov
 | `--out` | `runs/export/<stem>.onnx` | 输出路径 |
 | `--raw` | off | 导出原始头 `(B, 4+nc, N)`（yolo26 专属；v3 报错） |
 | `--dynamic` | off | 动态 batch 轴；默认固定 batch 1 |
+| `--classes` | — | yoloe-26 文本模式：锁定进导出模型的类别名（必填） |
 | `--model` / `--scale` | 从文件名推断 | 架构/档位 |
 | `--nc` | metadata > 模型 yaml | 非 COCO 模型改头 |
 | `--imgsz` | metadata > 640 | 导出输入尺寸 |
@@ -34,9 +41,15 @@ python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov
 | yolo26-seg / flash-yolo-seg | `output0 (B, 300, 6+nm)` + `output1 (B, nm, H/4, W/4)` | 系数接末维；原型单独一路 |
 | seg `--raw` | `output0 (B, 4+nc+nm, N)` + `output1` | 掩码由 `process_mask` 解码 |
 | yolov3-tiny | `(B, NA, 5+nc)` | NA = 3·ΣH·W；obj×cls 与 NMS 在外 |
+| yoloe pf | `output0 (B, 1000, 6+nm)` + `output1 (B, nm, H/4, W/4)` | E2E，**max_det=1000**，conf=0 静态提案口径 |
+| yoloe 文本（`--classes`） | `output0 (B, 300, 6+nm)` + `output1` | 单输入：文本嵌入已融合进分类卷积（BN 折叠、reprta 移除）；导出模型拒收新 prompt |
 
 - 训练产物自带 metadata，`--scale` / `--nc` 可省略；onnx 文件本身不带 metadata，
   onnx 推理时仍需 `--model` / `--scale`（非 COCO nc 还要 `--data`）。
+- yoloe 文本模式导出会先跑完整 prompt 链（tokenize → MobileCLIP2-B → reprta+L2——
+  `mobileclip2_b.safetensors` 需与模型权重同目录），再把结果融合进分类卷积，导出的 onnx
+  无文本编码器依赖。fuse 等价性已验证：fused pt vs 未 fuse 1.8e-6、onnx vs fused 6e-5、
+  conf>0.25 零类别翻转。
 - **TorchScript 导出器**：`torch.onnx.export` 在 torch 2.9 起默认走 dynamo，其
   `external_data=True` 会把 ~10MB 模型也拆成 `.onnx.data`。本脚本固定 `dynamo=False`
   （权重内嵌、单文件、`dynamic_axes` 原生可用）。退路：dynamo + `external_data=False`。

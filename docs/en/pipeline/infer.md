@@ -25,6 +25,12 @@ python scripts/infer.py --weights <own weights>.safetensors --data mydataset --i
 # segmentation weights: arch auto-detected, instance masks overlaid
 python scripts/infer.py --weights weights/yolo26n-seg.safetensors --image assets/traffic.jpg
 
+# yoloe prompt-free: labels come from the baked 4,585-name vocabulary in the weights metadata
+python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors --image assets/traffic.jpg
+# yoloe text prompts: class names encoded with the MobileCLIP2-B text encoder (pt engine only)
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors --image assets/traffic.jpg \
+    --classes "person, bicycle, car, bus, truck"
+
 # video file (output <run_dir>/<source>.mp4, default runs/predict/predictN/)
 python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/video.mp4
 # camera / RTSP stream: cap with --max-frames (0 = until EOF; Ctrl-C exits cleanly)
@@ -46,9 +52,10 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--conf` | **0.25** | confidence threshold (eval defaults to 0.001 — different purposes) |
 | `--nms` | off | o2m + NMS (yolo26 only; errors for v3) |
 | `--agnostic-nms` | off | cross-class NMS (requires `--nms`) |
+| `--classes` | — | yoloe-26 text mode: comma-separated class names (pt engine only) |
 | `--model` / `--scale` | inferred from filename/metadata | errors when nothing can be inferred |
 | `--output` | `runs/predict/predictN/` | image: file or directory; video: output video file |
-| `--data` | COCO labels | only `names` + `nc`; no images read |
+| `--data` | COCO labels | only `names` + `nc`; no images read (ignored for yoloe) |
 | `--imgsz` | metadata > 640 | override the input size |
 | `--device` | auto | pt engine device |
 
@@ -84,7 +91,19 @@ Labels        -> runs/predict/predict21/labels
 | `onnx` | CPU deployment (ORT) | input size decided by the graph shape |
 | `trt` | GPU deployment | engine bound to the build machine's GPU + TRT version; rebuild on a new machine |
 
-## 4. Gotchas
+## 4. YOLOE (open-vocabulary)
+
+- **prompt-free (`-pf` weights)**: labels are the baked vocabulary names traveling in the
+  weights metadata — no `--data` / `--classes` needed; all three engines work.
+- **text prompts (`-seg` weights)**: `--classes "a, b, c"` encodes each name with the
+  MobileCLIP2-B text encoder (`mobileclip2_b.safetensors` must sit next to the model weights —
+  loaded once at `set_classes`, not part of the model graph). Requires `--engine pt`;
+  the class-locked ONNX produced by `export --classes` is not wired into the CLI engines yet.
+- `--nms` / `--raw` error out for yoloe (the pf raw column count varies with the proposal
+  filter; the text mode is E2E-only).
+- Model details: [../models/yoloe.md](../models/yoloe.md).
+
+## 5. Gotchas
 
 - **conf default differs from eval** (0.25 vs 0.001).
 - v3 has a single "decode + obj×cls + NMS" path; `--nms` / `--raw` error out.

@@ -24,6 +24,12 @@ python scripts/infer.py --weights <自训权重>.safetensors --data mydataset --
 # 分割权重：自动识别 arch，可视化叠加实例掩码
 python scripts/infer.py --weights weights/yolo26n-seg.safetensors --image assets/traffic.jpg
 
+# yoloe prompt-free：标签名 = 权重 metadata 里烘焙的 4,585 名词汇
+python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors --image assets/traffic.jpg
+# yoloe 文本 prompt：类别名经 MobileCLIP2-B 文本编码器编码（仅 pt 引擎）
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors --image assets/traffic.jpg \
+    --classes "person, bicycle, car, bus, truck"
+
 # 视频文件（输出 <run_dir>/<源名>.mp4，默认 runs/predict/predictN/）
 python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/video.mp4
 # 相机 / RTSP 流：用 --max-frames 限流（0 = 直到 EOF；Ctrl-C 干净退出）
@@ -45,9 +51,10 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--conf` | **0.25** | 置信度阈值（eval 默认 0.001，两者用途不同） |
 | `--nms` | off | o2m + NMS（yolo26 专属；v3 报错） |
 | `--agnostic-nms` | off | 跨类 NMS（需同时给 `--nms`） |
+| `--classes` | — | yoloe-26 文本模式：逗号分隔的类别名（仅 pt 引擎） |
 | `--model` / `--scale` | 从文件名/metadata 推断 | 推不出时报错 |
 | `--output` | `runs/predict/predictN/` | 图片：文件或目录；视频：输出视频文件 |
-| `--data` | COCO 标签 | 只用 `names` + `nc`；不读图片 |
+| `--data` | COCO 标签 | 只用 `names` + `nc`；不读图片（yoloe 忽略） |
 | `--imgsz` | metadata > 640 | 覆盖输入尺寸 |
 | `--device` | auto | pt 引擎设备 |
 
@@ -79,7 +86,18 @@ Labels        -> runs/predict/predict21/labels
 | `onnx` | CPU 部署（ORT） | 输入尺寸以图内 shape 为准 |
 | `trt` | GPU 部署 | 引擎绑定构建机 GPU + TRT 版本；换机要重建 |
 
-## 4. 坑
+## 4. YOLOE（开放词汇）
+
+- **prompt-free（`-pf` 权重）**：标签名 = 权重 metadata 里烘焙的词汇名，不需要
+  `--data` / `--classes`；三种引擎都可跑。
+- **文本 prompt（`-seg` 权重）**：`--classes "a, b, c"` 把每个名字经 MobileCLIP2-B 文本
+  编码器编码（`mobileclip2_b.safetensors` 需与模型权重同目录——只在 `set_classes` 时加载
+  一次，不在模型图里）。目前仅 `--engine pt`；`export --classes` 产出的类锁定 ONNX 尚未
+  接入 CLI 引擎消费。
+- `--nms` / `--raw` 对 yoloe 直接报错（pf 原始输出列数随提案过滤变化；文本模式只有 E2E）。
+- 模型细节：[../models/yoloe.md](../models/yoloe.md)。
+
+## 5. 坑
 
 - **conf 默认值与 eval 不同**（0.25 vs 0.001）。
 - v3 只有一条“解码 + obj×cls + NMS”路径，`--nms` / `--raw` 直接报错。

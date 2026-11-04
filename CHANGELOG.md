@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **README mirrors synced**: the Chinese README catches up with the English one (version badge and the YOLOE-26 row), and both readmes' YOLOE row now covers text mode alongside prompt-free.
 - **YOLOE-26 model pages cover text mode**: both language versions document the text-layout head, `--classes` usage, LVIS evaluation, class-locked export and the text-mode verification facts; the stale "not implemented" note is gone.
+- **Pipeline manuals cover YOLOE**: the infer / export / eval manuals (both languages) gain YOLOE usage, the `--classes` argument, the export graph conventions (pf max_det=1000 / class-locked text export) and the text-mode pt-engine boundary.
 
 ### Fixed
 

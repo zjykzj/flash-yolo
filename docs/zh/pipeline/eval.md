@@ -13,12 +13,14 @@ python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data coco 
 python scripts/eval.py --weights w.safetensors --data coco --imgsz 416                  # 指定输入
 python scripts/eval.py --weights w.safetensors --data coco --split val --limit 100      # 子集
 python scripts/eval.py --weights weights/yolo26n-seg.safetensors --data coco            # Box + Mask
+python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco       # pf 词汇映射
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis          # 文本 prompt（1203 类）
 ```
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `--weights` | — | `.safetensors` / `.onnx` / `.engine` |
-| `--data` | — | 描述符（见 [../datasets/README.md](../datasets/README.md)） |
+| `--data` | — | 描述符（见 [../datasets/README.md](../datasets/README.md)）；yoloe 文本模式用其类别名做 prompt |
 | `--split` | `val` | 角色键（train/val/test） |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--model` / `--scale` | 从权重推断 | 推不出时显式给 |
@@ -76,7 +78,19 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 **官方 yolo26n-seg @640 验收**：Box 0.3967 / 0.5548，Mask 0.3367 / 0.5276（mAP50-95 / mAP50）。
 官方训练期 validator 记录 box 0.3975 / mask 0.3386，差 ~0.002 属指标实现噪声。
 
-## 6. 参考基准（COCO val2017）
+## 6. YOLOE（开放词汇）
+
+- **prompt-free（`-pf` 权重）**：头内烘焙的 4,585 名词汇映射到数据集类别——精确名优先、
+  `vocab_synonyms` 回退（COCO 描述符内置 11 条）、缺失类别直接报错；数据集类别之外的预测
+  被丢弃（`CocoEvaluator` 契约不变）。
+- **文本 prompt（`-seg` 权重）**：数据集自身的类别名即 prompt（`set_classes`）；`--data lvis`
+  对 1,203 个 LVIS 类别评估（`config/datasets/lvis.yaml`，取每类名第一个同义词——官方
+  LVIS prompt 口径）。目前仅 `--engine pt`，且 `mobileclip2_b.safetensors` 需与模型权重
+  同目录。
+- 两种模式都像其他分割架构一样自动出 Box + Mask 双表。
+- 模型细节：[../models/yoloe.md](../models/yoloe.md)。
+
+## 7. 参考基准（COCO val2017）
 
 | 权重 | 输入 | E2E mAP50-95 / mAP50 | NMS mAP50-95 / mAP50 |
 |---|---|---|---|
@@ -87,7 +101,7 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 
 完整权重清单、下载链接与延迟见各模型页（[../models/README.md](../models/README.md)）。
 
-## 7. 坑
+## 8. 坑
 
 - **`--limit` 必须同时限制 GT**：评估器已按 `params.imgIds` 对齐子集；自己改指标代码时注意。
 - **空结果**：`loadRes([])` 会 IndexError；评估器对空结果短路返回全 0。
