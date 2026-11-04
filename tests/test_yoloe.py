@@ -21,6 +21,7 @@ PF_PT = ROOT / "weights" / "yoloe-26n-seg-pf.pt"
 PF_SAFE = ROOT / "weights" / "yoloe-26n-seg-pf.safetensors"
 PF_ONNX = ROOT / "weights" / "yoloe-26n-seg-pf.onnx"
 TEXT_PT = ROOT / "weights" / "yoloe-26n-seg.pt"
+TEXT_SAFE = ROOT / "weights" / "yoloe-26n-seg.safetensors"
 TEST_IMAGE = ROOT / "assets" / "traffic.jpg"
 
 N_PF_PARAMS = 7_837_694  # yoloe-26n-seg-pf parameters()（见文件头说明）
@@ -58,16 +59,20 @@ def test_head_build_key_sets_pf():
 
 
 def test_head_build_key_sets_text():
-    """文本布局构建（M1 只建结构，前向 M2）：key 集与官方文本 ckpt 一致"""
+    """文本布局构建：key 集与官方文本 ckpt 一致（含每级独立尾卷积）"""
     if not TEXT_PT.exists():
         pytest.skip("需要官方权重 weights/yoloe-26n-seg.pt")
     ref = _official_keys(TEXT_PT)
     mine = {k: tuple(v.shape) for k, v in _build(False).state_dict().items()}
     assert set(mine) == set(ref)
     assert all(mine[k] == ref[k] for k in ref)
-    head = _build(False).model[-1]  # 文本前向是 M2 范围：直接调头应明确报 NotImplementedError
+    # 每级尾卷积独立构建（曾共享同一 Conv2d 对象——别名使 strict load 后三级同值）
+    head = _build(False).model[-1]
+    assert head.cv2[0][2].weight.data_ptr() != head.cv2[1][2].weight.data_ptr()
+    assert head.cv3[0][2].weight.data_ptr() != head.cv3[1][2].weight.data_ptr()
+    # 无 tpe 前向明确报错（set_classes 契约）
     feats = [torch.zeros(1, c, 80 // 2**i, 80 // 2**i) for i, c in enumerate((64, 128, 256))]
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="set_classes"):
         head.eval()(feats)
 
 
@@ -112,6 +117,86 @@ def test_strict_load_and_forward_parity():
             y_m, p_m = m(x)
         assert torch.equal(y_m, y_o), "E2E 检测输出与官方逐位一致"
         assert torch.equal(p_m, p_o), "原型与官方逐位一致"
+
+
+def test_text_mode_parity():
+    """文本模式（M2）：TPE 生成链 + head 前向与官方逐位一致（E2E 检测 + 原型）
+
+    对拍口径：官方 yoloe-26n-seg.pt 反序列化 + end2end=True + pe 注入；我方
+    PtEngine.set_classes 走完整 TPE 链（tokenizer -> MobileCLIP -> reprta+L2）。
+    """
+    if not TEXT_SAFE.exists() or not TEXT_PT.exists():
+        pytest.skip("需要官方权重与转换产物 yoloe-26n-seg.{pt,safetensors}")
+    pytest.importorskip("ultralytics")
+    from utils.engines.pt import PtEngine
+
+    classes = ["person", "bicycle", "car", "bus", "truck"]
+    from ultralytics import YOLOE
+
+    off = YOLOE(str(TEXT_PT))
+    off.set_classes(classes)
+    off.model.eval()
+    tpe_off = off.model.pe
+    mine = PtEngine(str(TEXT_SAFE), model="yoloe-26", device="cpu", end2end=True)
+    mine.set_classes(classes)
+    assert torch.equal(mine.model.model[-1]._tpe, tpe_off), "TPE 生成链与官方逐位一致"
+    ref = torch.load(TEXT_PT, map_location="cpu", weights_only=False)["model"].float().eval()
+    ref.model[-1].end2end = True
+    ref.pe = tpe_off
+    for x in (torch.rand(1, 3, 640, 640), torch.zeros(1, 3, 640, 640)):
+        with torch.no_grad():
+            y_o, p_o = ref(x)[0]
+            y_m, p_m = mine.model(x)
+        assert torch.equal(y_m, y_o), "文本模式 E2E 检测输出与官方逐位一致"
+        assert torch.equal(p_m, p_o), "文本模式原型与官方逐位一致"
+
+
+def test_text_fuse_equivalence():
+    """导出 fuse 数值等价：fused vs unfused 在 conf>0.25 口径下零类别翻转、分数差 < 1e-3
+
+    fuse 把文本侧预计算进 cv3 尾卷积（tpe @ 折叠权重），与运行时 einsum 的取整差
+    ~1e-5——近并列锚点的 top-k 选择可能翻转，但有效检测（conf>0.25）不变（官方同款口径）。
+    """
+    if not TEXT_SAFE.exists():
+        pytest.skip("需要转换产物 yoloe-26n-seg.safetensors")
+    from model.build import build_model
+    from model.text_encoder import load_mobileclip_text
+    from model.tokenizer import tokenize
+    from model.weights import load_weights
+
+    classes = ["person", "bicycle", "car", "bus", "truck"]
+    enc_path = ROOT / "weights" / "mobileclip2_b.safetensors"
+    if not enc_path.exists():
+        pytest.skip("需要文本编码器权重 mobileclip2_b.safetensors")
+    model = build_model("yoloe-26", "n", prompt_free=False)
+    load_weights(model, TEXT_SAFE, strict=True)
+    head = model.model[-1]
+    head.end2end = True
+    model.eval()
+    enc = load_mobileclip_text(enc_path).eval()
+    with torch.no_grad():
+        emb = torch.cat([enc(c) for c in tokenize(classes).split(80)], dim=0).unsqueeze(0)
+        tpe = head.get_tpe(emb)
+        head.set_tpe(tpe)
+        if not TEST_IMAGE.exists():
+            pytest.skip("需要测试图片 assets/traffic.jpg")
+        import cv2
+
+        from data.preprocess import preprocess
+
+        x, _, _ = preprocess(cv2.imread(str(TEST_IMAGE)), 640)  # 已是 (1, 3, H, W)
+        y_u, _ = model(x)
+        head.fuse_text(tpe)
+        y_f, _ = model(x)
+    keep_u = y_u[0, :, 4] > 0.25
+    keep_f = y_f[0, :, 4] > 0.25
+    d_u = y_u[0, keep_u]
+    d_f = y_f[0, keep_f]
+    order_u = torch.argsort(d_u[:, 4], descending=True)
+    order_f = torch.argsort(d_f[:, 4], descending=True)
+    assert len(d_u) == len(d_f), "conf>0.25 检出数量必须一致"
+    assert bool((d_u[order_u, 5] == d_f[order_f, 5]).all()), "类别零翻转"
+    assert (d_u[order_u, :5] - d_f[order_f, :5]).abs().max() < 1e-3
 
 
 def test_vocab_map():
