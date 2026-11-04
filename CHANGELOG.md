@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-04
+
 ### Added
 
 - **YOLOE-26 text mode**: custom prompts join prompt-free inference — the MobileCLIP2-B text encoder and a self-written CLIP BPE tokenizer (both bit-identical to the official pipeline) turn any class names into text embeddings via `infer --classes` and dataset names in eval, across all five scales.
