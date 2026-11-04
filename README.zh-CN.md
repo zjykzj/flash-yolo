@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version 1.0.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.1.0-blue.svg" alt="Version 1.1.0"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12-blue.svg" alt="Python 3.12"></a>
   <a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-2.13-ee4c2c.svg" alt="PyTorch"></a>
   <a href="https://github.com/zjykzj/flash-yolo/actions/workflows/tests.yml"><img src="https://github.com/zjykzj/flash-yolo/actions/workflows/tests.yml/badge.svg?branch=main" alt="Tests"></a>
@@ -82,6 +82,7 @@ b8 = batch 8 每图平均）。完整口径与逐模型表格：
 | Flash-YOLO | 检测 | flash | 1.97M | 3.80 | 本仓库的轻量设计 |
 | Flash-YOLO-seg | 分割 | flash | 2.53M | 7.6 | 同 backbone/neck，Segment26 头 |
 | YOLOv3-tiny / -SiLU | 检测 | tiny | 8.85M | 5.56 @416 | darknet 兼容；官方 `.weights` 只配原版 |
+| YOLOE-26 | 开放词汇分割（pf / 文本提示词） | n / s / m / l / x | 7.84M (n) | 16.0 (n) | 官方 checkpoint（-pf 与文本模式），前向逐位一致 |
 
 YOLOv3-tiny 参考：官方 darknet 权重经本管线在 @640 评估为 17.16 / 35.90（mAP50-95 / mAP50）。
 从零 300 轮在 416 用当前默认配方（SiLU + `--obj-iou-target`）达到 **16.15 / 29.93**。详见

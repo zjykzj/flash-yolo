@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **YOLOE-26 text mode**: custom prompts join prompt-free inference — the MobileCLIP2-B text encoder and a self-written CLIP BPE tokenizer (both bit-identical to the official pipeline) turn any class names into text embeddings via `infer --classes` and dataset names in eval, across all five scales.
 - **Class-locked text-mode export**: `export --classes` fuses the text embeddings into the cls conv and emits a single-input ONNX that rejects new prompts; onnx and pt agree on every valid detection above conf=0.25.
 
+### Changed
+
+- **README mirrors synced**: the Chinese README catches up with the English one (version badge and the YOLOE-26 row), and both readmes' YOLOE row now covers text mode alongside prompt-free.
+
 ### Fixed
 
 - **YOLOE-26 architecture summary**: `model/summary.py --model yoloe-26` no longer crashes on the text-layout FLOPs profile, and m/l/x prompt-free checkpoints now convert (their per-scale proposal channels are recorded in the model yaml).
