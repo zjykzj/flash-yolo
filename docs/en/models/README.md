@@ -27,11 +27,13 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 - `yolo26` / `yolo26-seg` / `yoloe-26` have the `n/s/m/l/x` scales; `flash-yolo` /
   `flash-yolo-seg` only `flash`, `yolov3-tiny` only `tiny` — passing `--scale` for those warns
   and does nothing.
-- `yoloe-26` currently supports prompt-free (-pf) weights only; `--nms` / `--raw` do not apply
-  (see yoloe.md).
+- `yoloe-26` supports prompt-free (-pf) and text-prompt weights; `--nms` / `--raw` do not apply
+  (see yoloe.md). Text mode additionally needs `mobileclip2_b.safetensors` (the converted
+  Apple MobileCLIP2-B text encoder) next to the model weights.
 - Structures live in `config/models/<model>.yaml`; `--cfg` can point at a custom yaml (custom
   variants).
-- Each model page's download links point to the **v1.0.0** release assets.
+- Each model page's download links point to the **latest release** assets (the v1.0.0
+  checkpoints; the YOLOE text-mode encoder asset ships with v1.2.0).
 
 ## 2. Shared structure conventions
 

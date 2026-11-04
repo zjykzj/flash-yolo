@@ -25,9 +25,12 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 
 - `yolo26` / `yolo26-seg` / `yoloe-26` 有 `n/s/m/l/x` 档位；`flash-yolo` / `flash-yolo-seg` 只有
   `flash`，`yolov3-tiny` 只有 `tiny`——对这些架构传 `--scale` 会告警且不生效。
-- `yoloe-26` 目前只支持 prompt-free（-pf）权重；`--nms` / `--raw` 不适用（见 yoloe.md）。
+- `yoloe-26` 支持 prompt-free（-pf）与文本 prompt 权重；`--nms` / `--raw` 不适用（见 yoloe.md）。
+  文本模式另需 `mobileclip2_b.safetensors`（Apple MobileCLIP2-B 文本编码器的转换产物）与
+  模型权重同目录。
 - 结构定义在 `config/models/<model>.yaml`；`--cfg` 可指向自定义 yaml（自定义变体）。
-- 各模型页的权重下载链接指向 **v1.0.0** 发布资产。
+- 各模型页的权重下载链接指向**最新发布**资产（v1.0.0 的 checkpoint；YOLOE 文本模式编码器
+  资产随 v1.2.0 发布）。
 
 ## 2. 公共结构约定
 
