@@ -1,15 +1,16 @@
 # YOLOE-26 (open-vocabulary instance segmentation)
 
 > Open-vocabulary segmentation: classes are not fixed at training time — the model answers from
-> text / visual prompts or a built-in **4,585-name vocabulary** at inference time. v1.1.0 supports
-> the **prompt-free (-pf)** inference / evaluation / export; text and visual prompt modes come in
-> later releases. Structure: `config/models/yoloe-26-seg.yaml`; the backbone/neck rows are
-> identical to [yolo26-seg.md](yolo26-seg.md) — only the head line differs.
+> text prompts or a built-in **4,585-name vocabulary** at inference time (visual prompts come in
+> a later release). The current release supports **prompt-free (-pf)** and **text prompts**
+> (custom class names encoded by the MobileCLIP2-B text encoder) for inference / evaluation /
+> export. Structure: `config/models/yoloe-26-seg.yaml`; the backbone/neck rows are identical to
+> [yolo26-seg.md](yolo26-seg.md) — only the head line differs.
 
 ## 1. Conventions
 
 - The official 26 family ships **seg checkpoints only**: `yoloe-26*-seg.pt` (text mode) /
-  `yoloe-26*-seg-pf.pt` (prompt-free, the scope of this page).
+  `yoloe-26*-seg-pf.pt` (prompt-free); both modes are in scope on this page.
 - Official LVIS minival numbers (paper protocol, **detection configuration**, 640 input):
   YOLOE-26n-pf **16.6 E2E / 17.7 Non-E2E** mAP50-95; text prompts 24.7 / visual prompts 21.9
   (Non-E2E). The paper's params/FLOPs are for the detection configuration — the released seg
@@ -19,20 +20,27 @@
 - This repo's reproduction = same weights, same pre/post-processing: bit-identical with the
   official fp32 forward (§4); the COCO numbers are pipeline-smoke (20 images), not accuracy
   conclusions.
+- Text mode needs the MobileCLIP2-B text encoder weights (`mobileclip2_b.safetensors`, converted
+  from Apple's `mobileclip2_b.ts`) next to the model weights — it is loaded only when
+  `set_classes` runs (infer/eval) and never enters the exported graph (the embeddings are fused
+  into the cls conv at export).
 - "Official" refers to the Ultralytics-released YOLOE-26 weights/docs; this repo does not
   redistribute them.
 
-## 2. Structure (prompt-free layout, n scale)
+## 2. Structure (n scale)
 
-24 yaml modules (`model.model` 0–23), 346-layer module tree, **7,837,694 params / 16.0 GFLOPs
-@640** (s: 18,419,972 params / 44.2 GFLOPs; above yolo26n-seg's 9.3 GFLOPs — the vocab Linear
-over 8400 anchors × 4585 classes is the inherent pf cost):
+24 yaml modules (`model.model` 0–23), 346-layer module tree. The **pf layout** has
+**7,837,694 params / 16.0 GFLOPs @640** (s: 18,419,972 params / 44.2 GFLOPs; above
+yolo26n-seg's 9.3 GFLOPs — the vocab Linear over 8400 anchors × 4585 classes is the inherent pf
+cost); the **text layout** has **5,615,540 params / 10.5 GFLOPs @640** at K=80 prompts (the
+region-text similarity scales linearly with the prompt count; the official yaml comment's 11.7
+includes the semseg forward, and the official docs' numbers are the detection configuration):
 
 | Section | idx | Contents |
 |---|---|---|
 | Backbone | 0–10 | identical to yolo26-seg (Conv → C3k2 → SPPF → C2PSA) |
 | Neck | 11–22 | identical to yolo26-seg (P3/P4/P5 scales) |
-| Head | 23 | YOLOESegment26 (pf layout): truncated cv2/cv3 + lrpc baked vocab + cv5/proto |
+| Head | 23 | YOLOESegment26 (pf layout: truncated cv2/cv3 + lrpc baked vocab; text layout: full cv2/cv3 tails + cv4 contrastive head) + cv5/proto |
 
 ### Head (YOLOESegment26, pf layout)
 
@@ -50,8 +58,23 @@ over 8400 anchors × 4585 classes is the inherent pf cost):
   static path** (official behavior: all anchors pass, no dynamic mask). E2E output
   `(B, 1000, 6+nm)` — **max_det=1000** is the YOLOE convention (300 for the yolo26 family).
 - Per-scale quirk (structural fact of the official assets): the n-scale pf conv has 512 channels
-  (reuses the cv3 tail conv), the s-scale has 1 (a dedicated single channel) — behaviorally
-  identical (channel 0 only), expressed by the `pf_channels` scale data in the yaml.
+  (reuses the cv3 tail conv), the s/m/l/x scales have 1 (a dedicated single channel) —
+  behaviorally identical (channel 0 only), expressed by the `pf_channels` scale data in the yaml.
+
+### Head (YOLOESegment26, text layout)
+
+- `cv2[i]` / `cv3[i]` keep their full tails (box regression / 512-d region embeddings);
+  `cv4[i]` = BNContrastiveHead: BatchNorm (eps=0.001, a checkpoint fact) over region embeddings,
+  cosine similarity against the L2-normalized text embeddings, scaled by a learned
+  `exp(logit_scale)` + bias; `cv5`/`proto` identical to the pf layout. No `lrpc`.
+- Text prompts flow through `set_classes`: CLIP BPE tokenize (77 context) → MobileCLIP2-B encode
+  → `reprta` (SwiGLUFFN residual) → L2 normalize → cached on the head. The class count is the
+  prompt count, per forward.
+- **max_det=300** for the text layout (the released text checkpoints carry the Detect default;
+  the pf checkpoints carry 1000).
+- The text encoder is external (63.4M params, not in the FLOPs count — the official does the
+  same) and is fused into the cls conv at export, so the exported graph is class-locked and
+  single-input.
 
 ## 3. Usage
 
@@ -67,6 +90,20 @@ python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coc
 
 # export (E2E fused graph + prototypes, two outputs; conf=0 static path)
 python scripts/export.py --weights weights/yoloe-26n-seg-pf.safetensors --out weights/yoloe-26n-seg-pf.onnx
+
+# ---- text mode (yoloe-26*-seg weights; needs mobileclip2_b.safetensors next to the weights) ----
+
+# inference: custom class names / prompts encoded with the MobileCLIP2-B text encoder
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors --image assets/traffic.jpg \
+    --classes "person, bicycle, car, bus, truck"
+
+# evaluation: the dataset's own class names become the prompts
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis   # 1203 LVIS classes
+
+# export: the prompts are fused into the cls conv — a single-input, class-locked ONNX
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car" --out weights/yoloe-26n-3cls.onnx
 ```
 
 - `--model/--scale` are inferred from the filename (`yoloe-26n-seg-pf` → yoloe-26 / n);
@@ -76,28 +113,44 @@ python scripts/export.py --weights weights/yoloe-26n-seg-pf.safetensors --out we
   through the dataset descriptor's `vocab_synonyms` field (11 entries built into
   `config/datasets/coco.yaml`, including the official vocabulary's own typo `dinning table`);
   evaluation keeps only dataset-class predictions, the `CocoEvaluator` contract is unchanged.
+- Text mode notes: `--classes` takes comma-separated names (each becomes one prompt/class);
+  LVIS prompts use each category's first synonym (`name.split("/", 1)[0]` — the official
+  convention, so `config/datasets/lvis.yaml` stores them already split); the class-locked ONNX
+  rejects new prompts (`is_fused` guard); text-mode infer/eval currently require `--engine pt`.
 - Official weights (ultralytics assets):
   `https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26n-seg-pf.pt` (etc.).
 
 ## 4. Verification
 
-- **strict load**: the official n/s -seg-pf checkpoints convert to safetensors with all 928 keys
-  matching (nothing missing, nothing extra); the built head's key set matches the official ckpt
-  for both the pf and text layouts.
-- **Bit-identical**: forward (E2E detections + prototypes) matches the official fp32 forward
-  exactly on zeros and random inputs, both scales (E2E (1,1000,38) and proto (1,32,160,160) via
-  `torch.equal`).
-- **Export parity**: onnx vs pt (same conf=0 static path) agree on all valid detections above
-  conf=0.25 — boxes/scores/coefficients < 1e-3, zero class flips (near-tied scores across 4585
-  classes only occur in the low-conf tail, broken by the torch/ORT backends).
-- **COCO smoke** (20 images, pipeline-validation protocol): Box 0.3485 / Mask 0.2865 mAP50-95.
+- **strict load**: the official -seg-pf checkpoints (all five scales) convert to safetensors
+  with all keys matching (nothing missing, nothing extra); the built head's key set matches the
+  official ckpt for both the pf and text layouts.
+- **Bit-identical (pf)**: forward (E2E detections + prototypes) matches the official fp32 forward
+  exactly on zeros and random inputs, all five scales (E2E (1,1000,38) and proto (1,32,160,160)
+  via `torch.equal`).
+- **Bit-identical (text)**: the whole prompt chain — CLIP BPE tokenize → MobileCLIP2-B encode →
+  reprta+L2 — and the head forward (E2E detections + prototypes) match the official pipeline
+  exactly, all five scales; the text encoder itself reproduces the official `mobileclip2_b.ts`
+  bit-for-bit (L=77, the official input contract). The tokenizer matches the official CLIP fork
+  exactly except for the ftfy mojibake repair (§5).
+- **Export parity (pf)**: onnx vs pt (same conf=0 static path) agree on all valid detections
+  above conf=0.25 — boxes/scores/coefficients < 1e-3, zero class flips (near-tied scores across
+  4585 classes only occur in the low-conf tail, broken by the torch/ORT backends).
+- **Export parity (text)**: the fused pt model vs unfused differ by 1.8e-6 and the onnx by 6e-5 —
+  same detections above conf=0.25, zero class flips.
+- **COCO smoke** (20 images, pipeline-validation protocol, pf): Box 0.3485 / Mask 0.2865
+  mAP50-95.
 - Regression gates in `tests/test_yoloe.py` (structure / conversion metadata / strict load /
-  bit-parity / vocabulary mapping / export parity).
+  bit-parity / vocabulary mapping / export parity / text-mode parity / fuse equivalence) and
+  `tests/test_text_encoder.py` (encoder structure + ts bit-parity, tokenizer goldens).
 
 ## 5. Known limits
 
-- The text / visual prompt forward is not implemented yet (text-layout weights build and load;
-  the forward raises a clear error).
+- The **visual prompt** forward (SAVPE / refer images) is not implemented yet; text mode is.
+- Text-mode infer/eval currently require `--engine pt`; the exported class-locked ONNX exists,
+  but engine-side consumption of it is not wired into the CLI yet.
+- The tokenizer skips the official fork's `ftfy` cleanup (mojibake repair / fullwidth folding):
+  bit-identical on clean UTF-8 text, not guaranteed on broken-encoding inputs.
 - The exported graph and the runtime pt path differ in the proposal filter (official behavior:
   export conf=0 static vs runtime conf=0.001) — a few low-conf detections may differ; valid
   detections above conf=0.25 match in practice.

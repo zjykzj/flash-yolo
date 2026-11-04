@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **README mirrors synced**: the Chinese README catches up with the English one (version badge and the YOLOE-26 row), and both readmes' YOLOE row now covers text mode alongside prompt-free.
+- **YOLOE-26 model pages cover text mode**: both language versions document the text-layout head, `--classes` usage, LVIS evaluation, class-locked export and the text-mode verification facts; the stale "not implemented" note is gone.
 
 ### Fixed
 

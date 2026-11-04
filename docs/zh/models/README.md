@@ -11,7 +11,7 @@
 | Flash-YOLO | 检测 | flash（单档） | 1.97M | 3.80 | [flash-yolo.md](flash-yolo.md) |
 | Flash-YOLO-seg | 实例分割 | flash（单档） | 2.53M | 7.6 | [flash-yolo-seg.md](flash-yolo-seg.md) |
 | YOLOv3-tiny / -SiLU | 检测 | tiny（单档） | 8.85M | 5.56 @416 | [yolov3-tiny.md](yolov3-tiny.md) |
-| YOLOE-26 | 开放词汇分割（prompt-free） | n / s / m / l / x | 7.84M (n) | 16.0 (n) | [yoloe.md](yoloe.md) |
+| YOLOE-26 | 开放词汇分割（pf / 文本提示词） | n / s / m / l / x | 7.84M (n) | 16.0 (n) | [yoloe.md](yoloe.md) |
 
 选择方式：
 

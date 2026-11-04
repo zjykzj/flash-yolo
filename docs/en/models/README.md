@@ -12,7 +12,7 @@ details live on their own pages.
 | Flash-YOLO | detection | flash (single) | 1.97M | 3.80 | [flash-yolo.md](flash-yolo.md) |
 | Flash-YOLO-seg | instance segmentation | flash (single) | 2.53M | 7.6 | [flash-yolo-seg.md](flash-yolo-seg.md) |
 | YOLOv3-tiny / -SiLU | detection | tiny (single) | 8.85M | 5.56 @416 | [yolov3-tiny.md](yolov3-tiny.md) |
-| YOLOE-26 | open-vocabulary segmentation (prompt-free) | n / s / m / l / x | 7.84M (n) | 16.0 (n) | [yoloe.md](yoloe.md) |
+| YOLOE-26 | open-vocabulary segmentation (pf / text prompts) | n / s / m / l / x | 7.84M (n) | 16.0 (n) | [yoloe.md](yoloe.md) |
 
 How to pick:
 
