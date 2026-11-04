@@ -42,7 +42,7 @@ from data.build import build_eval_dataset
 from data.scan import scan_summary
 from eval.coco_evaluator import CocoEvaluator, build_vocab_map
 from model.build import ARCHS, YOLO26_FAMILY, YOLOE26_FAMILY, arch_display_name, arch_task
-from model.weights import arch_has_scale, load_meta, resolve_arch_scale, resolve_imgsz
+from model.weights import arch_has_scale, load_meta, prompt_mode_from_weights, resolve_arch_scale, resolve_imgsz
 from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_file_only, log_params, redirect_prints, setup_logging
 from utils.paths import increment_path
@@ -114,18 +114,23 @@ def main():
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
     if args.agnostic_nms and not args.nms:
         parser.error("--agnostic-nms only affects the NMS path — pass --nms as well")
-    # YOLOE pf：词汇名字必须来自权重 metadata（烘焙词汇），据此建 vocab index -> 数据集类别的映射
+    # YOLOE：pf 按词汇映射（词汇名字来自权重 metadata 的烘焙词汇）；
+    # 文本模式直接用数据集类别名做 prompt（类别 id = prompt 序号，无需映射）
     vocab_map = None
+    text_mode = False
     if arch in YOLOE26_FAMILY:
-        vocab_names = load_meta(args.weights).get("names")
-        if not vocab_names:
-            parser.error(f"{arch} evaluation needs the vocabulary names in the weights metadata "
-                         "(convert with scripts/convert_weights.py)")
-        try:
-            vocab_map = build_vocab_map(vocab_names, list(spec.names.values()),
-                                        getattr(spec, "vocab_synonyms", None) or {})
-        except ValueError as e:
-            parser.error(str(e))
+        if prompt_mode_from_weights(args.weights, load_meta(args.weights)) == "text":
+            text_mode = True
+        else:
+            vocab_names = load_meta(args.weights).get("names")
+            if not vocab_names:
+                parser.error(f"{arch} evaluation needs the vocabulary names in the weights metadata "
+                             "(convert with scripts/convert_weights.py)")
+            try:
+                vocab_map = build_vocab_map(vocab_names, list(spec.names.values()),
+                                            getattr(spec, "vocab_synonyms", None) or {})
+            except ValueError as e:
+                parser.error(str(e))
 
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 构建后以 engine.imgsz 为准，onnx 取图内 shape）
     imgsz = resolve_imgsz(args.weights, args.imgsz)
@@ -153,7 +158,13 @@ def main():
     with redirect_prints(logger):
         engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
-    if arch in YOLOE26_FAMILY:
+    if text_mode:
+        if args.engine != "pt":
+            parser.error("yoloe-26 text mode currently requires --engine pt "
+                         "(class-locked export for onnx/trt is not available yet)")
+        engine.set_classes(list(spec.names.values()))
+        mode = "E2E (text prompts)"
+    elif arch in YOLOE26_FAMILY:
         mode = "E2E (prompt-free)"
     elif arch in YOLO26_FAMILY:
         mode = "E2E (NMS-free)" if end2end else "o2m+NMS"
@@ -273,7 +284,8 @@ def main():
     elif arch in YOLO26_FAMILY:
         ref_lines = ["Reference: Flash-YOLO (this repo's own design) — GFLOPs below yolo26n by design"]
     elif arch in YOLOE26_FAMILY:
-        ref_lines = ["Reference: official yoloe-26-seg-pf — LVIS/COCO numbers per the ultralytics docs"]
+        ref = "official yoloe-26-seg" if text_mode else "official yoloe-26-seg-pf"
+        ref_lines = [f"Reference: {ref} — LVIS/COCO numbers per the ultralytics docs"]
     else:
         ref_lines = ["Reference: official darknet yolov3-tiny = 33.1 AP50 (COCO test-dev, 416; val2017 here)"]
     for line in ("", speed_line, model_line, done_line, *ref_lines):

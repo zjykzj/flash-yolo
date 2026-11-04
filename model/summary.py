@@ -45,6 +45,10 @@ def profile_flops(model, imgsz=640, batch=1, device=None):
     saved = getattr(head, "end2end", None)
     if saved is not None:
         head.end2end = False
+    # yoloe 文本布局前向需要 tpe：dummy（K = 头内 nc = yaml nc）——BNContrastiveHead
+    # 的 einsum FLOPs 随 K 线性缩放，口径 = 结构 nc 下的 FLOPs（与官方 yaml 注释同量级）
+    if getattr(head, "lrpc", None) is None and hasattr(head, "set_tpe"):
+        head.set_tpe(torch.zeros(1, head.nc, 512, device=device))
     x = torch.zeros(batch, 3, imgsz, imgsz, device=device)
     model.eval()
     with torch.no_grad():

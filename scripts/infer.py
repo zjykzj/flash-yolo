@@ -25,7 +25,7 @@ import torch
 from config import __version__
 from config.datasets import load_dataset, load_names
 from model.build import ARCHS, YOLO26_FAMILY, YOLOE26_FAMILY, arch_display_name
-from model.weights import arch_has_scale, load_meta, resolve_arch_scale, resolve_imgsz
+from model.weights import arch_has_scale, load_meta, prompt_mode_from_weights, resolve_arch_scale, resolve_imgsz
 from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_params, setup_logging
 from utils.paths import increment_path
@@ -234,6 +234,9 @@ def main():
     parser.add_argument("--data", default=None,
                         help="dataset descriptor (name or .yaml): sets nc and label names for models "
                              "trained on a non-COCO dataset (default: COCO, nc from the model yaml)")
+    parser.add_argument("--classes", default=None,
+                        help="yoloe-26 text mode only: comma-separated class names / text prompts "
+                             "(encoded with the MobileCLIP text encoder; e.g. \"person, bicycle\")")
     parser.add_argument("--imgsz", type=int, default=None,
                         help="model input size (default: weights metadata, else 640)")
     args = parser.parse_args()
@@ -278,15 +281,26 @@ def main():
         parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
     if args.agnostic_nms and not args.nms:
         parser.error("--agnostic-nms only affects the NMS path — pass --nms as well")
-    if arch in YOLOE26_FAMILY:  # pf 词汇即权重：名字必须来自烘焙词汇，--data/COCO 名不适用
-        vocab_names = meta.get("names")
-        if not vocab_names:
-            parser.error(f"{arch} needs the vocabulary names in the weights metadata "
-                         "(convert with scripts/convert_weights.py)")
-        if args.data:
-            logger.warning("--data is ignored for yoloe-26: class names come from the baked vocabulary")
-        names = {i: n for i, n in enumerate(vocab_names)}
-        nc = None  # 头结构用 yaml nc（80），不随数据集走
+    if arch in YOLOE26_FAMILY:
+        pm = prompt_mode_from_weights(args.weights, meta)
+        if pm == "text":
+            # 文本模式：类名来自 --classes（经 MobileCLIP 编码），类别数随 prompt 数变
+            if not args.classes:
+                parser.error("yoloe-26 text-mode weights require --classes "
+                             '(comma-separated class names, e.g. --classes "person, bicycle")')
+            if args.data:
+                logger.warning("--data is ignored for yoloe-26 text mode: class names come from --classes")
+            names = {i: n.strip() for i, n in enumerate(args.classes.split(","))}
+            nc = None
+        else:  # pf：词汇即权重，名字必须来自烘焙词汇，--data/COCO 名不适用
+            vocab_names = meta.get("names")
+            if not vocab_names:
+                parser.error(f"{arch} needs the vocabulary names in the weights metadata "
+                             "(convert with scripts/convert_weights.py)")
+            if args.data:
+                logger.warning("--data is ignored for yoloe-26: class names come from the baked vocabulary")
+            names = {i: n for i, n in enumerate(vocab_names)}
+            nc = None  # 头结构用 yaml nc（80），不随数据集走
 
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 内部同一规则，构建后以 engine.imgsz 为准）
     imgsz = resolve_imgsz(args.weights, args.imgsz)
@@ -314,12 +328,14 @@ def main():
     if video_mode and video_out is None:
         video_out = run_dir / f"{_video_stem(source)}.mp4"
     attach_file_log(run_dir / "run.log")
+    extra = {"classes": args.classes} if args.classes else {}
     if video_mode:
         log_params(logger, __file__, weights=args.weights, video=args.video, model=arch,
-                   engine=args.engine, conf=args.conf, imgsz=imgsz, max_frames=args.max_frames)
+                   engine=args.engine, conf=args.conf, imgsz=imgsz,
+                   max_frames=args.max_frames, **extra)
     else:
         log_params(logger, __file__, weights=args.weights, image=args.image, model=arch,
-                   engine=args.engine, conf=args.conf, imgsz=imgsz)
+                   engine=args.engine, conf=args.conf, imgsz=imgsz, **extra)
 
     # ---- 头部（与训练/评估同一套五段排版：环境 -> 模型 -> 输入/参数 -> 细节）----
     # ① 环境：engine 构建之前（onnx 后端固定 CPU、trt 后端固定 CUDA，见各自 Engine）
@@ -337,7 +353,13 @@ def main():
         kwargs["nc"] = nc  # onnx 图内置类别数，只有 pt 引擎需要重建头
     engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
-    if arch in YOLOE26_FAMILY:
+    if arch in YOLOE26_FAMILY and prompt_mode_from_weights(args.weights, meta) == "text":
+        if args.engine != "pt":
+            parser.error("yoloe-26 text mode currently requires --engine pt "
+                         "(class-locked export for onnx/trt is not available yet)")
+        engine.set_classes([names[i] for i in sorted(names)])
+        mode = "E2E (text prompts)"
+    elif arch in YOLOE26_FAMILY:
         mode = "E2E (prompt-free)"
     elif arch in YOLO26_FAMILY:
         mode = "E2E (NMS-free)" if end2end else "o2m+NMS"

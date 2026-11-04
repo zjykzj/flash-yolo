@@ -1,6 +1,7 @@
 """PyTorch 后端：PtEngine（.safetensors -> 仓库模型构建 + strict load）"""
 
 import logging
+from pathlib import Path
 
 import torch
 
@@ -32,7 +33,7 @@ class PtEngine(BaseEngine):
         self.end2end = end2end
         meta = load_meta(weights)  # 可选 metadata：缺失 = 空 dict
         self.imgsz = int(imgsz) if imgsz is not None else int(meta.get("imgsz") or IMGSZ)
-        # YOLOE：prompt 模式经 metadata/文件名解析（pf -> lrpc 布局；text -> 文本布局，前向 M2）
+        # YOLOE：prompt 模式经 metadata/文件名解析（pf -> lrpc 布局；text -> 文本布局）
         prompt_free = None
         if model == "yoloe-26":
             pm = prompt_mode_from_weights(weights, meta)
@@ -46,14 +47,60 @@ class PtEngine(BaseEngine):
             head.end2end = end2end
         load_weights(self.model, weights, strict=True)
         self.model.to(self.device).eval()
+        # yoloe 文本布局无 lrpc（pf 布局有）；其余架构恒 False
+        self.text_mode = model == "yoloe-26" and getattr(head, "lrpc", None) is None
+        self.weights_dir = str(Path(weights).resolve().parent)
+        self._text_encoder = None  # 惰性构建（set_classes 时）
         self._warmup()
 
     def _warmup(self):
-        """预热：首次前向触发 CUDA kernel 编译，跑 3 次后计时才反映稳态性能（dummy 用实际输入尺寸）"""
+        """预热：首次前向触发 CUDA kernel 编译，跑 3 次后计时才反映稳态性能（dummy 用实际输入尺寸）
+
+        文本模式用 dummy tpe（(1,1,512) 零向量）预热前向，之后清空——predict 前
+        必须先 set_classes（head 无 tpe 时报错，语义清晰）。
+        """
         dummy = torch.zeros(1, 3, self.imgsz, self.imgsz, device=self.device)
+        head = self.model.model[-1]
         with torch.no_grad():
+            if self.text_mode:
+                head.set_tpe(torch.zeros(1, 1, 512, device=self.device))
             for _ in range(3):
                 self.model(dummy)
+            if self.text_mode:
+                head.set_tpe(None)
+
+    def set_classes(self, texts, batch=80):
+        """文本模式：类名列表 -> 文本提示嵌入，缓存到 head
+
+        官方 get_text_pe 口径：CLIP tokenize -> MobileCLIP 编码（L2 归一化）-> 按
+        batch 分块 -> (1, N, 512) -> 头部 get_tpe（reprta 残差 + L2 归一化）。
+        文本编码器权重取模型权重同目录的 mobileclip2_b.safetensors（Apple
+        mobileclip2_b.ts 的转换产物），惰性构建并缓存。
+        """
+        if not self.text_mode:
+            raise ValueError("set_classes is only available for yoloe-26 text-mode weights")
+        head = self.model.model[-1]
+        if getattr(head, "is_fused", False):
+            raise ValueError("the model is class-locked (text embeddings fused); "
+                             "it rejects new prompts — export a new one for different classes")
+        from model.text_encoder import MobileCLIPText, load_mobileclip_text
+        from model.tokenizer import tokenize
+        from model.weights import load_weights
+
+        if self._text_encoder is None:
+            enc_path = f"{self.weights_dir}/mobileclip2_b.safetensors"
+            if not Path(enc_path).is_file():
+                raise RuntimeError(
+                    f"text mode requires the MobileCLIP text encoder weights at {enc_path}")
+            self._text_encoder = load_mobileclip_text(enc_path).to(self.device).eval()
+        tokens = tokenize(list(texts)).to(self.device)
+        emb = []
+        for chunk in tokens.split(batch):  # 官方分块口径（默认 80）
+            emb.append(self._text_encoder(chunk))
+        emb = torch.cat(emb, dim=0).unsqueeze(0)  # (1, N, 512)
+        head = self.model.model[-1]
+        head.set_tpe(head.get_tpe(emb))
+        return len(texts)
 
     def _forward(self, img):
         with torch.no_grad():

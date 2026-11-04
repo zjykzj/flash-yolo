@@ -22,8 +22,9 @@
                            本仓库推理管线默认 end2end=True；raw/NMS 路径对 yoloe 暂不开放。
     导出                 : export 标志 -> conf=0 静态路径（全锚点通过、无动态掩码，官方口径）。
 
-文本模式前向（forward_head + cv4 相似度）M2 实现——本文件只构建其布局（strict load /
-key 集对齐用），前向抛 NotImplementedError。
+文本模式前向（M2）：forward_text = 官方 YOLOEDetect.forward_head 口径——每级
+BNContrastiveHead(cv3 区域嵌入, tpe) 出分数，tpe 经 get_tpe（reprta + L2）预处理，
+nc 随 prompt 数量动态变。
 """
 
 import copy
@@ -44,15 +45,27 @@ class BNContrastiveHead(nn.Module):
     """文本-视觉对比头（BN 归一化 + L2 归一化文本嵌入 + 余弦相似度）
 
     官方口径：区域特征过 BN（非 L2）、文本嵌入 L2 归一化后 einsum 求相似度，乘可学习
-    logit_scale（初值 -1.0）+ bias（初值 -10.0，与检测头 cls 先验同量级）。norm 用
-    PyTorch 默认 eps=1e-5——官方直接 nn.BatchNorm2d（不是本仓库 Conv 的 0.001，别统一）。
+    logit_scale（初值 -1.0）+ bias（初值 -10.0，与检测头 cls 先验同量级）。norm 的
+    eps=0.001（官方 ckpt 实测；PyTorch 默认 1e-5 会与官方输出差 ~0.35——M1 时 pf
+    前向不用 cv4 故未暴露）。
     """
 
     def __init__(self, embed_dims=512):
         super().__init__()
-        self.norm = nn.BatchNorm2d(embed_dims)
+        self.norm = nn.BatchNorm2d(embed_dims, eps=0.001)
         self.bias = nn.Parameter(torch.tensor([-10.0]))
         self.logit_scale = nn.Parameter(-1.0 * torch.ones([]))
+
+    def fuse(self):
+        """导出 fuse（官方 bn_h.fuse()）：文本侧已融进 cv3 尾卷积，本头变恒等"""
+        del self.norm
+        del self.bias
+        del self.logit_scale
+        self.forward = self.forward_fuse
+
+    @staticmethod
+    def forward_fuse(x, w):
+        return x
 
     def forward(self, x, w):
         """x: (B, C, H, W) 区域特征；w: (B, K, C) 文本嵌入 -> (B, K, H, W) 相似度 logits"""
@@ -60,6 +73,19 @@ class BNContrastiveHead(nn.Module):
         w = F.normalize(w, dim=-1, p=2)
         x = torch.einsum("bchw,bkc->bkhw", x, w)
         return x * self.logit_scale.exp() + self.bias
+
+
+def _fuse_conv_bn(conv, bn):
+    """Conv2d + BatchNorm2d 折叠（标准口径，同官方 fuse_conv_and_bn）"""
+    w = conv.weight
+    b = conv.bias
+    scale = bn.weight / (bn.running_var + bn.eps).sqrt()
+    w_f = w * scale.view(-1, 1, 1, 1)
+    b_f = (b - bn.running_mean) * scale + bn.bias
+    fused = nn.Conv2d(conv.in_channels, conv.out_channels, 1)
+    fused.weight.data.copy_(w_f)
+    fused.bias.data.copy_(b_f)
+    return fused
 
 
 class SwiGLUFFN(nn.Module):
@@ -196,7 +222,6 @@ class YOLOESegment26(nn.Module):
     与 V 无关（n 档 80 / s 档 128，已实测官方同值）。
     """
 
-    max_det = 1000  # YOLOE 口径（官方 pf 头实例实测 1000；yolo26 系为 300）
     conf = 0.001    # pf 提案过滤阈值（官方 YOLOEDetect 类默认）
     export = False  # 导出标志（scripts/export.py 设置）：conf=0 静态路径
     dynamic = False
@@ -204,6 +229,9 @@ class YOLOESegment26(nn.Module):
     def __init__(self, nc=80, nm=32, npr=256, embed=512, reg_max=1, end2end=True, ch=(),
                  prompt_free=False, vocab_size=4585, pf_channels=512):
         super().__init__()
+        # max_det 随官方资产而异（实测 ckpt）：pf 资产 1000（官方 pf 发布流程设过）、
+        # 文本资产 300（Detect 类默认）；yolo26 系同为 300
+        self.max_det = 1000 if prompt_free else 300
         self.nl = len(ch)
         self.reg_max = reg_max
         self.nm = nm
@@ -216,14 +244,18 @@ class YOLOESegment26(nn.Module):
         c3 = max(ch[0], min(nc, 100))          # 嵌入分支隐藏通道（n 档 80 / s 档 128）
         c5 = max(ch[0] // 4, nm)               # mask 系数隐藏通道
 
-        box_tail = [] if prompt_free else [nn.Conv2d(c2, 4 * reg_max, 1)]
-        cls_tail = [] if prompt_free else [nn.Conv2d(c3, embed, 1)]
-        self.cv2 = nn.ModuleList(nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), *box_tail) for x in ch)
+        self.cv2 = nn.ModuleList(
+            nn.Sequential(
+                Conv(x, c2, 3), Conv(c2, c2, 3),
+                *([] if prompt_free else [nn.Conv2d(c2, 4 * reg_max, 1)]),
+            )
+            for x in ch
+        )
         self.cv3 = nn.ModuleList(
             nn.Sequential(
                 nn.Sequential(DWConv(x, x, 3), Conv(x, c3, 1)),
                 nn.Sequential(DWConv(c3, c3, 3), Conv(c3, c3, 1)),
-                *cls_tail,
+                *([] if prompt_free else [nn.Conv2d(c3, embed, 1)]),
             )
             for x in ch
         )
@@ -268,14 +300,89 @@ class YOLOESegment26(nn.Module):
         self._end2end = value
 
     # ---- 前向 ----
-    def forward(self, x):
+    def forward(self, x, tpe=None):
         if getattr(self, "lrpc", None) is not None:
             y = self.forward_lrpc(x)
         else:
-            raise NotImplementedError(
-                "YOLOE text-mode forward is not implemented yet (M2); use prompt-free (-pf) weights")
+            if tpe is None:
+                tpe = getattr(self, "_tpe", None)
+            if tpe is None and not getattr(self, "is_fused", False):
+                raise ValueError(
+                    "YOLOE text mode requires tpe (text prompt embeddings) — "
+                    "call set_classes() on the engine first")
+            y = self.forward_text(x, tpe)
         proto = self.proto(x, return_semantic=False)
         return y, proto
+
+    def set_tpe(self, tpe):
+        """缓存文本提示嵌入（引擎 set_classes 调用）；前向未显式传 tpe 时使用"""
+        self._tpe = tpe
+
+    def fuse_text(self, tpe):
+        """导出 fuse（官方 fuse/_fuse_tp 口径）：文本嵌入融合进 cv3 尾卷积，类锁定
+
+        tpe: (1, N, 512) get_tpe 输出（已 reprta + L2——官方 fuse 的输入即此）。
+        每级每分支：cv4 的 BN 折叠进 cv3 尾卷积 -> 尾卷积换成 (c3 -> N)（权重 =
+        (tpe×exp(logit_scale)) @ 折叠权重），cv4 变恒等、reprta 删掉变 Identity。
+        之后前向输出即类别 logits，不接受新 prompt（set_classes 守卫报错）。
+        """
+        assert not self.training
+        tpe = tpe.squeeze(0)  # (N, 512)
+        branches = [(self.cv3, self.cv4)]
+        if getattr(self, "one2one_cv3", None) is not None:
+            branches.append((self.one2one_cv3, self.one2one_cv4))
+        for cv3h, cv4h in branches:
+            for i in range(self.nl):
+                bn = cv4h[i].norm
+                conv = cv3h[i][-1]
+                t = tpe * cv4h[i].logit_scale.exp()
+                fused = _fuse_conv_bn(conv, bn)
+                w = fused.weight.squeeze(-1).squeeze(-1)  # (embed, c3)
+                b = fused.bias  # (embed,)
+                new = nn.Conv2d(w.shape[1], t.shape[0], 1).requires_grad_(False)
+                new.weight.data.copy_((t @ w).unsqueeze(-1).unsqueeze(-1))
+                new.bias.data.copy_(t @ b + cv4h[i].bias)
+                cv3h[i][-1] = new
+                cv4h[i].fuse()
+        del self.reprta
+        self.reprta = nn.Identity()
+        self.nc = tpe.shape[0]  # fuse 后类别数 = 锁定的 prompt 数（前向不再依赖 tpe）
+        self.is_fused = True
+
+    def get_tpe(self, tpe):
+        """文本提示嵌入的头部变换（官方 get_tpe 口径）：reprta 残差 + L2 归一化"""
+        return None if tpe is None else F.normalize(self.reprta(tpe), dim=-1, p=2)
+
+    def forward_text(self, x, tpe):
+        """文本前向（官方 YOLOEDetect.forward_head 口径）
+
+        分数 = BNContrastiveHead(cv3 区域嵌入, tpe)：BN 归一化区域特征与 L2 归一化
+        文本嵌入求余弦相似度，乘 exp(logit_scale) + bias。nc 随 prompt 数量动态变
+        （self.nc = tpe.shape[1]；fuse 后 cv4 是恒等、tpe 可为 None）。tpe 形状
+        (1|B, N, 512)——官方 pipeline 产出 (1,N,512)、前向时 expand 到 batch。
+        框/mask 系数与 pf 路径同构。E2E top-k 复用同一实现。
+        """
+        bs = x[0].shape[0]
+        if tpe is not None:
+            self.nc = tpe.shape[1]
+            if tpe.shape[0] != bs:
+                tpe = tpe.expand(bs, -1, -1)
+        cv2 = self.one2one_cv2 if self.end2end else self.cv2
+        cv3 = self.one2one_cv3 if self.end2end else self.cv3
+        cv4 = self.one2one_cv4 if self.end2end and getattr(self, "one2one_cv4", None) is not None else self.cv4
+        cv5 = self.one2one_cv5 if self.end2end else self.cv5
+        boxes, scores = [], []
+        for i in range(self.nl):
+            boxes.append(cv2[i](x[i]).view(bs, self.reg_max * 4, -1))
+            scores.append(cv4[i](cv3[i](x[i]), tpe).reshape(bs, self.nc, -1))
+        anchors, strides = make_anchors(x, self.stride, 0.5)
+        dbox = dist2bbox(torch.cat(boxes, 2), anchors.unsqueeze(0)) * strides
+        mc = torch.cat([cv5[i](x[i]).view(bs, self.nm, -1) for i in range(self.nl)], 2)
+        y = torch.cat((dbox, torch.cat(scores, 2).sigmoid(), mc), 1)
+        if self.end2end:
+            y = e2e_topk(y[:, :4].permute(0, 2, 1), y[:, 4:4 + self.nc].permute(0, 2, 1),
+                         self.max_det, extra=y[:, 4 + self.nc:].permute(0, 2, 1))
+        return y
 
     def forward_lrpc(self, x):
         """pf 前向：提案过滤 -> 全网格解码 -> 按 index 取回 -> (E2E) 图内 top-k

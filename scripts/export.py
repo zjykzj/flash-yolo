@@ -55,6 +55,10 @@ def main():
     parser.add_argument("--nc", type=int, default=None,
                         help="class count for models trained on a non-COCO dataset "
                              "(default: weights metadata, else the model yaml's nc)")
+    parser.add_argument("--classes", default=None,
+                        help="yoloe-26 text mode only: comma-separated class names to lock into the "
+                             "exported model (text embeddings are fused into the cls conv; "
+                             "the exported onnx rejects new prompts)")
     parser.add_argument("--imgsz", type=int, default=None,
                         help="export input size (default: weights metadata, else 640)")
     parser.add_argument("--opset", type=int, default=18)
@@ -84,13 +88,17 @@ def main():
                nc=nc if nc is not None else 80, opset=args.opset,
                dynamic=args.dynamic, raw=args.raw, trt=args.trt, fp16=args.fp16)
 
-    # YOLOE：prompt 模式经 metadata/文件名解析（pf -> lrpc 布局；文本布局前向 M2，导出暂不支持）
+    # YOLOE：prompt 模式经 metadata/文件名解析（pf -> lrpc 布局；text -> 类锁定 fuse 导出）
     prompt_free = None
+    text_mode = False
     if arch in YOLOE26_FAMILY:
         pm = prompt_mode_from_weights(args.weights, meta)
-        if pm not in (None, "pf"):
-            parser.error(f"yoloe-26 export currently supports prompt-free weights only (got mode={pm!r})")
-        prompt_free = True if pm == "pf" else None
+        prompt_free = True if pm == "pf" else (False if pm == "text" else None)
+        if pm == "text":
+            text_mode = True
+            if not args.classes:
+                parser.error("yoloe-26 text-mode export requires --classes "
+                             '(the exported model is locked to them, e.g. --classes "person, bicycle")')
     model = build_model(arch, scale, nc=nc, prompt_free=prompt_free)
     load_weights(model, args.weights, strict=True)
     head = model.model[-1]
@@ -99,6 +107,18 @@ def main():
     if hasattr(head, "export"):  # yoloe：export 标志 -> conf=0 静态路径（提案过滤全锚点通过，官方口径）
         head.export = True
     model.eval()
+    if text_mode:
+        # 官方 fuse 口径：tokenize -> MobileCLIP -> get_tpe（reprta+L2）-> 融合进 cv3 尾卷积
+        from model.text_encoder import load_mobileclip_text
+        from model.tokenizer import tokenize
+
+        classes = [c.strip() for c in args.classes.split(",")]
+        enc_dir = str(Path(args.weights).resolve().parent)
+        enc = load_mobileclip_text(f"{enc_dir}/mobileclip2_b.safetensors").eval()
+        with torch.no_grad():
+            tokens = tokenize(classes)
+            emb = torch.cat([enc(chunk) for chunk in tokens.split(80)], dim=0).unsqueeze(0)
+            head.fuse_text(head.get_tpe(emb))  # fuse 后 nc 锁定、前向不依赖 tpe
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -118,7 +138,9 @@ def main():
             opset_version=args.opset,
             dynamo=False,  # TorchScript 导出器：权重内嵌单文件；dynamo 默认把权重拆到 .onnx.data
         )
-    if arch in YOLOE26_FAMILY:
+    if arch in YOLOE26_FAMILY and text_mode:
+        mode = "E2E text prompts (class-locked) + prototypes"
+    elif arch in YOLOE26_FAMILY:
         mode = "E2E prompt-free + prototypes"
     elif arch not in YOLO26_FAMILY:
         mode = "decoded (v3)"
