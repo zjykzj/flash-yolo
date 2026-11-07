@@ -9,7 +9,8 @@ yolov3-tiny：单输出解码 (B, NA, 5+nc)——obj×cls 与按类 NMS 在外�
 --raw 不适用。
 yoloe-26 text：默认导出 fuse 后的 E2E 类锁定图；--nms 改出 o2m 密集输出
 (B, 4+V+nm, 8400)（像素 xyxy + sigmoid 分数），NMS 在外部（utils/postprocess.nms_per_image）。
---visual-prompt（仅 text 权重）：refer 图 + bbox JSON -> SAVPE vpe -> 同一 fuse 路径。
+--visual-prompt（仅 text 权重）：refer 图 + bbox/mask JSON -> SAVPE vpe -> 同一 fuse 路径；
+可与 --classes 组合成文本+视觉混合 prompt（文本在前、视觉在后，官方 get_cls_pe 顺序）。
 默认 batch 固定为 1（边缘工具链偏好固定 shape），--dynamic 打开动态 batch。
 
 用法:

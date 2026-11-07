@@ -30,7 +30,7 @@ python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors --image a
 # yoloe text prompts: class names encoded with the MobileCLIP2-B text encoder (pt engine only)
 python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors --image assets/traffic.jpg \
     --classes "person, bicycle, car, bus, truck"
-# yoloe visual prompts: refer image + bboxes (JSON)
+# yoloe visual prompts: refer image + bboxes/masks (JSON)
 python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors --image assets/traffic.jpg \
     --visual-prompt prompt.json
 

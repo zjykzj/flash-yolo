@@ -50,14 +50,14 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | seg `--raw` | `output0 (B, 4+nc+nm, N)` + `output1` | 掩码由 `process_mask` 解码 |
 | yolov3-tiny | `(B, NA, 5+nc)` | NA = 3·ΣH·W；obj×cls 与 NMS 在外 |
 | yoloe pf | `output0 (B, 1000, 6+nm)` + `output1 (B, nm, H/4, W/4)` | E2E，**max_det=1000**，conf=0 静态提案口径 |
-| yoloe 文本（`--classes`） | `output0 (B, 300, 6+nm)` + `output1` | 单输入：文本嵌入已融合进分类卷积（BN 折叠、reprta 移除）；导出模型拒收新 prompt |
-| yoloe 文本 `--nms` | `output0 (B, 4+V+nm, N)` + `output1` | 密集输出已是像素 xyxy + sigmoid；NMS 在外（`nms_per_image`） |
+| yoloe 类锁定（`--classes` / `--visual-prompt` / 混合） | `output0 (B, 300, 6+nm)` + `output1` | 单输入：prompt 嵌入已融合进分类卷积（文本 BN 折叠、reprta 移除；视觉走同一 fuse 路径）；导出模型拒收新 prompt |
+| yoloe 类锁定 `--nms` | `output0 (B, 4+V+nm, N)` + `output1` | 密集输出已是像素 xyxy + sigmoid；NMS 在外（`nms_per_image`） |
 
 - 训练产物自带 metadata，`--scale` / `--nc` 可省略。导出产物也带部署 metadata：ONNX 写入
   `metadata_props`（arch/scale/nc/imgsz/names/prompt_mode/end2end），TRT 写旁车
-  `<engine>.json`——类锁定的 yoloe text 图因此无需原 `.safetensors` 即可
+  `<engine>.json`——类锁定的 yoloe 图因此无需原 `.safetensors` 即可
   `infer/eval --engine onnx|trt`；旧的无 metadata 产物仍需 `--model` / `--scale`。
-- yoloe 视觉模式导出：refer 图前向 + 1/8 bbox 掩码 → SAVPE vpe → `fuse_text` 同一融合路径；
+- yoloe 视觉模式导出：refer 图前向 + 1/8 bbox/mask 掩码 → SAVPE vpe → `fuse_text` 同一融合路径；
   导出图即类锁定，部署侧不需要 refer 图（metadata `prompt_mode: text`，names 为 prompt 类名）。
 - yoloe 文本模式导出会先跑完整 prompt 链（tokenize → MobileCLIP2-B → reprta+L2——
   `mobileclip2_b.safetensors` 需与模型权重同目录），再把结果融合进分类卷积，导出的 onnx

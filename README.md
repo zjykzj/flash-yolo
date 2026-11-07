@@ -84,7 +84,7 @@ b8 = batch-8 per-image). Full protocol and per-model tables:
 | Flash-YOLO | detection | flash | 1.97M | 3.80 | this repo's lightweight design |
 | Flash-YOLO-seg | segmentation | flash | 2.53M | 7.6 | same backbone/neck, Segment26 head |
 | YOLOv3-tiny / -SiLU | detection | tiny | 8.85M | 5.56 @416 | darknet-compatible; official `.weights` for the original variant |
-| YOLOE-26 | open-vocab segmentation (pf / text prompts) | n / s / m / l / x | 7.84M (n) | 16.0 (n) | official checkpoints (pf + text modes), bit-identical forward |
+| YOLOE-26 | open-vocab segmentation (pf / text / visual prompts) | n / s / m / l / x | 7.84M (n) | 16.0 (n) | official checkpoints (pf + text/visual modes), bit-identical forward |
 
 YOLOv3-tiny reference: official darknet weights evaluate at 17.16 / 35.90 (mAP50-95 / mAP50)
 @640 through this pipeline. From-scratch 300-epoch runs at 416 reach **16.15 / 29.93** with the

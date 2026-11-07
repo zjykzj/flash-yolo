@@ -293,8 +293,8 @@ def main():
             locked = args.engine != "pt"
             if not locked:
                 engine.set_classes(list(spec.names.values()))
-            suffix = ", class-locked" if locked else ""
-            mode = ("E2E (text prompts" if end2end else "o2m+NMS (text prompts") + suffix + ")"
+            kind = "class-locked prompts" if locked else "text prompts"
+            mode = ("E2E (" if end2end else "o2m+NMS (") + kind + ")"
     elif arch in YOLOE26_FAMILY:
         mode = "E2E (prompt-free)"
     elif arch in YOLO26_FAMILY:

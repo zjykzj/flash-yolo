@@ -72,7 +72,9 @@ predictions can differ by several times) and must not be compared with published
 - `--eval-max-dets 100`: ultralytics' current val sets only `lvis_style` and leaves
   faster_coco_eval's default `maxDets=[1,10,100]`; use this for a literal code-level match.
   The product default remains the official 300.
-- LVIS minival is the 5,000 COCO val2017 images; the `lvis-minival` descriptor is ready.
+- LVIS minival is the 5,000 COCO val2017 images; place a descriptor with the minival
+  annotations and the same image list at `config/datasets/local/lvis-minival.yaml`
+  (same schema as `config/datasets/lvis.yaml`) and use `--data lvis-minival`.
 - `lvis_style` requires a `frequency` (r/c/f) on every category; the evaluator errors out
   clearly when it is missing.
 
@@ -135,7 +137,8 @@ is metric-implementation noise.
   (`config/datasets/lvis.yaml`, first-synonym names — the official LVIS prompt convention).
   Compare with the official LVIS minival numbers via `--data lvis-minival` (faster_coco_eval
   `lvis_style`, see §2.1). The pt path needs `mobileclip2_b.safetensors` next to the model
-  weights; `onnx` / `trt` consume the class-locked graph and map the deploy-metadata class
+  weights; `onnx` / `trt` consume the class-locked graph (the locked classes must cover every
+  dataset class — use a subset descriptor for a subset export) and map the deploy-metadata class
   names onto the dataset classes.
 - **visual prompts (`-seg` weights)**: `--visual-prompt` (one refer-image JSON, bbox/mask) or
   `--refer-data` (per-class exemplars from a refer dataset; `--refer-split` defaults to train,

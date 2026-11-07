@@ -217,7 +217,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   Mask 0.141; rescoring the official predictions under the same LVIS protocol gives Box 0.3557 /
   Mask 0.2826. This project, same protocol (same YOLO refer set, `--nms`, maxDets=100), gives
   Box **0.3534** / Mask **0.2805** (Δ 0.0023 / 0.0021) with APr/APc/APf within 0.008. The
-  0.015 COCO-table Mask gap comes from the official table backend (its faster-coco-eval errored
+  refer set is the YOLO-format GT of the same minival images (a local refer descriptor with
+  the same images and labels). The 0.015 COCO-table Mask gap comes from the official table
+  backend (its faster-coco-eval errored
   and the table likely fell back); the LVIS rescore is the primary alignment evidence. This
   self-refer protocol is transductive (test GT participates in the vpe), not the paper's 21.9
   independent-refer protocol; the paper's refer data/sampling is not documented publicly, so
@@ -234,8 +236,11 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   not_exhaustive / unlisted pairs) on synthetic data, plus zero-detection images, APr/APc/APf
   and the segm RLE path; `--data lvis-minival` runs Box + Mask end to end.
 - Regression gates in `tests/test_yoloe.py` (structure / conversion metadata / strict load /
-  bit-parity / vocabulary mapping / export parity / text-mode parity / fuse equivalence) and
-  `tests/test_text_encoder.py` (encoder structure + ts bit-parity, tokenizer goldens).
+  bit-parity / vocabulary mapping / export parity / text-mode parity / fuse equivalence /
+  class-locked consumption / Non-E2E / visual prompts incl. masks and mixed),
+  `tests/test_visual_prompt.py` (JSON contract / 1/8 rasterization / refer aggregation),
+  `tests/test_text_encoder.py` (encoder structure + ts bit-parity, tokenizer goldens) and
+  `tests/test_yoloe_trt.py` (engine acceptance, gated by `FLASH_YOLO_TRT=1`).
 
 ### Cross-implementation check (LVIS minival / COCO val2017)
 
@@ -280,13 +285,16 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
   get zero embeddings (AP 0). The official visual val defaults to `load_vp=True`, i.e. the
   evaluation set itself; this project uses `--refer-data <same dataset>` for that protocol (§4).
 - Text-mode pt paths need `--classes` and the MobileCLIP2-B text encoder; `onnx` / `trt`
-  consume only the class-locked graph produced by `export --classes` (class names travel in
-  the ONNX `metadata_props` / TRT sidecar JSON, so `--classes` is optional and must match the
-  locked list when given). Older exports without metadata must be re-exported.
+  consume only a class-locked graph (`export --classes` / `--visual-prompt` / mixed; class
+  names travel in the ONNX `metadata_props` / TRT sidecar JSON, so `--classes` is optional and
+  must match the locked list when given). For evaluation the locked classes must cover every
+  dataset class (use a subset descriptor for a subset export; missing classes error out rather
+  than being silently dropped). Older exports without metadata must be re-exported.
 - The tokenizer skips the official fork's `ftfy` cleanup (mojibake repair / fullwidth folding):
   bit-identical on clean UTF-8 text, not guaranteed on broken-encoding inputs.
 - The exported graph and the runtime pt path differ in the proposal filter (official behavior:
   export conf=0 static vs runtime conf=0.001) — a few low-conf detections may differ; valid
   detections above conf=0.25 match in practice.
-- The official yaml comment's parameter count (5,615,540) is stale (excludes savpe/reprta); the
-  numbers on this page are the strict-load-consistent `parameters()` counts.
+- Parameter counts follow the strict-load-consistent `parameters()`; the text layout's 5,615,540
+  already includes savpe/reprta, while the smaller figure in the official docs is the
+  **detection-configuration** count and describes a different structure.

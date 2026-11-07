@@ -66,7 +66,9 @@ LVIS 的标注不是穷举的，评估必须处理两个图级字段，pycocotoo
 
 - `--eval-max-dets 100`：ultralytics 当前 val 只设置 `lvis_style`，没有改 faster_coco_eval
   的默认 `maxDets=[1,10,100]`；要与其代码逐字对齐时用这个值。产品默认仍是官方 300。
-- LVIS minival = COCO val2017 的 5,000 张图；本机描述符 `lvis-minival` 已就绪。
+- LVIS minival = COCO val2017 的 5,000 张图；把 minival 注解 + 同一批图的描述符放到
+  `config/datasets/local/lvis-minival.yaml`（结构同 `config/datasets/lvis.yaml`），
+  `--data lvis-minival` 即可使用。
 - `lvis_style` 要求 categories 带 `frequency`（r/c/f），缺失会在构造评估器时报错。
 
 ## 3. 输出解读
@@ -120,7 +122,8 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
   对 1,203 个 LVIS 类别评估（`config/datasets/lvis.yaml`，取每类名第一个同义词——官方
   LVIS prompt 口径）。官方 LVIS minival 对比用 `--data lvis-minival`，走 faster_coco_eval
   `lvis_style`（见 §2.1）。pt 路径需要 `mobileclip2_b.safetensors` 与模型权重同目录；
-  `onnx` / `trt` 消费类锁定图（类别名来自部署 metadata，按名字映射到数据集类别）。
+  `onnx` / `trt` 消费类锁定图（类别名来自部署 metadata，按名字映射到数据集类别；锁定类别
+  必须覆盖数据集类别，子集导出请用对应子集的描述符）。
 - **视觉 prompt（`-seg` 权重）**：`--visual-prompt`（单 refer 图 JSON，bbox/mask）或
   `--refer-data`（参考集逐类 exemplar；`--refer-split` 默认 train，`--refer-limit` 限流）。
   参考类别按名字对齐评估集，缺失类零嵌入（AP 0）；仅 pt 引擎。`--classes` 可指定文本类

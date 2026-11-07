@@ -188,6 +188,7 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   在 LVIS minival 的 COCO 表 Box 0.187 / Mask 0.141；用同一 LVIS 口径重打分官方预测：
   Box 0.3557 / Mask 0.2826。本工程同协议（同一 YOLO 参考集、`--nms`、maxDets=100）：
   Box **0.3534** / Mask **0.2805**（差 0.0023 / 0.0021），APr/APc/APf 差 ≤0.008。
+  参考集为同一批 minival 图的 YOLO 格式 GT（本地 refer 描述符，同图同标注）。
   COCO 表的 Mask 差 0.015 归因于官方表后端（其 faster-coco-eval 报错后走 fallback）；
   LVIS 同口径是实现对齐的主证据。该 self-refer 是 transductive（测试集 GT 参与 vpe），
   不是论文 21.9 的独立 refer 口径；论文的 refer 数据/采样未在公开文档给出，不把 0.35 当 21.9。
@@ -201,8 +202,10 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   未列出 pair 三条 LVIS 规则，以及零检出图计入、APr/APc/APf、segm RLE 路径；`--data
   lvis-minival` 端到端跑通 Box + Mask。
 - 回归闸门 `tests/test_yoloe.py`（结构 / 转换 metadata / strict load / 逐位对齐 / 词汇映射 /
-  导出对拍 / 文本模式对拍 / fuse 等价）与 `tests/test_text_encoder.py`（编码器结构 + ts
-  逐位对拍、tokenizer 黄金序列）。
+  导出对拍 / 文本模式对拍 / fuse 等价 / 类锁定消费 / Non-E2E / 视觉 prompt 含 mask 与混合）、
+  `tests/test_visual_prompt.py`（JSON 契约 / 1/8 光栅化 / refer 聚合）、
+  `tests/test_text_encoder.py`（编码器结构 + ts 逐位对拍、tokenizer 黄金序列）与
+  `tests/test_yoloe_trt.py`（`FLASH_YOLO_TRT=1` 门控的 engine 验收）。
 
 ### 跨实现对齐（LVIS minival / COCO val2017）
 
@@ -243,11 +246,13 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
 - `--refer-data` 参考集需与评估集同类别命名，缺失类零嵌入（AP 0）。官方视觉 val 默认
   `load_vp=True` 用评估集自身抽 vpe，本工程对应 `--refer-data <同一数据集>`（§4 有对照）。
 - 文本模式的 pt 路径需要 `--classes` 与 MobileCLIP2-B 文本编码器；`onnx` / `trt` 只能消费
-  `export --classes` 产出的类锁定图（类别名随 ONNX `metadata_props` / TRT 旁车 JSON 走，
-  `--classes` 可省略，给出时必须与锁定列表一致）。旧的无 metadata 导出需重新导出。
+  类锁定图（`export --classes` / `--visual-prompt` / 混合；类别名随 ONNX `metadata_props` /
+  TRT 旁车 JSON 走，`--classes` 可省略，给出时必须与锁定列表一致）。评估时锁定类别必须覆盖
+  数据集类别（子集导出请配对应子集的描述符；缺失类会报错，不静默丢类）。旧的无 metadata
+  导出需重新导出。
 - tokenizer 跳过官方 fork 的 `ftfy` 清理（乱码修复 / 全角折叠）：正常 UTF-8 文本逐位一致，
   乱码输入不承诺。
 - 导出图与运行时 pt 的提案过滤口径不同（官方同款：导出 conf=0 静态、运行时 conf=0.001）——
   少数低分检测可能不同；conf>0.25 的有效检测实测一致。
-- 官方 yaml 注释的参数量（5,615,540）是陈旧值，不含 savpe/reprta；本页数字是 strict-load
-  一致的实值（`parameters()` 口径）。
+- 参数量以 strict-load 一致的 `parameters()` 为准，文本布局的 5,615,540 已含 savpe/reprta；
+  官方文档表中的较小数字是**检测配置**口径，与本页的分割布局不是同一结构。

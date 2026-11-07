@@ -237,10 +237,11 @@ def main():
                              "trained on a non-COCO dataset (default: COCO, nc from the model yaml)")
     parser.add_argument("--classes", default=None,
                         help="yoloe-26 text mode only: comma-separated class names / text prompts "
-                             "(encoded with the MobileCLIP text encoder; e.g. \"person, bicycle\")")
+                             "(pt: encoded with the MobileCLIP text encoder; onnx/trt: must match "
+                             "the class-locked metadata; e.g. \"person, bicycle\")")
     parser.add_argument("--visual-prompt", dest="visual_prompt", default=None,
-                        help="yoloe-26 text mode only: JSON with a refer image and bbox prompts "
-                             "(pt engine; mutually exclusive with --classes)")
+                        help="yoloe-26 text mode only: JSON with a refer image and bbox/mask "
+                             "exemplars (pt engine; combine with --classes for mixed prompts)")
     parser.add_argument("--imgsz", type=int, default=None,
                         help="model input size (default: weights metadata, else 640)")
     args = parser.parse_args()
@@ -424,8 +425,8 @@ def main():
             locked = args.engine != "pt"
             if not locked:
                 engine.set_classes([names[i] for i in sorted(names)])
-            suffix = ", class-locked" if locked else ""
-            mode = ("E2E (text prompts" if end2end else "o2m+NMS (text prompts") + suffix + ")"
+            kind = "class-locked prompts" if locked else "text prompts"
+            mode = ("E2E (" if end2end else "o2m+NMS (") + kind + ")"
     elif arch in YOLOE26_FAMILY:
         mode = "E2E (prompt-free)"
     elif arch in YOLO26_FAMILY:

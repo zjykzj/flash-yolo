@@ -7,16 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-11-07
-
 ### Added
 
 - **LVIS train split**: the LVIS descriptor now has a `train` role (100,170 images / 1,270,141 instances) backed by COCO train2017 images and a compat annotation (file name + descriptor-aligned class names), enabling LVIS fine-tuning and refer datasets.
 - **Class-locked YOLOE text deployment**: exported text-mode ONNX/TRT graphs now run through `infer.py` / `eval.py`; arch/scale/names/end2end travel in ONNX `metadata_props` or a `<engine>.json` sidecar, so the original `.safetensors`, `--model`, `--scale` and `--classes` are no longer needed (mismatched prompts or graph mode error out).
 - **YOLOE text Non-E2E export**: `export --nms` emits the class-locked o2m graph (pixel xyxy + sigmoid, prototypes separate); `infer.py` / `eval.py --nms` consume it, and the deploy metadata rejects an E2E/NMS mode mismatch.
 - **YOLOE-26 TensorRT**: pf, text E2E and text Non-E2E graphs export to TensorRT fp32/fp16 engines (with `<engine>.json` deploy metadata) and run through infer/eval; text E2E fp16 matches pt fp32 above conf=0.25 (boxes <0.35px, mask IoU ≥0.996 on the smoke image).
-- **YOLOE visual prompts**: infer/eval/export accept a refer image + bbox JSON (`--visual-prompt`) or a refer dataset (`--refer-data`); SAVPE vpe is bit-identical to the official pipeline, and the fused export runs class-locked on onnx/trt.
+- **YOLOE visual prompts**: infer/eval/export accept a refer image + bbox/mask JSON (`--visual-prompt`) or a refer dataset (`--refer-data`); SAVPE vpe is bit-identical to the official pipeline, and the fused export runs class-locked on onnx/trt.
 - **YOLOE visual prompt masks + mixed prompts**: the JSON accepts per-class PNG masks (bbox/mask one-of, 1/8 rasterization), and `--classes` + `--visual-prompt` combine text-first/visual-last (`get_cls_pe` order) in infer/eval/export; duplicate class names error out.
+
+### Changed
+
+- **YOLOE visual-prompt validation**: the model pages record the official `load_vp=True` self-refer protocol and the same-protocol LVIS comparison (0.3534 / 0.2805 vs 0.3557 / 0.2826), with the transductive-vs-paper-21.9 distinction.
+- **Class-locked YOLOE mode line**: infer/eval now report `class-locked prompts` instead of `text prompts` for class-locked graphs, which may carry text, visual or mixed prompts.
+
+## [1.3.0] - 2026-11-07
+
+### Added
+
 - **YOLOE-26 text Non-E2E**: `--nms` runs the o2m head + class-aware NMS for text-mode YOLOE (prompt-free stays E2E-only; `--raw` still rejected), in both infer and eval.
 - **LVIS-protocol evaluation**: `eval_style: lvis` descriptors evaluate through `faster_coco_eval` (`lvis_style`, maxDets=300) and report APr/APc/APf; COCO descriptors keep pycocotools. `--eval-max-dets 100` mirrors ultralytics; faster-coco-eval is a runtime dependency.
 - **LVIS minival descriptor**: `config/datasets/local/lvis-minival.yaml` evaluates the 5,000-image COCO val2017 minival split, with loader-compatible and Ultralytics-style image lists.
@@ -25,7 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **YOLOE-26 verification**: the model pages record the E2E/Non-E2E cross-implementation results against Ultralytics (LVIS minival, COCO val2017) and the released seg-checkpoint vs paper detection-config gap.
-- **YOLOE visual-prompt validation**: the model pages record the official `load_vp=True` self-refer protocol and the same-protocol LVIS comparison (0.3534 / 0.2805 vs 0.3557 / 0.2826), with the transductive-vs-paper-21.9 distinction.
 
 ### Fixed
 
