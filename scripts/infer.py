@@ -291,19 +291,33 @@ def main():
     if arch in YOLOE26_FAMILY:
         pm = prompt_mode
         if pm == "text":
-            # 文本模式：类名来自 --classes（经 MobileCLIP 编码），类别数随 prompt 数变
-            if not args.classes:
-                parser.error("yoloe-26 text-mode weights require --classes "
-                             '(comma-separated class names, e.g. --classes "person, bicycle")')
+            locked_names = meta.get("names")
+            if args.engine == "pt":
+                # pt：类名来自 --classes（经 MobileCLIP 编码），类别数随 prompt 数变
+                if not args.classes:
+                    parser.error("yoloe-26 text-mode weights require --classes "
+                                 '(comma-separated class names, e.g. --classes "person, bicycle")')
+                names = {i: n.strip() for i, n in enumerate(args.classes.split(","))}
+            else:
+                # onnx/trt：导出时已 fuse 成类锁定图，类别名随部署 metadata 走
+                if not locked_names:
+                    parser.error(f"{arch} class-locked {args.engine} export has no 'names' metadata — "
+                                 "re-export with scripts/export.py --classes ...")
+                if args.classes:
+                    requested = [c.strip() for c in args.classes.split(",")]
+                    if requested != list(locked_names):
+                        parser.error("--classes does not match the class-locked export: "
+                                     f"requested {requested}, locked {list(locked_names)}")
+                names = {i: n for i, n in enumerate(locked_names)}
             if args.data:
-                logger.warning("--data is ignored for yoloe-26 text mode: class names come from --classes")
-            names = {i: n.strip() for i, n in enumerate(args.classes.split(","))}
+                logger.warning("--data is ignored for yoloe-26 text mode: class names come from "
+                               + ("--classes" if args.engine == "pt" else "the class-locked export metadata"))
             nc = None
         else:  # pf：词汇即权重，名字必须来自烘焙词汇，--data/COCO 名不适用
             vocab_names = meta.get("names")
             if not vocab_names:
                 parser.error(f"{arch} needs the vocabulary names in the weights metadata "
-                             "(convert with scripts/convert_weights.py)")
+                             "(convert with scripts/convert_weights.py, or re-export with metadata)")
             if args.data:
                 logger.warning("--data is ignored for yoloe-26: class names come from the baked vocabulary")
             names = {i: n for i, n in enumerate(vocab_names)}
@@ -352,20 +366,27 @@ def main():
 
     # ② 模型（arch/scale 已在前段解析）
     end2end = not args.nms
+    graph_end2end = meta.get("end2end")
+    if args.engine != "pt" and graph_end2end is not None and graph_end2end != end2end:
+        parser.error(f"{args.weights} was exported as {'E2E' if graph_end2end else 'o2m+NMS'} "
+                     f"but {'--nms' if args.nms else 'E2E (default)'} was requested — "
+                     f"{'remove --nms' if graph_end2end else 'pass --nms'}")
     engine_cls = {"pt": PtEngine, "onnx": OnnxEngine, "trt": TRTEngine}[args.engine]
     kwargs = {"end2end": end2end, "scale": scale, "model": arch, "imgsz": args.imgsz,
               "agnostic_nms": args.agnostic_nms}
     if args.engine == "pt":
         kwargs["device"] = args.device
         kwargs["nc"] = nc  # onnx 图内置类别数，只有 pt 引擎需要重建头
+    else:
+        kwargs["text_mode"] = prompt_mode == "text"  # 类锁定 YOLOE text：o2m 输出不做 decode_raw
     engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
     if arch in YOLOE26_FAMILY and prompt_mode == "text":
-        if args.engine != "pt":
-            parser.error("yoloe-26 text mode currently requires --engine pt "
-                         "(class-locked export for onnx/trt is not available yet)")
-        engine.set_classes([names[i] for i in sorted(names)])
-        mode = "E2E (text prompts)" if end2end else "o2m+NMS (text prompts)"
+        locked = args.engine != "pt"
+        if not locked:
+            engine.set_classes([names[i] for i in sorted(names)])
+        suffix = ", class-locked" if locked else ""
+        mode = ("E2E (text prompts" if end2end else "o2m+NMS (text prompts") + suffix + ")"
     elif arch in YOLOE26_FAMILY:
         mode = "E2E (prompt-free)"
     elif arch in YOLO26_FAMILY:

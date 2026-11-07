@@ -45,9 +45,11 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | yoloe pf | `output0 (B, 1000, 6+nm)` + `output1 (B, nm, H/4, W/4)` | E2E, **max_det=1000**, conf=0 static proposal path |
 | yoloe text (`--classes`) | `output0 (B, 300, 6+nm)` + `output1` | single input: the text embeddings are fused into the cls conv (BN folded, reprta removed); the exported model rejects new prompts |
 
-- Training artifacts carry metadata, so `--scale` / `--nc` can be omitted; the onnx file itself
-  carries no metadata — onnx inference still needs `--model` / `--scale` (and `--data` for
-  non-COCO nc).
+- Training artifacts carry metadata, so `--scale` / `--nc` can be omitted. Exported artifacts
+  also carry deploy metadata: ONNX writes `metadata_props` (arch/scale/nc/imgsz/names/
+  prompt_mode/end2end) and TRT writes a `<engine>.json` sidecar — so a class-locked yoloe text
+  graph can run `infer/eval --engine onnx|trt` without the original `.safetensors`. Older
+  exports without metadata still need `--model` / `--scale`.
 - yoloe text-mode export runs the full prompt chain (tokenize → MobileCLIP2-B → reprta+L2) —
   `mobileclip2_b.safetensors` must sit next to the model weights — then fuses the result into
   the cls conv, so the onnx has no text-encoder dependency. Fuse equivalence is verified:

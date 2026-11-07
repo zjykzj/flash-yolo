@@ -127,8 +127,9 @@ is metric-implementation noise.
   (`set_classes`); `--data lvis` evaluates against the 1,203 LVIS categories
   (`config/datasets/lvis.yaml`, first-synonym names — the official LVIS prompt convention).
   Compare with the official LVIS minival numbers via `--data lvis-minival` (faster_coco_eval
-  `lvis_style`, see §2.1). Requires `--engine pt` and `mobileclip2_b.safetensors` next to the
-  model weights.
+  `lvis_style`, see §2.1). The pt path needs `mobileclip2_b.safetensors` next to the model
+  weights; `onnx` / `trt` consume the class-locked graph and map the deploy-metadata class
+  names onto the dataset classes.
 - Both modes report Box + Mask tables like the other segmentation architectures.
 - Model details: [../models/yoloe.md](../models/yoloe.md).
 

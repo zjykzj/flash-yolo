@@ -9,7 +9,7 @@ import torch.nn as nn
 
 from model.build import build_yolo26, build_yolov3_tiny
 from model.weights import (apply_meta, load_meta, provenance_meta, resolve_arch_scale, resolve_imgsz,
-                           save_weights)
+                           save_weights, write_engine_meta, write_onnx_meta)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -32,6 +32,28 @@ def test_save_load_meta_roundtrip(tmp_path):
     assert load_meta(tmp_path / "missing.safetensors") == {}
     assert load_meta(ROOT / "weights" / "yolo26n.onnx") == {}
     print("  metadata 往返与安全降级正确")
+
+
+def test_deploy_meta_onnx_and_engine_sidecar(tmp_path):
+    """部署 metadata 三载体：ONNX metadata_props / TRT 旁车 JSON 往返；坏旁车安全降级"""
+    p = tmp_path / "best.onnx"
+    torch.onnx.export(nn.Linear(2, 3), torch.zeros(1, 2), str(p),
+                      input_names=["x"], output_names=["y"], dynamo=False)
+    meta = {"arch": "yolo26", "scale": "n", "nc": 3, "imgsz": 64,
+            "names": ["a", "b", "c"], "prompt_mode": "text", "end2end": False}
+    write_onnx_meta(p, meta)
+    assert load_meta(p) == meta
+
+    engine = tmp_path / "model.engine"
+    engine.write_bytes(b"not-a-real-engine")
+    write_engine_meta(engine, meta)
+    assert load_meta(engine) == meta
+
+    bad = tmp_path / "bad.engine"
+    bad.write_bytes(b"x")
+    (tmp_path / "bad.engine.json").write_text("[]")
+    assert load_meta(bad) == {}
+    print("  ONNX metadata_props / TRT 旁车往返与降级正确")
 
 
 def test_resolve_precedence(tmp_path):

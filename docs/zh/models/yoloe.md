@@ -102,7 +102,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   自身的拼写 `dinning table`）；评估只保留数据集类别的预测，`CocoEvaluator` 契约不变。
 - 文本模式说明：`--classes` 逗号分隔，每个名字即一个 prompt/类别；LVIS prompt 取每类名第一
   个同义词（`name.split("/", 1)[0]`，官方口径——`config/datasets/lvis.yaml` 已按此存储）；
-  类锁定 ONNX 拒收新 prompt（`is_fused` 守卫）；文本模式推理/评估目前只支持 `--engine pt`。
+  类锁定 ONNX 拒收新 prompt（`is_fused` 守卫）。类锁定产物自带部署 metadata
+  （arch/scale/names/end2end），导出后可直接 `--engine onnx|trt`，无需再传
+  `--model/--scale/--classes`；TRT 旁车为 `<engine>.json`。
 - LVIS 评估走 **faster_coco_eval `lvis_style`**（`eval_style: lvis` 描述符字段）：处理
   `neg_category_ids` / `not_exhaustive_category_ids`、maxDets=300，并输出 APr/APc/APf。
   用 pycocotools 评 LVIS 得到的不是 LVIS 指标；与 ultralytics 代码逐字对齐时加
@@ -165,7 +167,9 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
 ## 5. 已知边界
 
 - **视觉 prompt** 前向（SAVPE / refer 图）未实现；文本模式已实现。
-- 文本模式推理/评估目前只支持 `--engine pt`；类锁定 ONNX 已可导出，但引擎侧消费尚未接入 CLI。
+- 文本模式的 pt 路径需要 `--classes` 与 MobileCLIP2-B 文本编码器；`onnx` / `trt` 只能消费
+  `export --classes` 产出的类锁定图（类别名随 ONNX `metadata_props` / TRT 旁车 JSON 走，
+  `--classes` 可省略，给出时必须与锁定列表一致）。旧的无 metadata 导出需重新导出。
 - tokenizer 跳过官方 fork 的 `ftfy` 清理（乱码修复 / 全角折叠）：正常 UTF-8 文本逐位一致，
   乱码输入不承诺。
 - 导出图与运行时 pt 的提案过滤口径不同（官方同款：导出 conf=0 静态、运行时 conf=0.001）——

@@ -95,10 +95,13 @@ Labels        -> runs/predict/predict21/labels
 
 - **prompt-free (`-pf` weights)**: labels are the baked vocabulary names traveling in the
   weights metadata — no `--data` / `--classes` needed; all three engines work.
-- **text prompts (`-seg` weights)**: `--classes "a, b, c"` encodes each name with the
-  MobileCLIP2-B text encoder (`mobileclip2_b.safetensors` must sit next to the model weights —
-  loaded once at `set_classes`, not part of the model graph). Requires `--engine pt`;
-  the class-locked ONNX produced by `export --classes` is not wired into the CLI engines yet.
+- **text prompts (`-seg` weights)**:
+  - `--engine pt`: `--classes "a, b, c"` encodes each name with the MobileCLIP2-B text encoder
+    (`mobileclip2_b.safetensors` must sit next to the model weights — loaded once at
+    `set_classes`, not part of the model graph).
+  - `--engine onnx|trt`: consumes the class-locked graph produced by `export --classes`;
+    class names travel in the deploy metadata, so no text encoder is needed. `--classes` is
+    optional and must match the locked list when given.
 - `--raw` errors out for yoloe; `--nms` is supported for yoloe-26 text mode (o2m + class-aware
   NMS), while prompt-free (lrpc) remains E2E only (the raw column count varies with the
   proposal filter).

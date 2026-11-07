@@ -11,6 +11,7 @@ import torch
 
 from config.inference import IMGSZ
 from model.build import arch_task
+from model.weights import load_meta
 from utils.engines.base import BaseEngine
 
 __all__ = ["TRTEngine", "build_trt_engine"]
@@ -74,7 +75,8 @@ class TRTEngine(BaseEngine):
     tensorrt 是可选依赖：懒加载，未安装时报 ImportError。
     """
 
-    def __init__(self, engine_path, scale="n", end2end=True, model="yolo26", imgsz=None, agnostic_nms=False):
+    def __init__(self, engine_path, scale="n", end2end=True, model="yolo26", imgsz=None, agnostic_nms=False,
+                 text_mode=None):
         try:
             import tensorrt as trt
         except ImportError as e:
@@ -90,6 +92,10 @@ class TRTEngine(BaseEngine):
         self.arch = model
         self.task = arch_task(model)
         self.end2end = end2end
+        # YOLOE text 的 o2m 分支：输出已是像素 xyxy + sigmoid，不能走 decode_raw。
+        # 缺省从旁车 <engine>.json 判定；显式参数供调用方覆盖。
+        self.text_mode = (load_meta(engine_path).get("prompt_mode") == "text"
+                          if text_mode is None else bool(text_mode))
         self.engine_path = engine_path
         runtime = trt.Runtime(trt.Logger(trt.Logger.WARNING))
         engine = runtime.deserialize_cuda_engine(Path(engine_path).read_bytes())

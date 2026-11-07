@@ -127,7 +127,8 @@ def main():
     if arch_has_scale(arch) and scale is None:
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
     # YOLOE prompt mode：text 支持 E2E + o2m/NMS；pf 仅 E2E（raw 列数随提案过滤变化）
-    prompt_mode = (prompt_mode_from_weights(args.weights, load_meta(args.weights))
+    meta = load_meta(args.weights)
+    prompt_mode = (prompt_mode_from_weights(args.weights, meta)
                    if arch in YOLOE26_FAMILY else None)
     if args.nms:
         if arch in YOLOE26_FAMILY and prompt_mode != "text":
@@ -136,17 +137,17 @@ def main():
             parser.error(f"--nms is only supported for yolo26 / yoloe-26 text (got model={arch!r})")
     if args.agnostic_nms and not args.nms:
         parser.error("--agnostic-nms only affects the NMS path — pass --nms as well")
-    # YOLOE：pf 按词汇映射（词汇名字来自权重 metadata 的烘焙词汇）；
-    # 文本模式直接用数据集类别名做 prompt（类别 id = prompt 序号，无需映射）
-    vocab_map = None
+    # YOLOE：pf 词汇 / 类锁定 text 图都按名字映射到数据集类别；
+    # pt 文本模式直接用数据集类别名做 prompt（类别 id = prompt 序号，无需映射）。
+    class_map = None
     text_mode = prompt_mode == "text"
-    if arch in YOLOE26_FAMILY and not text_mode:
-        vocab_names = load_meta(args.weights).get("names")
-        if not vocab_names:
-            parser.error(f"{arch} evaluation needs the vocabulary names in the weights metadata "
-                         "(convert with scripts/convert_weights.py)")
+    if arch in YOLOE26_FAMILY and not (text_mode and args.engine == "pt"):
+        model_names = meta.get("names")
+        if not model_names:
+            parser.error(f"{arch} evaluation needs the model class names in the metadata — "
+                         "convert the weights (scripts/convert_weights.py) or re-export with metadata")
         try:
-            vocab_map = build_vocab_map(vocab_names, list(spec.names.values()),
+            class_map = build_vocab_map(model_names, list(spec.names.values()),
                                         getattr(spec, "vocab_synonyms", None) or {})
         except ValueError as e:
             parser.error(str(e))
@@ -169,20 +170,27 @@ def main():
     # ② 模型（arch/scale 已在参数校验段解析）：pt = 模块树口径 / onnx = 部署口径
     #    （两者的"参数量"不是同一个量，见 engine.summary_line）
     end2end = not args.nms
+    graph_end2end = meta.get("end2end")
+    if args.engine != "pt" and graph_end2end is not None and graph_end2end != end2end:
+        parser.error(f"{args.weights} was exported as {'E2E' if graph_end2end else 'o2m+NMS'} "
+                     f"but {'--nms' if args.nms else 'E2E (default)'} was requested — "
+                     f"{'remove --nms' if graph_end2end else 'pass --nms'}")
     engine_cls = {"pt": PtEngine, "onnx": OnnxEngine, "trt": TRTEngine}[args.engine]
     kwargs = {"end2end": end2end, "scale": scale, "model": arch, "imgsz": args.imgsz,
               "agnostic_nms": args.agnostic_nms}
     if args.engine == "pt":
         kwargs["device"] = args.device
+    else:
+        kwargs["text_mode"] = text_mode  # 类锁定 YOLOE text：o2m 输出不做 decode_raw
     with redirect_prints(logger):
         engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
     if text_mode:
-        if args.engine != "pt":
-            parser.error("yoloe-26 text mode currently requires --engine pt "
-                         "(class-locked export for onnx/trt is not available yet)")
-        engine.set_classes(list(spec.names.values()))
-        mode = "E2E (text prompts)" if end2end else "o2m+NMS (text prompts)"
+        locked = args.engine != "pt"
+        if not locked:
+            engine.set_classes(list(spec.names.values()))
+        suffix = ", class-locked" if locked else ""
+        mode = ("E2E (text prompts" if end2end else "o2m+NMS (text prompts") + suffix + ")"
     elif arch in YOLOE26_FAMILY:
         mode = "E2E (prompt-free)"
     elif arch in YOLO26_FAMILY:
@@ -196,7 +204,7 @@ def main():
     # 注意不包 redirect_prints：提示行是裸 print、进度条写的是构造时捕获的 sys.stdout，
     # 包进去会一起被抓成 DEBUG 日志（INFO 级别下凭空消失）
     if args.single_cls:
-        nc_meta = load_meta(args.weights).get("nc")
+        nc_meta = meta.get("nc")
         if nc_meta not in (None, 1):
             parser.error(f"--single-cls expects an nc=1 checkpoint, but {args.weights} declares nc={nc_meta}")
     dataset = build_eval_dataset(spec, args.split, progress=True, task=arch_task(arch),
@@ -235,9 +243,9 @@ def main():
         image = dataset.load_image(i)
         timings["load"].append((time.monotonic() - t_load) * 1e3)
         dets, tseg = engine.predict_timed(image, conf_thres=args.conf, iou_thres=args.iou)
-        if vocab_map is not None:  # yoloe pf：词汇类别 -> 数据集类别（只保留数据集里的类）
-            keep = np.isin(dets.class_ids, list(vocab_map))
-            dets.class_ids = np.array([vocab_map[c] for c in dets.class_ids[keep]], dtype=np.int64)
+        if class_map is not None:  # yoloe pf 词汇 / 类锁定 text：模型类别 -> 数据集类别（只保留数据集里的类）
+            keep = np.isin(dets.class_ids, list(class_map))
+            dets.class_ids = np.array([class_map[c] for c in dets.class_ids[keep]], dtype=np.int64)
             dets.boxes = dets.boxes[keep]
             dets.scores = dets.scores[keep]
             if dets.masks is not None:

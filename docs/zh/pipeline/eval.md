@@ -112,8 +112,8 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - **文本 prompt（`-seg` 权重）**：数据集自身的类别名即 prompt（`set_classes`）；`--data lvis`
   对 1,203 个 LVIS 类别评估（`config/datasets/lvis.yaml`，取每类名第一个同义词——官方
   LVIS prompt 口径）。官方 LVIS minival 对比用 `--data lvis-minival`，走 faster_coco_eval
-  `lvis_style`（见 §2.1）。目前仅 `--engine pt`，且 `mobileclip2_b.safetensors` 需与模型
-  权重同目录。
+  `lvis_style`（见 §2.1）。pt 路径需要 `mobileclip2_b.safetensors` 与模型权重同目录；
+  `onnx` / `trt` 消费类锁定图（类别名来自部署 metadata，按名字映射到数据集类别）。
 - 两种模式都像其他分割架构一样自动出 Box + Mask 双表。
 - 模型细节：[../models/yoloe.md](../models/yoloe.md)。
 

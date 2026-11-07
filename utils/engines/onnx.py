@@ -8,6 +8,7 @@ import onnxruntime as ort
 
 from config.inference import IMGSZ
 from model.build import arch_task
+from model.weights import load_meta
 from utils.engines.base import BaseEngine
 
 __all__ = ["OnnxEngine"]
@@ -23,12 +24,17 @@ class OnnxEngine(BaseEngine):
     （改尺寸要重新导出），图内 shape 不可知（全动态导出）时用显式值或 640。
     """
 
-    def __init__(self, onnx_path, scale="n", end2end=True, model="yolo26", imgsz=None, agnostic_nms=False):
+    def __init__(self, onnx_path, scale="n", end2end=True, model="yolo26", imgsz=None, agnostic_nms=False,
+                 text_mode=None):
         self.agnostic_nms = bool(agnostic_nms)  # 仅 NMS 路径生效
         self.scale = scale
         self.arch = model
         self.task = arch_task(model)
         self.end2end = end2end
+        # YOLOE text 的 o2m 分支：输出已是像素 xyxy + sigmoid，不能走 decode_raw。
+        # 缺省从导出 metadata 判定；显式参数供调用方覆盖。
+        self.text_mode = (load_meta(onnx_path).get("prompt_mode") == "text"
+                          if text_mode is None else bool(text_mode))
         self.onnx_path = onnx_path
         self._sess_options = self._session_options()
         self.sess = ort.InferenceSession(onnx_path, self._sess_options, providers=["CPUExecutionProvider"])

@@ -44,8 +44,10 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | yoloe pf | `output0 (B, 1000, 6+nm)` + `output1 (B, nm, H/4, W/4)` | E2E，**max_det=1000**，conf=0 静态提案口径 |
 | yoloe 文本（`--classes`） | `output0 (B, 300, 6+nm)` + `output1` | 单输入：文本嵌入已融合进分类卷积（BN 折叠、reprta 移除）；导出模型拒收新 prompt |
 
-- 训练产物自带 metadata，`--scale` / `--nc` 可省略；onnx 文件本身不带 metadata，
-  onnx 推理时仍需 `--model` / `--scale`（非 COCO nc 还要 `--data`）。
+- 训练产物自带 metadata，`--scale` / `--nc` 可省略。导出产物也带部署 metadata：ONNX 写入
+  `metadata_props`（arch/scale/nc/imgsz/names/prompt_mode/end2end），TRT 写旁车
+  `<engine>.json`——类锁定的 yoloe text 图因此无需原 `.safetensors` 即可
+  `infer/eval --engine onnx|trt`；旧的无 metadata 产物仍需 `--model` / `--scale`。
 - yoloe 文本模式导出会先跑完整 prompt 链（tokenize → MobileCLIP2-B → reprta+L2——
   `mobileclip2_b.safetensors` 需与模型权重同目录），再把结果融合进分类卷积，导出的 onnx
   无文本编码器依赖。fuse 等价性已验证：fused pt vs 未 fuse 1.8e-6、onnx vs fused 6e-5、

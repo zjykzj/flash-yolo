@@ -1,9 +1,10 @@
 """权重读写：safetensors <-> 模型（strict load，成功即证明拓扑一致）
 
-metadata（可选）：随权重一起走的模型参数，写在 safetensors header 的 metadata 字段（纯 JSON
-字符串，不碰张量）——训练保存的 best/last/epochN 与官方权重转换产物会带
-`{arch, scale, nc, imgsz[, names, anchors]}` + 出处 `{version, repo[, commit, describe]}`；旧权重 /
-`.onnx` / `.pt` 没有则安全降级为空 dict。
+metadata（可选）：随权重 / 部署产物一起走的模型参数——safetensors 写 header 的 metadata 字段
+（纯 JSON 字符串，不碰张量），ONNX 写 `metadata_props`，TRT engine 写旁车 `<engine>.json`。
+训练保存的 best/last/epochN、官方权重转换产物与 scripts/export.py 的导出会带
+`{arch, scale, nc, imgsz[, names, anchors]}` + 出处 `{version, repo[, commit, describe]}`
+（YOLOE 另带 `prompt_mode`，部署图另带 `end2end`）；旧权重 / 无 metadata 的产物安全降级为空 dict。
 读取侧三级回退：CLI 显式 > metadata > 文件名/默认值（metadata 永远是可选的）。
 """
 
@@ -20,7 +21,8 @@ from config.inference import IMGSZ
 
 __all__ = ["load_weights", "load_weights_finetune", "save_weights", "scale_from_weights",
            "arch_from_weights", "arch_has_scale", "resolve_arch_scale", "resolve_imgsz", "load_meta",
-           "encode_meta", "encode_anchors", "apply_meta", "prompt_mode_from_weights", "provenance_meta"]
+           "encode_meta", "encode_anchors", "apply_meta", "prompt_mode_from_weights", "provenance_meta",
+           "write_onnx_meta", "write_engine_meta"]
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +42,10 @@ _YOLOE_SCALE_RE = re.compile(r"yoloe-26([nsmlx])($|[-_.])", re.I)
 # 带档位维度（scale 参与解析）的架构；其余架构档位固定（v3: tiny / flash-yolo: flash）
 _SCALED_ARCHS = ("yolo26", "yolo26-seg", "yoloe-26")
 
-_META_STR_KEYS = ("arch", "scale", "version", "repo", "commit", "describe", "prompt_mode")  # header 直读字符串
+_META_STR_KEYS = ("arch", "scale", "version", "repo", "commit", "describe", "prompt_mode")  # 直读字符串
 _META_INT_KEYS = ("nc", "imgsz", "pf_channels")  # int() 还原
 _META_JSON_KEYS = ("names", "anchors")  # JSON 解码（写入侧统一 json.dumps）
+_META_BOOL_KEYS = ("end2end",)  # 部署图的前向模式（E2E true / o2m+NMS false）
 
 
 def provenance_meta():
@@ -78,37 +81,112 @@ def encode_anchors(anchors):
             for level in torch.as_tensor(anchors).tolist()]
 
 
-def load_meta(path):
-    """读 safetensors header 里的 metadata -> dict（无 / 不可读 -> {}）
+def write_onnx_meta(path, meta):
+    """把部署 metadata 写进 ONNX metadata_props（值统一 encode_meta 成字符串）
 
-    已知键做类型还原（nc/imgsz -> int；names/anchors -> JSON 解码），未知键忽略；文件不存在、
-    非 safetensors（.onnx/.pt）、单个坏键都安全降级——metadata 永远是可选的，不阻断权重加载。
+    与 `load_meta` 的 `.onnx` 分支对称；只改 metadata_props、不碰图与张量。
     """
-    p = Path(path)
-    if p.suffix.lower() != ".safetensors" or not p.exists():
-        return {}
-    try:
-        with safe_open(str(p), framework="pt") as f:
-            raw = f.metadata() or {}
-    except Exception:  # 内容损坏等：权重本体加载（load_file）时会再报错，这里按"无 metadata"处理
-        return {}
+    import onnx
+
+    model = onnx.load(str(path))
+    entries = {item.key: item.value for item in model.metadata_props}
+    entries.update(encode_meta(meta))
+    model.ClearField("metadata_props")
+    for k, v in entries.items():
+        item = model.metadata_props.add()
+        item.key = k
+        item.value = v
+    onnx.save(model, str(path))
+
+
+def write_engine_meta(engine_path, meta):
+    """TRT engine 的旁车元数据：<engine>.json（engine 二进制没有 metadata 容器）"""
+    sidecar = Path(str(engine_path) + ".json")
+    sidecar.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _parse_meta(raw):
+    """metadata 原始 dict -> 已知键的类型还原（未知键忽略，坏键告警后降级）
+
+    三种载体共用的唯一解析入口：safetensors header（值全是字符串）、ONNX metadata_props
+    （值全是字符串）、TRT 旁车 JSON（值保留原类型）。因此 JSON 键允许已经是 list/dict。
+    """
     meta = {}
     for k in _META_STR_KEYS:
-        if raw.get(k):
-            meta[k] = raw[k]
+        if raw.get(k) not in (None, ""):
+            meta[k] = str(raw[k])
     for k in _META_INT_KEYS:
         if raw.get(k) is not None:
             try:
                 meta[k] = int(raw[k])
-            except ValueError:
+            except (TypeError, ValueError):
                 logger.warning(f"weights metadata: bad int for {k!r} ({raw[k]!r}) — ignored")
     for k in _META_JSON_KEYS:
         if raw.get(k) is not None:
-            try:
-                meta[k] = json.loads(raw[k])
-            except json.JSONDecodeError:
-                logger.warning(f"weights metadata: bad JSON for {k!r} — ignored")
+            v = raw[k]
+            if isinstance(v, str):
+                try:
+                    v = json.loads(v)
+                except json.JSONDecodeError:
+                    logger.warning(f"weights metadata: bad JSON for {k!r} — ignored")
+                    continue
+            meta[k] = v
+    for k in _META_BOOL_KEYS:
+        if raw.get(k) is not None:
+            v = raw[k]
+            if isinstance(v, str):
+                v = v.strip().lower() in ("1", "true", "yes", "on")
+            meta[k] = bool(v)
     return meta
+
+
+def _read_onnx_meta(p):
+    """ONNX metadata_props -> {key: value}（导出时写入的部署 metadata）"""
+    try:
+        import onnx
+    except ImportError:  # onnx 是导出/摘要依赖；缺失时按"无 metadata"处理
+        return {}
+    model = onnx.load(str(p), load_external_data=False)
+    return {item.key: item.value for item in model.metadata_props}
+
+
+def _read_engine_meta(p):
+    """TRT 旁车元数据：<engine>.json（engine 二进制没有标准 metadata 容器）"""
+    sidecar = Path(str(p) + ".json")
+    if not sidecar.is_file():
+        return {}
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {}
+
+
+def load_meta(path):
+    """读权重 / 部署产物的 metadata -> dict（无 / 不可读 -> {}）
+
+    载体：
+    - `.safetensors`：header metadata（训练保存 / 官方转换产物）；
+    - `.onnx`：`metadata_props`（scripts/export.py 写入：arch/scale/nc/imgsz/names/
+      prompt_mode/end2end）；
+    - `.engine` / `.trt`：旁车 `<engine>.json`（同一组键）。
+    已知键做类型还原（nc/imgsz -> int；names/anchors -> JSON 解码；end2end -> bool），
+    未知键忽略；文件不存在、载体不认识、单个坏键都安全降级——metadata 永远是可选的。
+    """
+    p = Path(path)
+    if not p.exists():
+        return {}
+    suffix = p.suffix.lower()
+    try:
+        if suffix == ".safetensors":
+            with safe_open(str(p), framework="pt") as f:
+                raw = f.metadata() or {}
+        elif suffix == ".onnx":
+            raw = _read_onnx_meta(p)
+        elif suffix in (".engine", ".trt"):
+            raw = _read_engine_meta(p)
+        else:
+            return {}
+    except Exception:  # 内容损坏等：权重本体加载时会再报错，这里按"无 metadata"处理
+        return {}
+    return _parse_meta(raw)
 
 
 def scale_from_weights(path):
@@ -170,7 +248,8 @@ def resolve_arch_scale(weights, model=None, scale=None):
 def resolve_imgsz(weights, imgsz=None):
     """模型输入尺寸解析：显式参数 > 权重 metadata > 640（config.inference.IMGSZ）
 
-    `.onnx` 没有 metadata——输入尺寸以图为准（引擎读图内 shape），此处返回显式值或默认值。
+    `.onnx` / `.engine` 的 metadata 由导出侧写入，值与图内固定 shape 一致；引擎仍以图内 shape
+    为准（显式值冲突时报错）。
     """
     if imgsz is not None:
         return int(imgsz)

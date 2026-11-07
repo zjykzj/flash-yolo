@@ -118,7 +118,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 - Text mode notes: `--classes` takes comma-separated names (each becomes one prompt/class);
   LVIS prompts use each category's first synonym (`name.split("/", 1)[0]` — the official
   convention, so `config/datasets/lvis.yaml` stores them already split); the class-locked ONNX
-  rejects new prompts (`is_fused` guard); text-mode infer/eval currently require `--engine pt`.
+  rejects new prompts (`is_fused` guard). Class-locked artifacts carry deploy metadata
+  (arch/scale/names/end2end), so `--engine onnx|trt` works without
+  `--model/--scale/--classes`; TRT uses a `<engine>.json` sidecar.
 - LVIS evaluation runs on **faster_coco_eval `lvis_style`** (the descriptor's `eval_style: lvis`):
   it honors `neg_category_ids` / `not_exhaustive_category_ids`, uses maxDets=300 and reports
   APr/APc/APf. Pycocotools on LVIS does not produce the LVIS metric; add
@@ -189,8 +191,10 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
 ## 5. Known limits
 
 - The **visual prompt** forward (SAVPE / refer images) is not implemented yet; text mode is.
-- Text-mode infer/eval currently require `--engine pt`; the exported class-locked ONNX exists,
-  but engine-side consumption of it is not wired into the CLI yet.
+- Text-mode pt paths need `--classes` and the MobileCLIP2-B text encoder; `onnx` / `trt`
+  consume only the class-locked graph produced by `export --classes` (class names travel in
+  the ONNX `metadata_props` / TRT sidecar JSON, so `--classes` is optional and must match the
+  locked list when given). Older exports without metadata must be re-exported.
 - The tokenizer skips the official fork's `ftfy` cleanup (mojibake repair / fullwidth folding):
   bit-identical on clean UTF-8 text, not guaranteed on broken-encoding inputs.
 - The exported graph and the runtime pt path differ in the proposal filter (official behavior:

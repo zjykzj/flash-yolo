@@ -131,7 +131,7 @@ class BaseEngine:
     arch = "yolo26"
     task = "detect"  # 子类 __init__ 按 arch 覆盖（model.build.arch_task）
     end2end = True
-    text_mode = False  # YOLOE 文本布局（PtEngine 设置）；ONNX/TRT 不消费
+    text_mode = False  # YOLOE 文本布局（PtEngine 按头判定；ONNX/TRT 按导出 metadata 判定）
 
     def _forward(self, img):
         """单图前向（子类实现）：img = preprocess 输出（torch CPU 张量）-> 已剥批的原始输出 ndarray"""

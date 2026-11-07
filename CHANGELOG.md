@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Class-locked YOLOE text deployment**: exported text-mode ONNX/TRT graphs now run through `infer.py` / `eval.py`; arch/scale/names/end2end travel in ONNX `metadata_props` or a `<engine>.json` sidecar, so the original `.safetensors`, `--model`, `--scale` and `--classes` are no longer needed (mismatched prompts or graph mode error out).
 - **YOLOE-26 text Non-E2E**: `--nms` runs the o2m head + class-aware NMS for text-mode YOLOE (prompt-free stays E2E-only; `--raw` still rejected), in both infer and eval.
 - **LVIS-protocol evaluation**: `eval_style: lvis` descriptors evaluate through `faster_coco_eval` (`lvis_style`, maxDets=300) and report APr/APc/APf; COCO descriptors keep pycocotools. `--eval-max-dets 100` mirrors ultralytics; faster-coco-eval is a runtime dependency.
 - **LVIS minival descriptor**: `config/datasets/local/lvis-minival.yaml` evaluates the 5,000-image COCO val2017 minival split, with loader-compatible and Ultralytics-style image lists.

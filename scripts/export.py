@@ -33,13 +33,34 @@ sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
 import torch
 
-from model.weights import (arch_has_scale, load_meta, load_weights, prompt_mode_from_weights,
-                           resolve_arch_scale, resolve_imgsz)
+from model.weights import (arch_has_scale, load_meta, load_weights, provenance_meta,
+                           prompt_mode_from_weights, resolve_arch_scale, resolve_imgsz,
+                           write_engine_meta, write_onnx_meta)
 from model.build import ARCHS, YOLO26_FAMILY, YOLOE26_FAMILY, arch_task, build_model
 from utils.logger import get_logger, log_params, setup_logging
 
 setup_logging()
 logger = get_logger(__name__)
+
+
+def _deploy_meta(arch, scale, imgsz, nc, end2end, prompt_mode=None, names=None):
+    """导出产物的部署 metadata（ONNX metadata_props / TRT 旁车 JSON 共用）
+
+    与 safetensors metadata 同键名，读取侧统一走 model.weights.load_meta；`end2end` 让
+    infer/eval 能校验“图模式 vs --nms”，`names`/`prompt_mode` 让类锁定的 YOLOE text
+    图无需原 .safetensors 即可推理/评估。
+    """
+    meta = {"arch": arch, "scale": scale, "imgsz": int(imgsz), "end2end": bool(end2end)}
+    if nc is not None:
+        meta["nc"] = int(nc)
+    if prompt_mode:
+        meta["prompt_mode"] = prompt_mode
+    if names:
+        meta["names"] = list(names)
+    meta.update(provenance_meta())
+    return meta
+
+
 
 
 def main():
@@ -91,6 +112,7 @@ def main():
     # YOLOE：prompt 模式经 metadata/文件名解析（pf -> lrpc 布局；text -> 类锁定 fuse 导出）
     prompt_free = None
     text_mode = False
+    locked_classes = None
     if arch in YOLOE26_FAMILY:
         pm = prompt_mode_from_weights(args.weights, meta)
         prompt_free = True if pm == "pf" else (False if pm == "text" else None)
@@ -99,6 +121,7 @@ def main():
             if not args.classes:
                 parser.error("yoloe-26 text-mode export requires --classes "
                              '(the exported model is locked to them, e.g. --classes "person, bicycle")')
+            locked_classes = [c.strip() for c in args.classes.split(",")]
     model = build_model(arch, scale, nc=nc, prompt_free=prompt_free)
     load_weights(model, args.weights, strict=True)
     head = model.model[-1]
@@ -112,11 +135,10 @@ def main():
         from model.text_encoder import load_mobileclip_text
         from model.tokenizer import tokenize
 
-        classes = [c.strip() for c in args.classes.split(",")]
         enc_dir = str(Path(args.weights).resolve().parent)
         enc = load_mobileclip_text(f"{enc_dir}/mobileclip2_b.safetensors").eval()
         with torch.no_grad():
-            tokens = tokenize(classes)
+            tokens = tokenize(locked_classes)
             emb = torch.cat([enc(chunk) for chunk in tokens.split(80)], dim=0).unsqueeze(0)
             head.fuse_text(head.get_tpe(emb))  # fuse 后 nc 锁定、前向不依赖 tpe
 
@@ -138,6 +160,16 @@ def main():
             opset_version=args.opset,
             dynamo=False,  # TorchScript 导出器：权重内嵌单文件；dynamo 默认把权重拆到 .onnx.data
         )
+    # 部署 metadata 随图走：类锁定 text 图无需原 .safetensors 也能 infer/eval；
+    # end2end 让消费侧校验图模式与 --nms 是否一致。
+    deploy_meta = _deploy_meta(
+        arch, scale, imgsz,
+        len(locked_classes) if text_mode else nc,
+        end2end=not args.raw,
+        prompt_mode=("text" if text_mode else ("pf" if prompt_free else None)),
+        names=(locked_classes if text_mode else (meta.get("names") if prompt_free else None)),
+    )
+    write_onnx_meta(out_path, deploy_meta)
     if arch in YOLOE26_FAMILY and text_mode:
         mode = "E2E text prompts (class-locked) + prototypes"
     elif arch in YOLOE26_FAMILY:
@@ -168,6 +200,7 @@ def main():
                     opset_version=args.opset,
                     dynamo=False,
                 )
+            write_onnx_meta(engine_src, deploy_meta)
             logger.info(f"exported fp16 onnx -> {engine_src}")
 
         engine_path = engine_src.with_suffix(".engine")
@@ -175,6 +208,7 @@ def main():
             build_trt_engine(engine_src, engine_path, fp16=args.fp16)
         except (ImportError, RuntimeError, ValueError) as e:
             parser.error(str(e))
+        write_engine_meta(engine_path, deploy_meta)
         mib = Path(engine_path).stat().st_size / 2**20
         logger.info(f"exported TensorRT engine ({'fp16' if args.fp16 else 'fp32'}) -> {engine_path} "
                     f"({mib:.1f} MiB; bound to this GPU + TRT version)")
