@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-07
+
 ### Added
 
 - **YOLOE-26 text Non-E2E**: `--nms` runs the o2m head + class-aware NMS for text-mode YOLOE (prompt-free stays E2E-only; `--raw` still rejected), in both infer and eval.
