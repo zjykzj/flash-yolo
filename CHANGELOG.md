@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **LVIS minival descriptor**: `config/datasets/local/lvis-minival.yaml` evaluates the 5,000-image COCO val2017 minival split, with loader-compatible and Ultralytics-style image lists.
 - **LVIS evaluator contract tests**: `tests/test_lvis_evaluator.py` covers negative-image FPs, not-exhaustive predictions, unlisted image/category pairs, zero-detection images, APr/APc/APf and the segm RLE path.
 
+### Changed
+
+- **YOLOE-26 verification**: the model pages record the E2E/Non-E2E cross-implementation results against Ultralytics (LVIS minival, COCO val2017) and the released seg-checkpoint vs paper detection-config gap.
+
 ### Fixed
 
 - **YOLOE `set_classes` memory**: prompt chunks and the cached TPE are detached after encoding (value-preserving), keeping 1,203-prompt evaluation near 1.8 GiB instead of ~22 GiB.

@@ -18,8 +18,8 @@
   the official docs note this. FLOPs exclude the region-text similarity, so real cost grows with
   the prompt set.
 - This repo's reproduction = same weights, same pre/post-processing: bit-identical with the
-  official fp32 forward (§4); the COCO numbers are pipeline-smoke (20 images), not accuracy
-  conclusions.
+  official fp32 forward (§4). The 20-image COCO smoke is a pipeline check; the full
+  5,000-image cross-implementation numbers are in §4.
 - Text mode needs the MobileCLIP2-B text encoder weights (`mobileclip2_b.safetensors`, converted
   from Apple's `mobileclip2_b.ts`) next to the model weights — it is loaded only when
   `set_classes` runs (infer/eval) and never enters the exported graph (the embeddings are fused
@@ -153,6 +153,38 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 - Regression gates in `tests/test_yoloe.py` (structure / conversion metadata / strict load /
   bit-parity / vocabulary mapping / export parity / text-mode parity / fuse equivalence) and
   `tests/test_text_encoder.py` (encoder structure + ts bit-parity, tokenizer goldens).
+
+### Cross-implementation check (LVIS minival / COCO val2017)
+
+Same released `yoloe-26n-seg` weights, text prompts, 640 input, and the same scoring protocol on
+both sides (LVIS: faster_coco_eval `lvis_style`, maxDets=100; COCO: COCO protocol, maxDets=100).
+`--nms` selects Non-E2E (o2m + class-aware NMS); the default is E2E.
+
+| Dataset | Protocol | Ours Box | Ours Mask | Ultralytics Box | Ultralytics Mask |
+|---|---|---:|---:|---:|---:|
+| LVIS minival | E2E | 0.2125 | 0.1754 | 0.2231 | 0.1828 |
+| LVIS minival | Non-E2E | **0.2218** | **0.1817** | **0.2228** | **0.1826** |
+| COCO val2017 | E2E | 0.2832 | 0.2337 | 0.2952 | 0.2408 |
+| COCO val2017 | Non-E2E | **0.2952** | **0.2407** | **0.2952** | **0.2407** |
+
+Reproduce with:
+
+```bash
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival \
+    --eval-max-dets 100 [--nms]
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [--nms]
+```
+
+- Non-E2E agrees with Ultralytics within 0.001 on LVIS and to four decimals on COCO; AP50,
+  APr/APc/APf and the COCO area buckets differ by at most ~0.003.
+- Full-val E2E is more sensitive to the 300-candidate top-k: the same weights can differ by
+  ~0.01 even though the fp32 forward is bit-identical on identical inputs (above). Use Non-E2E
+  as the cross-implementation reference.
+- The official 24.7 (LVIS minival, text prompts) is the paper's **detection-configuration**
+  Non-E2E number. Ultralytics' own val of the released **seg** checkpoint reports 0.2228; this
+  repo reports 0.2218 under the same protocol — the implementation matches, and the remaining
+  gap to 24.7 is the paper's detection configuration vs the released segmentation checkpoint.
+- LVIS maxDets 100 and 300 give identical results on minival; COCO uses the standard maxDets=100.
 
 ## 5. Known limits
 

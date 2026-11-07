@@ -17,8 +17,8 @@
 - 文本模式需要 MobileCLIP2-B 文本编码器权重（`mobileclip2_b.safetensors`，由 Apple 的
   `mobileclip2_b.ts` 转换而来）与模型权重同目录——只在 `set_classes`（推理/评估）时加载，
   不进导出图（导出时嵌入已融合进分类卷积）。
-- 本仓库的复现口径 = 同权重、同前后处理重跑：与官方 fp32 前向**逐位一致**（§4）；COCO 数字
-  为管线冒烟口径（20 图），不代表精度结论。
+- 本仓库的复现口径 = 同权重、同前后处理重跑：与官方 fp32 前向**逐位一致**（§4）；20 图 COCO
+  冒烟是管线检查，5,000 图全量跨实现数字见 §4。
 - 文中「官方」指 Ultralytics 发布的 YOLOE-26 权重/文档，本仓库不分发。
 
 ## 2. 结构（n 档）
@@ -131,6 +131,36 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 - 回归闸门 `tests/test_yoloe.py`（结构 / 转换 metadata / strict load / 逐位对齐 / 词汇映射 /
   导出对拍 / 文本模式对拍 / fuse 等价）与 `tests/test_text_encoder.py`（编码器结构 + ts
   逐位对拍、tokenizer 黄金序列）。
+
+### 跨实现对齐（LVIS minival / COCO val2017）
+
+同一份官方 `yoloe-26n-seg` 权重、同一组 text prompts、640 输入；两边使用同一评分协议
+（LVIS：faster_coco_eval `lvis_style`，maxDets=100；COCO：COCO 协议，maxDets=100）。
+`--nms` 选择 Non-E2E（o2m + 类感知 NMS），默认 E2E。
+
+| 数据集 | 协议 | 本工程 Box | 本工程 Mask | Ultralytics Box | Ultralytics Mask |
+|---|---|---:|---:|---:|---:|
+| LVIS minival | E2E | 0.2125 | 0.1754 | 0.2231 | 0.1828 |
+| LVIS minival | Non-E2E | **0.2218** | **0.1817** | **0.2228** | **0.1826** |
+| COCO val2017 | E2E | 0.2832 | 0.2337 | 0.2952 | 0.2408 |
+| COCO val2017 | Non-E2E | **0.2952** | **0.2407** | **0.2952** | **0.2407** |
+
+复现命令：
+
+```bash
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival \
+    --eval-max-dets 100 [--nms]
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [--nms]
+```
+
+- Non-E2E 与 Ultralytics 的差距：LVIS ≤0.001，COCO 四位小数一致；AP50、APr/APc/APf、
+  COCO 面积分组差 ≤0.003。
+- E2E 全量验证对 300 候选 top-k 更敏感：即使同输入 fp32 前向逐位一致（见上），同一权重也可能
+  差 ~0.01；跨实现比较以 Non-E2E 为准。
+- 官方 24.7（LVIS minival，text prompts）是论文**检测配置**的 Non-E2E 数字；Ultralytics 用
+  发布的 **seg** checkpoint 自己的 val 是 0.2228，本工程同口径 0.2218——实现对齐，剩余与
+  24.7 的差是“论文检测配置 vs 发布分割权重”。
+- LVIS maxDets 100/300 在 minival 上结果相同；COCO 用标准 maxDets=100。
 
 ## 5. 已知边界
 
