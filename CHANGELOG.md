@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **YOLOE `set_classes` memory**: prompt chunks and the cached TPE are detached after encoding (value-preserving), keeping 1,203-prompt evaluation near 1.8 GiB instead of ~22 GiB.
 - **Zero-detection images count as misses**: both evaluators now set `params.imgIds` to every image traversed (not only images with predictions), so missed GT is no longer excluded from AP/AR; fixes `--limit` subset dilution too.
 
 ## [1.2.0] - 2026-11-04

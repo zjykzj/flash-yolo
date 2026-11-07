@@ -96,10 +96,14 @@ class PtEngine(BaseEngine):
         tokens = tokenize(list(texts)).to(self.device)
         emb = []
         for chunk in tokens.split(batch):  # 官方分块口径（默认 80）
-            emb.append(self._text_encoder(chunk))
+            # 逐 chunk detach：只切断 autograd 引用、不改数值；否则 16 个 chunk 的编码图
+            # 会同时保留（1203 prompt 实测峰值 ~22G）。
+            emb.append(self._text_encoder(chunk).detach())
         emb = torch.cat(emb, dim=0).unsqueeze(0)  # (1, N, 512)
         head = self.model.model[-1]
-        head.set_tpe(head.get_tpe(emb))
+        # 推理件：detach 只切断 autograd 引用、不改数值。否则 1203 个 prompt 的编码图
+        # 会被缓存的 _tpe 一直引用（实测 ~24G 显存全程驻留，大档位评估可能 OOM）。
+        head.set_tpe(head.get_tpe(emb).detach())
         return len(texts)
 
     def _forward(self, img):
