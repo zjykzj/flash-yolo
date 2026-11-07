@@ -6,10 +6,15 @@
 # 的构造口径 name.split("/", 1)[0]）。YOLOE 文本模式评估直接以这些名字做 prompt。
 format: coco
 path: ""
+# train/val 均使用 *_compat.json：LVIS 原始 images 没有 file_name，compat 版本补 file_name
+# 并把类别名对齐到上面的 names（train 图片 = COCO train2017 的硬链接，不重复占盘）。
 eval_style: lvis  # LVIS 协议评估（faster_coco_eval lvis_style；neg/not_exhaustive + maxDets=300）
+train:
+  images: images/train2017
+  ann: annotations/lvis_v1_train_compat.json
 val:
   images: images/val2017
-  ann: annotations/lvis_v1_val.json
+  ann: annotations/lvis_v1_val_compat.json
 names:
   - aerosol can
   - air conditioner
