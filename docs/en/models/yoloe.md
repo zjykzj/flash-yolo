@@ -167,12 +167,13 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   (arch/scale/names/end2end), so `--engine onnx|trt` works without
   `--model/--scale/--classes`; TRT uses a `<engine>.json` sidecar.
 - Visual mode notes: JSON class order = first appearance (the vpe row order), bboxes are refer
-  image pixels, and a relative `image` path resolves against the JSON directory; multiple boxes
-  of one class are OR'ed into one mask. `--visual-prompt` and `--classes` are mutually
-  exclusive; infer/eval require the pt engine (SAVPE runs in-graph), while the class-locked
-  export runs on onnx/trt. `--refer-data` extracts one vpe per class from the refer set's GT
-  boxes; classes without exemplars get zero embeddings (AP 0). Text+visual mixing is not wired
-  yet (the official `get_cls_pe` concatenates them).
+  image pixels, masks match the refer image size, and relative paths resolve against the JSON
+  directory; multiple prompts of one class are OR'ed into one mask. `--classes` combines with
+  `--visual-prompt` for mixed prompts (text classes first, visual classes after; duplicate names
+  error). Infer/eval require the pt engine (SAVPE runs in-graph), while the class-locked export
+  runs on onnx/trt. `--refer-data` extracts one vpe per class from the refer set's GT boxes;
+  classes without exemplars get zero embeddings (AP 0). The official public API has no mixed
+  entry; this project extends the `get_cls_pe` semantics.
 - LVIS evaluation runs on **faster_coco_eval `lvis_style`** (the descriptor's `eval_style: lvis`):
   it honors `neg_category_ids` / `not_exhaustive_category_ids`, uses maxDets=300 and reports
   APr/APc/APf. Pycocotools on LVIS does not produce the LVIS metric; add

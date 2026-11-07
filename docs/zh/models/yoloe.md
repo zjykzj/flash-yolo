@@ -148,10 +148,11 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   （arch/scale/names/end2end），导出后可直接 `--engine onnx|trt`，无需再传
   `--model/--scale/--classes`；TRT 旁车为 `<engine>.json`。
 - 视觉模式说明：JSON 的类别顺序 = 首次出现顺序（vpe 行序一致），bbox 为 refer 图原始像素，
-  相对 `image` 路径按 JSON 所在目录解析；同图同类的多框 OR 成一张掩码。`--visual-prompt`
-  与 `--classes` 互斥；推理/评估只支持 pt 引擎（SAVPE 在图内），导出后的类锁定图可走
-  onnx/trt。`--refer-data` 用参考集 GT 框逐类提取 vpe，缺失类别零嵌入（AP 0）；文本+视觉
-  混合 prompt 暂未接入（官方 `get_cls_pe` 是拼接语义）。
+  mask 与 refer 图同尺寸；相对路径按 JSON 所在目录解析；同类多个示例 OR 成一张掩码。
+  `--classes` 可与 `--visual-prompt` 组合成混合 prompt（文本类在前、视觉类在后；同名报错）。
+  推理/评估只支持 pt 引擎（SAVPE 在图内），导出后的类锁定图可走 onnx/trt。`--refer-data`
+  用参考集 GT 框逐类提取 vpe，缺失类别零嵌入（AP 0）；官方公开 API 无混合入口，本工程按
+  `get_cls_pe` 的拼接语义扩展。
 - LVIS 评估走 **faster_coco_eval `lvis_style`**（`eval_style: lvis` 描述符字段）：处理
   `neg_category_ids` / `not_exhaustive_category_ids`、maxDets=300，并输出 APr/APc/APf。
   用 pycocotools 评 LVIS 得到的不是 LVIS 指标；与 ultralytics 代码逐字对齐时加
