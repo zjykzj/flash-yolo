@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **LVIS-protocol evaluation**: `eval_style: lvis` descriptors evaluate through `faster_coco_eval` (`lvis_style`, maxDets=300) and report APr/APc/APf; COCO descriptors keep pycocotools. `--eval-max-dets 100` mirrors ultralytics; faster-coco-eval is a runtime dependency.
+- **LVIS minival descriptor**: `config/datasets/local/lvis-minival.yaml` evaluates the 5,000-image COCO val2017 minival split, with loader-compatible and Ultralytics-style image lists.
+- **LVIS evaluator contract tests**: `tests/test_lvis_evaluator.py` covers negative-image FPs, not-exhaustive predictions, unlisted image/category pairs, zero-detection images, APr/APc/APf and the segm RLE path.
+
+### Fixed
+
+- **Zero-detection images count as misses**: both evaluators now set `params.imgIds` to every image traversed (not only images with predictions), so missed GT is no longer excluded from AP/AR; fixes `--limit` subset dilution too.
+
 ## [1.2.0] - 2026-11-04
 
 ### Added

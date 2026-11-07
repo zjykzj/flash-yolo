@@ -9,6 +9,7 @@ safetensors
 onnx
 onnxruntime
 pycocotools  # Windows 上若编译失败可用 pycocotools-windows 替代
+faster-coco-eval>=1.6.7  # LVIS 协议评估（lvis_style；neg/not_exhaustive + maxDets=300）
 
 # 可选依赖（按需单独安装；标注“替代”的不要与上面的默认项同时装）
 # matplotlib                 # 训练报告图（results.png / PR_curve.png / confusion_matrix）

@@ -86,7 +86,8 @@ python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors --image asse
 
 # 评估：数据集自身的类别名即 prompt
 python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco
-python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis   # LVIS 1203 类
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis            # LVIS 全量 val
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival    # 官方 minival 口径
 
 # 导出：prompt 融合进分类卷积——单输入、类锁定 ONNX
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
@@ -101,6 +102,10 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 - 文本模式说明：`--classes` 逗号分隔，每个名字即一个 prompt/类别；LVIS prompt 取每类名第一
   个同义词（`name.split("/", 1)[0]`，官方口径——`config/datasets/lvis.yaml` 已按此存储）；
   类锁定 ONNX 拒收新 prompt（`is_fused` 守卫）；文本模式推理/评估目前只支持 `--engine pt`。
+- LVIS 评估走 **faster_coco_eval `lvis_style`**（`eval_style: lvis` 描述符字段）：处理
+  `neg_category_ids` / `not_exhaustive_category_ids`、maxDets=300，并输出 APr/APc/APf。
+  用 pycocotools 评 LVIS 得到的不是 LVIS 指标；与 ultralytics 代码逐字对齐时加
+  `--eval-max-dets 100`（它没有覆盖 faster_coco_eval 的默认 maxDets）。
 - 官方权重下载（ultralytics assets）：`yoloe-26n-seg-pf.pt` 等见
   `https://github.com/ultralytics/assets/releases/download/v8.4.0/`。
 
@@ -119,6 +124,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 - **导出对拍（文本）**：fuse 后的 pt 与未 fuse 差 1.8e-6、onnx 差 6e-5——conf>0.25 的检出
   完全一致、零类别翻转。
 - **COCO 冒烟**（20 图，管线验证口径，pf）：Box 0.3485 / Mask 0.2865 mAP50-95。
+- **LVIS 协议**：`tests/test_lvis_evaluator.py` 在合成数据上验证 neg / not_exhaustive /
+  未列出 pair 三条 LVIS 规则，以及零检出图计入、APr/APc/APf、segm RLE 路径；`--data
+  lvis-minival` 端到端跑通 Box + Mask。
 - 回归闸门 `tests/test_yoloe.py`（结构 / 转换 metadata / strict load / 逐位对齐 / 词汇映射 /
   导出对拍 / 文本模式对拍 / fuse 等价）与 `tests/test_text_encoder.py`（编码器结构 + ts
   逐位对拍、tokenizer 黄金序列）。

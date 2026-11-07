@@ -99,7 +99,8 @@ python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors --image asse
 
 # evaluation: the dataset's own class names become the prompts
 python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco
-python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis   # 1203 LVIS classes
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis            # full LVIS val
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival    # official minival protocol
 
 # export: the prompts are fused into the cls conv — a single-input, class-locked ONNX
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
@@ -117,6 +118,11 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   LVIS prompts use each category's first synonym (`name.split("/", 1)[0]` — the official
   convention, so `config/datasets/lvis.yaml` stores them already split); the class-locked ONNX
   rejects new prompts (`is_fused` guard); text-mode infer/eval currently require `--engine pt`.
+- LVIS evaluation runs on **faster_coco_eval `lvis_style`** (the descriptor's `eval_style: lvis`):
+  it honors `neg_category_ids` / `not_exhaustive_category_ids`, uses maxDets=300 and reports
+  APr/APc/APf. Pycocotools on LVIS does not produce the LVIS metric; add
+  `--eval-max-dets 100` for a literal match with ultralytics' current val (it leaves
+  faster_coco_eval's default maxDets untouched).
 - Official weights (ultralytics assets):
   `https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26n-seg-pf.pt` (etc.).
 
@@ -140,6 +146,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   same detections above conf=0.25, zero class flips.
 - **COCO smoke** (20 images, pipeline-validation protocol, pf): Box 0.3485 / Mask 0.2865
   mAP50-95.
+- **LVIS protocol**: `tests/test_lvis_evaluator.py` verifies the three LVIS rules (neg /
+  not_exhaustive / unlisted pairs) on synthetic data, plus zero-detection images, APr/APc/APf
+  and the segm RLE path; `--data lvis-minival` runs Box + Mask end to end.
 - Regression gates in `tests/test_yoloe.py` (structure / conversion metadata / strict load /
   bit-parity / vocabulary mapping / export parity / text-mode parity / fuse equivalence) and
   `tests/test_text_encoder.py` (encoder structure + ts bit-parity, tokenizer goldens).

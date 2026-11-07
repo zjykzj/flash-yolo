@@ -1,8 +1,9 @@
 # Eval
 
 > Entry point: `python scripts/eval.py --weights <w> --data <name|.yaml>`.
-> **This script is the only source of external numbers** (the pycocotools pipeline); the
-> FastMetrics printed during training are for trends and best-picking only.
+> **This script is the only source of external numbers**: COCO protocol runs on pycocotools,
+> LVIS protocol on faster_coco_eval (`lvis_style`); the FastMetrics printed during training are
+> for trends and best-picking only.
 
 ## 1. Usage
 
@@ -15,6 +16,8 @@ python scripts/eval.py --weights w.safetensors --data coco --split val --limit 1
 python scripts/eval.py --weights weights/yolo26n-seg.safetensors --data coco            # Box + Mask
 python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco       # pf vocab mapping
 python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis          # text prompts (1203 classes)
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival  # LVIS minival (5k)
+python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-dets 100  # ultralytics-matching protocol
 ```
 
 | Argument | Default | Description |
@@ -28,18 +31,43 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis  
 | `--conf` / `--iou` / `--max-det` | 0.001 / 0.7 / 300 | matches the official val convention |
 | `--imgsz` | metadata > 640 | onnx follows the graph shape (conflicts error out) |
 | `--limit` | 0 (full) | evaluate the first N images only (GT restricted to the same subset) |
+| `--eval-style` | `auto` | `auto` (descriptor `eval_style`) / `coco` / `lvis` |
+| `--eval-max-dets` | LVIS 300 | evaluator maxDets; `100` mirrors ultralytics' current val behavior |
 | `--summary-only` | off | print only the all row |
 | `--device` | auto | pt engine device |
 
-## 2. The two metric conventions
+## 2. Metric conventions and evaluation protocols
 
 | Convention | Implementation | Use | Approximations |
 |---|---|---|---|
-| **Formal** (this script) | pycocotools | external numbers, acceptance | — |
+| **Formal · COCO protocol** (default) | pycocotools | COCO external numbers, acceptance | — |
+| **Formal · LVIS protocol** | faster_coco_eval (`lvis_style=True`) | LVIS / YOLOE open-vocabulary comparisons | — |
 | In-training | pure-numpy FastMetrics | per-epoch trends + picking `best.safetensors` | ignores crowd, maxDets=100, no area grouping; greedy matching + 101-point interpolation |
 
 FastMetrics tracks the formal convention well, but **cross-run comparisons and external
 references always use the formal convention**.
+
+### 2.1 LVIS protocol (`eval_style: lvis`)
+
+LVIS annotations are not exhaustive, so evaluation must honor two image-level fields that
+pycocotools does not understand:
+
+- `neg_category_ids`: categories **verified absent** in that image — detections count as FP;
+- `not_exhaustive_category_ids`: annotations for that category are **incomplete** — its
+  detections are ignored;
+- detections on `(image, category)` pairs that are neither GT nor in either list are dropped.
+
+LVIS dataset descriptors therefore set `eval_style: lvis`; the evaluator switches to
+faster_coco_eval with `lvis_style=True`, the official maxDets=300, and additionally reports
+`APr / APc / APf`. **Running pycocotools on LVIS does not produce the LVIS metric** (the same
+predictions can differ by several times) and must not be compared with published numbers.
+
+- `--eval-max-dets 100`: ultralytics' current val sets only `lvis_style` and leaves
+  faster_coco_eval's default `maxDets=[1,10,100]`; use this for a literal code-level match.
+  The product default remains the official 300.
+- LVIS minival is the 5,000 COCO val2017 images; the `lvis-minival` descriptor is ready.
+- `lvis_style` requires a `frequency` (r/c/f) on every category; the evaluator errors out
+  clearly when it is missing.
 
 ## 3. Reading the output
 
@@ -53,11 +81,14 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
        model-only inference 7.5 ms/image (133 img/s) at shape (1, 3, 640, 640)
 ```
 
-- The per-class table lists only classes with GT inside the evaluation scope; pycocotools' `-1`
-  invalid combinations are dropped during aggregation.
+- The per-class table lists only classes with GT inside the evaluation scope; the evaluator's
+  `-1` invalid combinations are dropped during aggregation.
+- Under the LVIS protocol the last column is `AR@300` (or the `--eval-max-dets` value), plus an
+  `LVIS freq  APr ... · APc ... · APf ...` line.
 - `Speed` is the per-stage cost of the evaluation pipeline (including loading and
   postprocessing); `model-only` is pure inference.
-- Results land in `runs/val/valN/` (with `run.log`).
+- Results land in `runs/val/valN/` (with `run.log`); `results.json` is a COCO result list that
+  can be rescored directly with faster_coco_eval.
 
 ## 4. E2E vs NMS
 
@@ -94,7 +125,9 @@ is metric-implementation noise.
 - **text prompts (`-seg` weights)**: the dataset's own names become the prompts
   (`set_classes`); `--data lvis` evaluates against the 1,203 LVIS categories
   (`config/datasets/lvis.yaml`, first-synonym names — the official LVIS prompt convention).
-  Requires `--engine pt` and `mobileclip2_b.safetensors` next to the model weights.
+  Compare with the official LVIS minival numbers via `--data lvis-minival` (faster_coco_eval
+  `lvis_style`, see §2.1). Requires `--engine pt` and `mobileclip2_b.safetensors` next to the
+  model weights.
 - Both modes report Box + Mask tables like the other segmentation architectures.
 - Model details: [../models/yoloe.md](../models/yoloe.md).
 
@@ -112,9 +145,17 @@ The full weight list, download links and latency live on the model pages
 
 ## 8. Gotchas
 
-- **`--limit` must restrict GT too**: the evaluator aligns the subset via `params.imgIds` — keep
-  this in mind when editing the metrics code yourself.
+- **`--limit` must restrict GT too**: the evaluator sets `params.imgIds` to every image traversed
+  (including zero-detection images) — do not regress to "only images with predictions", which
+  would exclude misses.
 - **Empty results**: `loadRes([])` raises IndexError; the evaluator short-circuits to all zeros.
+- **LVIS `frequency`**: `lvis_style=True` requires `frequency` (r/c/f) on every category; a plain
+  COCO json with `eval_style: lvis` errors out in the evaluator constructor.
+- **LVIS maxDets default**: faster_coco_eval's `Params.maxDets` defaults to `[1,10,100]`; the
+  official LVIS value is 300 and this project sets it explicitly. Use `--eval-max-dets 100` for
+  an ultralytics-matching comparison.
+- **`--eval-max-dets` is LVIS-only**: COCO protocol keeps maxDets=100 (pycocotools convention);
+  passing the flag otherwise errors out.
 - **crowd**: COCO keeps it (official convention); YOLO has no crowd — the val difference comes
   only from this.
 - **segm without masks errors out**: `iou_type="segm"` receiving Detections without `masks`

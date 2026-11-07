@@ -6,6 +6,7 @@
 # 的构造口径 name.split("/", 1)[0]）。YOLOE 文本模式评估直接以这些名字做 prompt。
 format: coco
 path: ""
+eval_style: lvis  # LVIS 协议评估（faster_coco_eval lvis_style；neg/not_exhaustive + maxDets=300）
 val:
   images: images/val2017
   ann: annotations/lvis_v1_val.json

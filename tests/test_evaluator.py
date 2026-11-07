@@ -91,6 +91,29 @@ def test_wrong_class(tmp_path):
     assert m["mAP@[.5:.95]"] == 0.0
 
 
+def test_zero_detection_image_counts_as_miss(tmp_path):
+    """零检出图也必须计入评估：imgIds = 本次遍历的全部图，而不是只有预测的图"""
+    ann_file = _make_ann_file(
+        tmp_path,
+        images=[{"id": 1, "file_name": "a.jpg", "width": 640, "height": 640},
+                {"id": 2, "file_name": "b.jpg", "width": 640, "height": 640}],
+        annotations=[
+            {"id": 1, "image_id": 1, "category_id": 0, "bbox": [10, 10, 90, 90], "area": 8100, "iscrowd": 0},
+            {"id": 2, "image_id": 2, "category_id": 0, "bbox": [10, 10, 90, 90], "area": 8100, "iscrowd": 0},
+        ],
+    )
+    ev = CocoEvaluator(ann_file)
+    ev.update(1, Detections(boxes=np.array([[10, 10, 100, 100]], np.float32),
+                            scores=np.array([0.99], np.float32),
+                            class_ids=np.array([0], np.int64)))
+    # 第二张图零检出：仍然要计入评估（其 GT 记为漏检）
+    ev.update(2, Detections(boxes=np.zeros((0, 4), np.float32), scores=np.zeros((0,), np.float32),
+                            class_ids=np.zeros((0,), np.int64)))
+    m = ev.compute()
+    assert m["images"] == 2
+    assert m["mAP@[.5:.95]"] < 1.0  # 旧实现会排除图 2 -> 1.0
+
+
 # ---- 分割（segm）口径 ----
 
 

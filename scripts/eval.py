@@ -40,7 +40,8 @@ from config.datasets import load_dataset
 from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from data.build import build_eval_dataset
 from data.scan import scan_summary
-from eval.coco_evaluator import CocoEvaluator, build_vocab_map
+from eval import build_evaluator
+from eval.coco_evaluator import build_vocab_map
 from model.build import ARCHS, YOLO26_FAMILY, YOLOE26_FAMILY, arch_display_name, arch_task
 from model.weights import arch_has_scale, load_meta, prompt_mode_from_weights, resolve_arch_scale, resolve_imgsz
 from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
@@ -57,9 +58,10 @@ logger = get_logger(__name__)
 _NAME_W = 15
 # 前两列按表头词留位（Images=6 / Instances=9 字符），否则表头会粘成 "ImagesInstances"
 _COL_W = (7, 10, 10, 10, 10, 10, 10)  # Images / Instances / P / R / mAP50 / mAP50-95 / AR@100
-TABLE_HEADER = ("      " + f"{'Class':<{_NAME_W}}"
-                + "".join(f"{c:>{w}}" for c, w in zip(("Images", "Instances", "P", "R",
-                                                       "mAP50", "mAP50-95", "AR@100"), _COL_W)))
+def table_header(ar_label="AR@100"):
+    return ("      " + f"{'Class':<{_NAME_W}}"
+            + "".join(f"{c:>{w}}" for c, w in zip(("Images", "Instances", "P", "R",
+                                                   "mAP50", "mAP50-95", ar_label), _COL_W)))
 
 
 def _fmt_table_row(name, n_img, n_inst, p, r, ap50, ap, ar):
@@ -91,6 +93,10 @@ def main():
     parser.add_argument("--imgsz", type=int, default=None,
                         help="model input size (default: weights metadata, else 640)")
     parser.add_argument("--limit", type=int, default=0, help="evaluate first N images only (0=all)")
+    parser.add_argument("--eval-style", dest="eval_style", choices=["auto", "coco", "lvis"], default="auto",
+                        help="evaluation protocol (default: from the dataset descriptor)")
+    parser.add_argument("--eval-max-dets", dest="eval_max_dets", type=int, default=None,
+                        help="evaluator maxDets for LVIS (default 300; use 100 to mirror ultralytics)")
     parser.add_argument("--summary-only", action="store_true",
                         help="print the all-classes row only (per-class rows are shown by default)")
     parser.add_argument("--verbose", action="store_true", help="show third-party (pycocotools) debug output")
@@ -103,6 +109,15 @@ def main():
         spec = load_dataset(args.data)
     except (ValueError, FileNotFoundError) as e:
         parser.error(str(e))
+
+    # 评估协议：描述符 eval_style（默认 coco）> CLI 显式覆盖；LVIS 协议走 faster_coco_eval
+    eval_style = spec.eval_style if args.eval_style == "auto" else args.eval_style
+    if eval_style == "lvis" and spec.format != "coco":
+        parser.error("LVIS evaluation requires a COCO-format dataset descriptor (eval_style: lvis)")
+    if args.eval_max_dets is not None and eval_style != "lvis":
+        parser.error("--eval-max-dets is only valid with LVIS evaluation (--eval-style lvis)")
+    eval_max_dets = (300 if args.eval_max_dets is None else args.eval_max_dets) if eval_style == "lvis" else 100
+    eval_backend = "faster-coco-eval" if eval_style == "lvis" else "pycocotools"
 
     # 架构/档位从权重文件名推（yolo26s -> yolo26/s；yolov3-tiny -> v3）——提前解析，参数预览要用
     arch, scale = resolve_arch_scale(args.weights, args.model, args.scale)
@@ -139,7 +154,7 @@ def main():
     attach_file_log(run_dir / "run.log")
     log_params(logger, __file__, weights=args.weights, data=args.data, split=args.split,
                model=arch, engine=args.engine, conf=args.conf, iou=args.iou, max_det=args.max_det,
-               imgsz=imgsz)
+               imgsz=imgsz, eval_style=eval_style, eval_max_dets=eval_max_dets)
 
     # ---- 头部（与训练日志同一套五段排版：环境 -> 模型 -> 数据集 -> 评估参数 -> 细节）----
     # ① 环境：设备名不依赖 engine（engine 构建 + 3 次 warmup 约 1s，这行要先落地；onnx 固定 CPU）
@@ -188,9 +203,10 @@ def main():
                   f"{dataset.n_missing} missing", name=logger.name)
     n_total = len(dataset) if not args.limit else min(args.limit, len(dataset))
 
-    # ④ 评估参数
-    logger.info(f"eval:  split {args.split} · images {n_total}/{len(dataset)} · "
-                f"conf {args.conf} · iou {args.iou} · max_det {args.max_det}")
+    # ④ 评估参数（区分模型侧 max_det 与评估器 maxDets）
+    logger.info(f"eval:  split {args.split} · protocol {eval_style} ({eval_backend}) · "
+                f"images {n_total}/{len(dataset)} · conf {args.conf} · iou {args.iou} · "
+                f"model max_det {args.max_det} · eval maxDets {eval_max_dets}")
 
     # ---- 评估循环 ----
     # 任务轴：分割跑两个评估器（bbox + segm），指标口径与官方发布的 Box/Mask 双表一致；
@@ -198,10 +214,14 @@ def main():
     heads = ["Box"]
     if arch_task(arch) == "segment":
         heads.append("Mask")
-    with redirect_prints(logger):
-        evaluators = [(head, CocoEvaluator(dataset.gt_source(), nc=len(dataset.names),
-                                           iou_type="segm" if head == "Mask" else "bbox"))
-                      for head in heads]
+    try:  # 协议/依赖错误给干净的 parser.error（LVIS frequency 缺失、faster-coco-eval 未装）
+        with redirect_prints(logger):
+            evaluators = [(head, build_evaluator(dataset.gt_source(), nc=len(dataset.names),
+                                                 iou_type="segm" if head == "Mask" else "bbox",
+                                                 eval_style=eval_style, max_dets=eval_max_dets))
+                          for head in heads]
+    except (ValueError, ImportError) as e:
+        parser.error(str(e))
     bar = ProgressBar(n_total, desc="val")
     t0 = time.monotonic()  # 单调时钟（WSL2 墙钟会跳变，见 utils/progress.py 注释）
     t_window, n_window = t0, 0
@@ -240,16 +260,18 @@ def main():
     multi = len(metrics_by_head) > 1  # 分割：Box / Mask 两组表
 
     console_lines, file_lines, detail_lines = [], [], []
+    ar_key = f"AR@{eval_max_dets}"
+    header = table_header(ar_key)
     for head, metrics in metrics_by_head:
         n_instances = sum(r[2] for r in metrics["per_class"])
         full_table = [_fmt_table_row("all", metrics["images"], n_instances, metrics["P"], metrics["R"],
-                                     metrics["mAP@50"], metrics["mAP@[.5:.95]"], metrics["AR@100"])]
+                                     metrics["mAP@50"], metrics["mAP@[.5:.95]"], metrics[ar_key])]
         full_table += [_fmt_table_row(*row) for row in metrics["per_class"]]
         if multi:
             console_lines.append(bold(f"      {head} metrics"))
             file_lines.append(f"      {head} metrics")
-        console_lines += [TABLE_HEADER] + (full_table[:1] if args.summary_only else full_table)
-        file_lines += [TABLE_HEADER] + full_table  # 文件始终写全表（记录载体，与终端裁剪无关）
+        console_lines += [header] + (full_table[:1] if args.summary_only else full_table)
+        file_lines += [header] + full_table  # 文件始终写全表（记录载体，与终端裁剪无关）
         tag = f" ({head})" if multi else ""
         detail_lines.append(
             f"      {f'Size buckets{tag}':<14} mAP_small {metrics['mAP_small']:.4f} · "
@@ -259,6 +281,10 @@ def main():
             f"      {f'Thresholds{tag}':<14} mAP50 {metrics['mAP@50']:.4f} · "
             f"mAP75 {metrics['mAP@75']:.4f} · mAP50-95 {metrics['mAP@[.5:.95]']:.4f}"
             f"   (IoU 0.50 / 0.75 / 0.50:0.95)")
+        if eval_style == "lvis":
+            detail_lines.append(
+                f"      {f'LVIS freq{tag}':<14} APr {metrics['APr']:.4f} · APc {metrics['APc']:.4f} · "
+                f"APf {metrics['APf']:.4f}   (rare / common / frequent)")
     for line in console_lines + detail_lines:
         logger.info(line)
     avg = {k: sum(v) / len(v) for k, v in timings.items()}
@@ -285,7 +311,15 @@ def main():
         ref_lines = ["Reference: Flash-YOLO (this repo's own design) — GFLOPs below yolo26n by design"]
     elif arch in YOLOE26_FAMILY:
         ref = "official yoloe-26-seg" if text_mode else "official yoloe-26-seg-pf"
-        ref_lines = [f"Reference: {ref} — LVIS/COCO numbers per the ultralytics docs"]
+        if eval_style == "lvis":
+            ref_lines = [
+                f"Reference: {ref} — LVIS minival (ultralytics docs, n scale): "
+                f"text 24.7 / visual 21.9 (Non-E2E); pf 16.6 E2E / 17.7 Non-E2E",
+                f"Protocol: official LVIS maxDets=300; ultralytics' current val leaves "
+                f"faster-coco-eval at maxDets=100 (use --eval-max-dets 100 to mirror)",
+            ]
+        else:
+            ref_lines = [f"Reference: {ref} — LVIS/COCO numbers per the ultralytics docs"]
     else:
         ref_lines = ["Reference: official darknet yolov3-tiny = 33.1 AP50 (COCO test-dev, 416; val2017 here)"]
     for line in ("", speed_line, model_line, done_line, *ref_lines):
@@ -293,7 +327,9 @@ def main():
 
     # ---- 保存到 runs/val/valN（递增目录：完整指标表 + COCO 结果 json）----
     # metrics.txt 始终写全表（含 per-class），与 --summary-only 的终端裁剪无关：文件是记录载体
-    lines = [f"val: {args.split} {n_total} images · conf={args.conf} · iou={args.iou} · max_det={args.max_det}",
+    lines = [f"val: {args.split} {n_total} images · conf={args.conf} · iou={args.iou} · "
+             f"model max_det={args.max_det} · protocol={eval_style} ({eval_backend}) · "
+             f"eval maxDets={eval_max_dets}",
              *file_lines, "", *detail_lines, speed_line, model_line, done_line, *ref_lines]
     (run_dir / "metrics.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     with open(run_dir / "results.json", "w", encoding="utf-8") as f:

@@ -137,6 +137,7 @@ class CocoEvaluator:
             cat_ids = sorted(self.coco_gt.getCatIds())
             self.idx_to_cat_id = {i: cid for i, cid in enumerate(cat_ids)}  # 0..nc-1 -> COCO category_id
         self.results = []
+        self.image_ids = set()  # 全部评估图（含零检出）——compute 时作为 params.imgIds
 
     def _materialize(self):
         """惰性 GT：首次需要时调用 callable 现搭（compute 已在 redirect_prints 内，杂音不外泄）"""
@@ -149,7 +150,9 @@ class CocoEvaluator:
 
         segm 口径下每条结果附 RLE（掩码现编码；Detections.masks 是原图分辨率，与 GT 同尺度）。
         bbox 字段始终写——同一份结果可同时喂给 bbox 与 segm 两个评估器。
+        即使 detections 为空也记录 image_id：漏检图必须计入评估，否则 mAP 虚高。
         """
+        self.image_ids.add(int(image_id))
         masks = getattr(detections, "masks", None)
         if self.iou_type == "segm" and masks is None:
             raise ValueError("segm evaluation requires Detections.masks (engine returned none)")
@@ -172,8 +175,9 @@ class CocoEvaluator:
         coco_gt = self._materialize()
         coco_dt = coco_gt.loadRes(self.results)
         coco_eval = COCOeval(coco_gt, coco_dt, self.iou_type)
-        # 评估范围 = 有预测的图片集合（否则 --limit 子集评估会被全量 GT 稀释）
-        coco_eval.params.imgIds = sorted({r["image_id"] for r in self.results})
+        # 评估范围 = 本次实际遍历的图片集合（含零检出图；否则漏检不计入，--limit 也会被稀释）
+        coco_eval.params.imgIds = (sorted(self.image_ids) if self.image_ids
+                                   else sorted({r["image_id"] for r in self.results}))
         coco_eval.evaluate()
         coco_eval.accumulate()
         coco_eval.summarize()

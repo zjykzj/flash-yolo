@@ -1,8 +1,8 @@
 # 评估（Eval）
 
 > 入口：`python scripts/eval.py --weights <w> --data <name|.yaml>`。
-> **对外数字只有一个来源就是本脚本**（pycocotools 管线）；训练中打印的 FastMetrics 只用于
-> 趋势与选 best。
+> **对外数字只有一个来源就是本脚本**：COCO 协议走 pycocotools，LVIS 协议走 faster_coco_eval
+> （`lvis_style`）；训练中打印的 FastMetrics 只用于趋势与选 best。
 
 ## 1. 用法
 
@@ -15,6 +15,8 @@ python scripts/eval.py --weights w.safetensors --data coco --split val --limit 1
 python scripts/eval.py --weights weights/yolo26n-seg.safetensors --data coco            # Box + Mask
 python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco       # pf 词汇映射
 python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis          # 文本 prompt（1203 类）
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival  # LVIS minival（5k）
+python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-dets 100  # 对齐 ultralytics 口径
 ```
 
 | 参数 | 默认 | 说明 |
@@ -28,17 +30,37 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis  
 | `--conf` / `--iou` / `--max-det` | 0.001 / 0.7 / 300 | 与官方 val 口径一致 |
 | `--imgsz` | metadata > 640 | onnx 以图内 shape 为准（冲突报错） |
 | `--limit` | 0（全量） | 只评前 N 张（GT 同步限制到该子集） |
+| `--eval-style` | `auto` | `auto`（读描述符 `eval_style`）/ `coco` / `lvis` |
+| `--eval-max-dets` | LVIS 300 | 评估器 maxDets；`100` 用于对齐 ultralytics 当前 val 行为 |
 | `--summary-only` | off | 只打印 all 行 |
 | `--device` | auto | pt 引擎设备 |
 
-## 2. 两套指标口径
+## 2. 指标口径与评估协议
 
 | 口径 | 实现 | 用途 | 近似点 |
 |---|---|---|---|
-| **正式**（本脚本） | pycocotools | 对外数字、验收 | — |
+| **正式 · COCO 协议**（默认） | pycocotools | COCO 对外数字、验收 | — |
+| **正式 · LVIS 协议** | faster_coco_eval（`lvis_style=True`） | LVIS / YOLOE 开放词汇对比 | — |
 | 训练中 | 纯 numpy FastMetrics | 每轮趋势 + 选 `best.safetensors` | 忽略 crowd、maxDets=100、无面积分组；贪婪匹配 + 101 点插值 |
 
 FastMetrics 与正式口径贴合良好，但**跨 run 比较/对外引用一律用正式口径**。
+
+### 2.1 LVIS 协议（`eval_style: lvis`）
+
+LVIS 的标注不是穷举的，评估必须处理两个图级字段，pycocotools 不认识它们：
+
+- `neg_category_ids`：该图**确认不存在**的类别——出现预测记 FP；
+- `not_exhaustive_category_ids`：该图该类标注**不完整**——该类预测忽略；
+- 既不在 GT、也不在 neg/not_exhaustive 列表的 `(图, 类)` 预测直接丢弃。
+
+因此 LVIS 数据集描述符使用 `eval_style: lvis`，评估器切到 faster_coco_eval 的
+`lvis_style=True`，官方 maxDets=300，并额外输出 `APr / APc / APf`。**直接用 pycocotools
+评 LVIS 得到的不是 LVIS 指标**（实测同一份预测可差数倍），不能和官方数字对比。
+
+- `--eval-max-dets 100`：ultralytics 当前 val 只设置 `lvis_style`，没有改 faster_coco_eval
+  的默认 `maxDets=[1,10,100]`；要与其代码逐字对齐时用这个值。产品默认仍是官方 300。
+- LVIS minival = COCO val2017 的 5,000 张图；本机描述符 `lvis-minival` 已就绪。
+- `lvis_style` 要求 categories 带 `frequency`（r/c/f），缺失会在构造评估器时报错。
 
 ## 3. 输出解读
 
@@ -52,9 +74,12 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
        model-only inference 7.5 ms/image (133 img/s) at shape (1, 3, 640, 640)
 ```
 
-- per-class 表只列评估范围内有 GT 的类别；pycocotools 的 `-1` 无效组合在聚合时剔除。
+- per-class 表只列评估范围内有 GT 的类别；评估器的 `-1` 无效组合在聚合时剔除。
+- LVIS 协议下最后一列是 `AR@300`（或 `--eval-max-dets` 指定的值），并多一行
+  `LVIS freq  APr ... · APc ... · APf ...`。
 - `Speed` 是评估管线分段耗时（含加载与后处理）；`model-only` 是纯推理。
-- 结果落在 `runs/val/valN/`（含 `run.log`）。
+- 结果落在 `runs/val/valN/`（含 `run.log`）；`results.json` 是 COCO result 列表，可直接交给
+  faster_coco_eval 重新打分。
 
 ## 4. E2E vs NMS
 
@@ -85,8 +110,9 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
   被丢弃（`CocoEvaluator` 契约不变）。
 - **文本 prompt（`-seg` 权重）**：数据集自身的类别名即 prompt（`set_classes`）；`--data lvis`
   对 1,203 个 LVIS 类别评估（`config/datasets/lvis.yaml`，取每类名第一个同义词——官方
-  LVIS prompt 口径）。目前仅 `--engine pt`，且 `mobileclip2_b.safetensors` 需与模型权重
-  同目录。
+  LVIS prompt 口径）。官方 LVIS minival 对比用 `--data lvis-minival`，走 faster_coco_eval
+  `lvis_style`（见 §2.1）。目前仅 `--engine pt`，且 `mobileclip2_b.safetensors` 需与模型
+  权重同目录。
 - 两种模式都像其他分割架构一样自动出 Box + Mask 双表。
 - 模型细节：[../models/yoloe.md](../models/yoloe.md)。
 
@@ -103,8 +129,15 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 
 ## 8. 坑
 
-- **`--limit` 必须同时限制 GT**：评估器已按 `params.imgIds` 对齐子集；自己改指标代码时注意。
+- **`--limit` 必须同时限制 GT**：评估器按"本次遍历的全部 image_id"设置 `params.imgIds`
+  （含零检出图）；自己改指标代码时注意不要退回到"只用有预测的图"——那会把漏检排除掉。
 - **空结果**：`loadRes([])` 会 IndexError；评估器对空结果短路返回全 0。
+- **LVIS 的 `frequency`**：`lvis_style=True` 要求每个 category 带 `frequency`（r/c/f）；
+  普通 COCO json 用 `eval_style: lvis` 会在构造评估器时报错。
+- **LVIS maxDets 默认值**：faster_coco_eval 的 `Params.maxDets` 默认 `[1,10,100]`；
+  LVIS 官方是 300，本工程显式设置为 300。与 ultralytics 对比时用 `--eval-max-dets 100`。
+- **`--eval-max-dets` 只对 LVIS 生效**：COCO 协议的 maxDets 固定 100（pycocotools 口径），
+  传入会直接报错。
 - **crowd**：COCO 侧保留（官方口径）；YOLO 侧无 crowd，val 差异只来自这一项。
 - **segm 缺掩码直接报错**：`iou_type="segm"` 收到无 `masks` 的 Detections 会抛 ValueError，
   不静默退化成框评估。

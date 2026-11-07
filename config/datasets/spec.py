@@ -4,6 +4,7 @@ schema（完整模板见 config/datasets/coco.yaml）：
 
     format: coco | yolo       # 必填：标注读取方式
     path: ""                  # 数据集根；相对路径以本 yaml 所在目录为基准；空 = 只用绝对路径
+    eval_style: coco | lvis   # 可选：评估协议（默认 coco；lvis 走 faster_coco_eval lvis_style）
     names: [...] | {0: ...}   # 必填：index = 类别 id，长度 = nc（列表或映射等价）
     vocab_synonyms: {..: ..}  # 可选：数据集类名 -> 开放词汇模型词汇名（评估映射用；见 coco.yaml）
     train:                    # 角色键：train / val / test（test 接受但当前不消费）
@@ -56,6 +57,7 @@ class DatasetSpec:
     names: dict[int, str]  # 0..nc-1 -> 类别名
     roles: dict[str, RoleSpec]
     vocab_synonyms: dict[str, str] = field(default_factory=dict)  # 数据集类名 -> 词汇名（可选）
+    eval_style: str = "coco"  # 评估协议：coco（pycocotools）| lvis（faster_coco_eval lvis_style）
 
     @property
     def nc(self):
@@ -174,7 +176,7 @@ def parse_descriptor(path, name=None) -> DatasetSpec:
     """描述符 yaml -> DatasetSpec（完整校验；解析出的路径全部为绝对路径）"""
     path = Path(path).resolve()
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    for k in sorted(set(raw) - {"format", "path", "names", "vocab_synonyms", *ROLES}):
+    for k in sorted(set(raw) - {"format", "path", "eval_style", "names", "vocab_synonyms", *ROLES}):
         if isinstance(raw[k], dict):
             raise ValueError(f"{path.name}: unknown role {k!r}; roles must be one of {list(ROLES)}")
         logger.warning(f"{path.name} 未识别字段（忽略）: {k}")
@@ -182,6 +184,12 @@ def parse_descriptor(path, name=None) -> DatasetSpec:
     fmt = raw.get("format")
     if fmt not in FORMATS:
         raise ValueError(f"{path.name}: 'format' must be one of {list(FORMATS)}, got {fmt!r}")
+    eval_style = raw.get("eval_style", "coco")
+    if eval_style not in ("coco", "lvis"):
+        raise ValueError(f"{path.name}: 'eval_style' must be 'coco' or 'lvis', got {eval_style!r}")
+    if eval_style == "lvis" and fmt != "coco":
+        raise ValueError(f"{path.name}: eval_style 'lvis' requires format 'coco' "
+                         f"(YOLO labels carry no LVIS neg/not_exhaustive fields)")
     if "names" not in raw:
         raise ValueError(f"{path.name}: missing required key 'names'")
     names = normalize_names(raw["names"], path.name)
@@ -205,7 +213,7 @@ def parse_descriptor(path, name=None) -> DatasetSpec:
         raise ValueError(f"{path.name}: 'vocab_synonyms' must be a non-empty {{dataset name: vocab name}} mapping")
 
     return DatasetSpec(name=name or path.stem, source=path, format=fmt, root=root, names=names, roles=roles,
-                       vocab_synonyms=vocab_synonyms)
+                       vocab_synonyms=vocab_synonyms, eval_style=eval_style)
 
 
 def load_dataset(name_or_path) -> DatasetSpec:
