@@ -218,7 +218,8 @@ def main():
                         help="video only: display frames in a window (needs a GUI; q quits)")
     parser.add_argument("--engine", choices=["pt", "onnx", "trt"], default="pt")
     parser.add_argument("--conf", type=float, default=0.25, help="confidence threshold")
-    parser.add_argument("--nms", action="store_true", help="use o2m+NMS path (yolo26 only)")
+    parser.add_argument("--nms", action="store_true",
+                        help="use o2m+NMS path (yolo26 family + yoloe-26 text; default E2E)")
     parser.add_argument("--agnostic-nms", dest="agnostic_nms", action="store_true",
                         help="class-agnostic NMS (only with --nms; default: per-class suppression)")
     parser.add_argument("--model", default=None, choices=sorted(ARCHS),
@@ -277,12 +278,18 @@ def main():
         parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
     if arch_has_scale(arch) and scale is None:
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
-    if arch not in YOLO26_FAMILY and args.nms:
-        parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
+    # YOLOE prompt mode：text 支持 E2E + o2m/NMS；pf 仅 E2E（raw 列数随提案过滤变化）
+    prompt_mode = (prompt_mode_from_weights(args.weights, meta)
+                   if arch in YOLOE26_FAMILY else None)
+    if args.nms:
+        if arch in YOLOE26_FAMILY and prompt_mode != "text":
+            parser.error("--nms is only supported for yoloe-26 text mode (prompt-free is E2E only)")
+        if arch not in YOLO26_FAMILY and arch not in YOLOE26_FAMILY:
+            parser.error(f"--nms is only supported for yolo26 / yoloe-26 text (got model={arch!r})")
     if args.agnostic_nms and not args.nms:
         parser.error("--agnostic-nms only affects the NMS path — pass --nms as well")
     if arch in YOLOE26_FAMILY:
-        pm = prompt_mode_from_weights(args.weights, meta)
+        pm = prompt_mode
         if pm == "text":
             # 文本模式：类名来自 --classes（经 MobileCLIP 编码），类别数随 prompt 数变
             if not args.classes:
@@ -353,12 +360,12 @@ def main():
         kwargs["nc"] = nc  # onnx 图内置类别数，只有 pt 引擎需要重建头
     engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
-    if arch in YOLOE26_FAMILY and prompt_mode_from_weights(args.weights, meta) == "text":
+    if arch in YOLOE26_FAMILY and prompt_mode == "text":
         if args.engine != "pt":
             parser.error("yoloe-26 text mode currently requires --engine pt "
                          "(class-locked export for onnx/trt is not available yet)")
         engine.set_classes([names[i] for i in sorted(names)])
-        mode = "E2E (text prompts)"
+        mode = "E2E (text prompts)" if end2end else "o2m+NMS (text prompts)"
     elif arch in YOLOE26_FAMILY:
         mode = "E2E (prompt-free)"
     elif arch in YOLO26_FAMILY:

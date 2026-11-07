@@ -50,7 +50,7 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--show` | off | live video preview (needs GUI) |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--conf` | **0.25** | confidence threshold (eval defaults to 0.001 — different purposes) |
-| `--nms` | off | o2m + NMS (yolo26 only; errors for v3) |
+| `--nms` | off | o2m + NMS (yolo26 family + yoloe-26 text; errors for v3, prompt-free is E2E only) |
 | `--agnostic-nms` | off | cross-class NMS (requires `--nms`) |
 | `--classes` | — | yoloe-26 text mode: comma-separated class names (pt engine only) |
 | `--model` / `--scale` | inferred from filename/metadata | errors when nothing can be inferred |
@@ -99,8 +99,9 @@ Labels        -> runs/predict/predict21/labels
   MobileCLIP2-B text encoder (`mobileclip2_b.safetensors` must sit next to the model weights —
   loaded once at `set_classes`, not part of the model graph). Requires `--engine pt`;
   the class-locked ONNX produced by `export --classes` is not wired into the CLI engines yet.
-- `--nms` / `--raw` error out for yoloe (the pf raw column count varies with the proposal
-  filter; the text mode is E2E-only).
+- `--raw` errors out for yoloe; `--nms` is supported for yoloe-26 text mode (o2m + class-aware
+  NMS), while prompt-free (lrpc) remains E2E only (the raw column count varies with the
+  proposal filter).
 - Model details: [../models/yoloe.md](../models/yoloe.md).
 
 ## 5. Gotchas

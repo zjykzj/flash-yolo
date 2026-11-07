@@ -251,3 +251,54 @@ def test_export_parity():
     assert np.abs(r[:, 4] - o[:, 4]).max() < 1e-3, "scores 超阈值"
     assert np.abs(r[:, 6:] - o[:, 6:]).max() < 1e-3, "mask coefficients 超阈值"
     assert (r[:, 5] == o[:, 5]).all(), "conf>0.25 出现类别翻转"
+
+
+def test_pf_nms_rejected():
+    """pf（lrpc）只有 E2E 口径：end2end=False 在 engine 构造时明确报错"""
+    if not PF_SAFE.exists():
+        pytest.skip("需要 weights/yoloe-26n-seg-pf.safetensors")
+    from utils.engines import PtEngine
+
+    with pytest.raises(ValueError, match="prompt-free"):
+        PtEngine(str(PF_SAFE), model="yoloe-26", device="cpu", end2end=False)
+
+
+def test_text_nms_path_from_decoded_head_output():
+    """YOLOE text o2m 输出（已解码 xyxy + sigmoid 分数）-> NMS + 掩码，不重复解码/激活"""
+    from utils.engines.base import _to_detections
+
+    nc, nm, n = 3, 4, 8400
+    out = np.zeros((4 + nc + nm, n), np.float32)
+    out[:4, 0] = [10, 20, 50, 80]  # forward_text 已解码为像素 xyxy
+    out[4 + 1, 0] = 0.9            # class 1，分数已是 sigmoid
+    proto = np.zeros((nm, 16, 16), np.float32)
+    dets = _to_detections((out, proto), end2end=False, ratio=1.0, pad=(0, 0), ori_shape=(640, 640),
+                          conf_thres=0.001, iou_thres=0.7, arch="yoloe-26", imgsz=640,
+                          task="segment", yoloe_text=True)
+    assert len(dets.boxes) == 1 and dets.class_ids[0] == 1
+    np.testing.assert_allclose(dets.boxes[0], [10, 20, 50, 80], atol=1e-4)
+    assert dets.masks.shape == (1, 640, 640)
+
+
+def test_text_mode_nms_path():
+    """文本模式 Non-E2E（o2m+NMS）真实权重：产出掩码，高分 E2E 检出在 NMS 结果中可找到"""
+    if not TEXT_SAFE.exists() or not TEXT_PT.exists():
+        pytest.skip("需要官方权重与转换产物 yoloe-26n-seg.{pt,safetensors}")
+    import cv2
+
+    from utils.engines import PtEngine
+    from utils.iou import box_iou
+
+    classes = ["person", "bicycle", "car", "bus", "truck"]
+    img = cv2.imread(str(TEST_IMAGE))
+    e2e = PtEngine(str(TEXT_SAFE), model="yoloe-26", device="cpu", end2end=True)
+    e2e.set_classes(classes)
+    nms = PtEngine(str(TEXT_SAFE), model="yoloe-26", device="cpu", end2end=False)
+    nms.set_classes(classes)
+    d_e = e2e.predict(img, 0.25)
+    d_n = nms.predict(img, 0.25)
+    assert d_n.masks is not None and d_n.masks.shape == (len(d_n.boxes), *img.shape[:2])
+    hi = d_e.scores > 0.5
+    for box, cls in zip(d_e.boxes[hi], d_e.class_ids[hi]):
+        same = d_n.boxes[d_n.class_ids == cls]
+        assert len(same) and box_iou(box, same).max() > 0.9

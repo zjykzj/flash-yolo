@@ -108,8 +108,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 ```
 
 - `--model/--scale` are inferred from the filename (`yoloe-26n-seg-pf` → yoloe-26 / n);
-  `--nms` / `--raw` do not apply (they error out — the pf raw output's column count varies with
-  the proposal filter).
+  `--raw` errors out (the pf raw output's column count varies with the proposal filter);
+  `--nms` (o2m + class-aware NMS) is supported for **text mode**, while prompt-free remains E2E
+  only. The official text/visual 24.7 figure is the Non-E2E protocol.
 - COCO-vs-RAM++ naming differences (e.g. `airplane` → `plane`, `tv` → `television`) resolve
   through the dataset descriptor's `vocab_synonyms` field (11 entries built into
   `config/datasets/coco.yaml`, including the official vocabulary's own typo `dinning table`);

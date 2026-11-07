@@ -49,7 +49,7 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--show` | off | 视频实时预览（需要 GUI） |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--conf` | **0.25** | 置信度阈值（eval 默认 0.001，两者用途不同） |
-| `--nms` | off | o2m + NMS（yolo26 专属；v3 报错） |
+| `--nms` | off | o2m + NMS（yolo26 系 + yoloe-26 文本模式；v3 报错，pf 仅 E2E） |
 | `--agnostic-nms` | off | 跨类 NMS（需同时给 `--nms`） |
 | `--classes` | — | yoloe-26 文本模式：逗号分隔的类别名（仅 pt 引擎） |
 | `--model` / `--scale` | 从文件名/metadata 推断 | 推不出时报错 |
@@ -94,7 +94,8 @@ Labels        -> runs/predict/predict21/labels
   编码器编码（`mobileclip2_b.safetensors` 需与模型权重同目录——只在 `set_classes` 时加载
   一次，不在模型图里）。目前仅 `--engine pt`；`export --classes` 产出的类锁定 ONNX 尚未
   接入 CLI 引擎消费。
-- `--nms` / `--raw` 对 yoloe 直接报错（pf 原始输出列数随提案过滤变化；文本模式只有 E2E）。
+- `--raw` 对 yoloe 直接报错；`--nms` 支持 yoloe-26 文本模式（o2m + 类感知 NMS），
+  pf（lrpc）仍只有 E2E（原始输出列数随提案过滤变化）。
 - 模型细节：[../models/yoloe.md](../models/yoloe.md)。
 
 ## 5. 坑

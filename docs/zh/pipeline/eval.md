@@ -26,7 +26,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--split` | `val` | 角色键（train/val/test） |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--model` / `--scale` | 从权重推断 | 推不出时显式给 |
-| `--nms` | off | o2m + NMS（yolo26 专属；v3 会报错） |
+| `--nms` | off | o2m + NMS（yolo26 系 + yoloe-26 文本模式；v3 会报错，pf 仅 E2E） |
 | `--conf` / `--iou` / `--max-det` | 0.001 / 0.7 / 300 | 与官方 val 口径一致 |
 | `--imgsz` | metadata > 640 | onnx 以图内 shape 为准（冲突报错） |
 | `--limit` | 0（全量） | 只评前 N 张（GT 同步限制到该子集） |
@@ -85,6 +85,7 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 
 - **E2E（默认）**：o2o 头、无 NMS，输出 `(B,300,6)`；官方 40.1 走这条。
 - **NMS**：o2m 头 + 类感知 NMS，通常高 ~0.9 点、略慢；`--agnostic-nms` 改为跨类抑制。
+  yolo26 系与 **yoloe-26 文本模式**都支持；yoloe pf（lrpc）仍只有 E2E。
 - **单类模型**：`--single-cls` 把 GT 类别映射到 0（模型 nc 必须为 1）。
 - YOLOv3-tiny 只有“解码 + obj×cls + NMS”一条路径，`--nms` / `--raw` 直接报错。
 

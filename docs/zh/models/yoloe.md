@@ -94,8 +94,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --out weights/yoloe-26n-3cls.onnx
 ```
 
-- `--model/--scale` 可从文件名推（`yoloe-26n-seg-pf` → yoloe-26 / n）；`--nms` / `--raw`
-  不适用（直接报错——pf 原始输出列数随提案过滤变化）。
+- `--model/--scale` 可从文件名推（`yoloe-26n-seg-pf` → yoloe-26 / n）；`--raw` 不适用
+  （直接报错——pf 原始输出列数随提案过滤变化）；`--nms`（o2m + 类感知 NMS）支持 **text 模式**，
+  pf 仍只有 E2E。官方文本/视觉 prompt 表的 24.7 就是 Non-E2E 口径。
 - COCO 类名与 RAM++ 词汇的命名差异（如 `airplane` → `plane`、`tv` → `television`）经数据集
   描述符的 `vocab_synonyms` 字段解析（`config/datasets/coco.yaml` 已内置 11 条，含官方词汇
   自身的拼写 `dinning table`）；评估只保留数据集类别的预测，`CocoEvaluator` 契约不变。

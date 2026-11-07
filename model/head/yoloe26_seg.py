@@ -15,11 +15,12 @@
     prompt_free=False（文本模式，M2 目标）：
         cv2/cv3 完整（含最后 Conv2d）；cv4 = BNContrastiveHead（BN + 余弦相似度 + logit_scale）
 
-前向契约（pf，本文件 M1 实现范围）：
+前向契约：
     eval（end2end=True） : (B, max_det, 6+nm) 图内 top-k。max_det=1000 是 YOLOE 口径
                            （官方 pf 头实例实测；yolo26 系为 300）。
-    eval（end2end=False）: (B, 4+V+nm, M) 原始输出，M = 提案过滤后的锚点数（随图变）——
-                           本仓库推理管线默认 end2end=True；raw/NMS 路径对 yoloe 暂不开放。
+    eval（end2end=False）: (B, 4+V+nm, M) 原始输出。text 布局 M=8400（完整网格，支持
+                           o2m+NMS，best-class-per-anchor 口径）；pf 布局 M 随提案过滤变，
+                           仅支持 E2E（raw/NMS 对 pf 不开放）。
     导出                 : export 标志 -> conf=0 静态路径（全锚点通过、无动态掩码，官方口径）。
 
 文本模式前向（M2）：forward_text = 官方 YOLOEDetect.forward_head 口径——每级
@@ -378,6 +379,7 @@ class YOLOESegment26(nn.Module):
         anchors, strides = make_anchors(x, self.stride, 0.5)
         dbox = dist2bbox(torch.cat(boxes, 2), anchors.unsqueeze(0)) * strides
         mc = torch.cat([cv5[i](x[i]).view(bs, self.nm, -1) for i in range(self.nl)], 2)
+        # 官方口径：o2m/E2E 都输出 sigmoid 分数（官方 _inference 已做 sigmoid），框已解码
         y = torch.cat((dbox, torch.cat(scores, 2).sigmoid(), mc), 1)
         if self.end2end:
             y = e2e_topk(y[:, :4].permute(0, 2, 1), y[:, 4:4 + self.nc].permute(0, 2, 1),

@@ -27,7 +27,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--split` | `val` | role key (train/val/test) |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--model` / `--scale` | inferred from weights | pass explicitly when nothing can be inferred |
-| `--nms` | off | o2m + NMS (yolo26 only; errors for v3) |
+| `--nms` | off | o2m + NMS (yolo26 family + yoloe-26 text; errors for v3, prompt-free is E2E only) |
 | `--conf` / `--iou` / `--max-det` | 0.001 / 0.7 / 300 | matches the official val convention |
 | `--imgsz` | metadata > 640 | onnx follows the graph shape (conflicts error out) |
 | `--limit` | 0 (full) | evaluate the first N images only (GT restricted to the same subset) |
@@ -94,7 +94,8 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 
 - **E2E (default)**: o2o head, no NMS, output `(B,300,6)`; the official 40.1 goes through this.
 - **NMS**: o2m head + class-aware NMS, usually ~0.9 points higher, slightly slower;
-  `--agnostic-nms` switches to cross-class suppression.
+  `--agnostic-nms` switches to cross-class suppression. Supported by the yolo26 family and
+  **yoloe-26 text mode**; prompt-free (lrpc) remains E2E only.
 - **Single-class models**: `--single-cls` maps GT classes to 0 (model nc must be 1).
 - YOLOv3-tiny has a single "decode + obj×cls + NMS" path; `--nms` / `--raw` error out.
 

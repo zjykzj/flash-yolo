@@ -84,8 +84,8 @@ ARCHS = {
 
 # yolo26 系头（Detect/Segment26 双分支 / E2E，含 flash-yolo 与分割版）：--nms/--raw 门控与解码分派按此判定
 YOLO26_FAMILY = {"yolo26", "yolo26-seg", "flash-yolo", "flash-yolo-seg"}
-# YOLOE-26 系（YOLOESegment26）：E2E 解码与 yolo26 系同口径（max_det=1000），但 raw/NMS 暂不开放
-# （pf 原始输出列数随提案过滤随图变化）——--nms/--raw 对 yoloe 直接拒绝（CLI 侧用本集合判定）
+# YOLOE-26 系（YOLOESegment26）：E2E 解码与 yolo26 系同口径（max_det=1000）；text 模式
+# 支持 o2m+NMS，pf 仍 E2E only（raw 列数随提案过滤随图变化）——CLI 用本集合 + prompt_mode 判定
 YOLOE26_FAMILY = {"yoloe-26"}
 
 

@@ -83,7 +83,8 @@ def main():
                         help="architecture (default: inferred from the weights filename)")
     parser.add_argument("--scale", default=None,
                         help="model scale (yolo26 family: n/s/m/l/x; default: weights metadata / filename)")
-    parser.add_argument("--nms", action="store_true", help="use o2m+NMS path (yolo26 only; default E2E NMS-free)")
+    parser.add_argument("--nms", action="store_true",
+                        help="use o2m+NMS path (yolo26 family + yoloe-26 text; default E2E NMS-free)")
     parser.add_argument("--agnostic-nms", dest="agnostic_nms", action="store_true",
                         help="class-agnostic NMS (only with --nms; default: per-class suppression)")
     parser.add_argument("--conf", type=float, default=CONF_THRES, help=f"confidence threshold (default {CONF_THRES})")
@@ -125,27 +126,30 @@ def main():
         parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
     if arch_has_scale(arch) and scale is None:
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
-    if arch not in YOLO26_FAMILY and args.nms:
-        parser.error(f"--nms is only supported for yolo26 (got model={arch!r})")
+    # YOLOE prompt mode：text 支持 E2E + o2m/NMS；pf 仅 E2E（raw 列数随提案过滤变化）
+    prompt_mode = (prompt_mode_from_weights(args.weights, load_meta(args.weights))
+                   if arch in YOLOE26_FAMILY else None)
+    if args.nms:
+        if arch in YOLOE26_FAMILY and prompt_mode != "text":
+            parser.error("--nms is only supported for yoloe-26 text mode (prompt-free is E2E only)")
+        if arch not in YOLO26_FAMILY and arch not in YOLOE26_FAMILY:
+            parser.error(f"--nms is only supported for yolo26 / yoloe-26 text (got model={arch!r})")
     if args.agnostic_nms and not args.nms:
         parser.error("--agnostic-nms only affects the NMS path — pass --nms as well")
     # YOLOE：pf 按词汇映射（词汇名字来自权重 metadata 的烘焙词汇）；
     # 文本模式直接用数据集类别名做 prompt（类别 id = prompt 序号，无需映射）
     vocab_map = None
-    text_mode = False
-    if arch in YOLOE26_FAMILY:
-        if prompt_mode_from_weights(args.weights, load_meta(args.weights)) == "text":
-            text_mode = True
-        else:
-            vocab_names = load_meta(args.weights).get("names")
-            if not vocab_names:
-                parser.error(f"{arch} evaluation needs the vocabulary names in the weights metadata "
-                             "(convert with scripts/convert_weights.py)")
-            try:
-                vocab_map = build_vocab_map(vocab_names, list(spec.names.values()),
-                                            getattr(spec, "vocab_synonyms", None) or {})
-            except ValueError as e:
-                parser.error(str(e))
+    text_mode = prompt_mode == "text"
+    if arch in YOLOE26_FAMILY and not text_mode:
+        vocab_names = load_meta(args.weights).get("names")
+        if not vocab_names:
+            parser.error(f"{arch} evaluation needs the vocabulary names in the weights metadata "
+                         "(convert with scripts/convert_weights.py)")
+        try:
+            vocab_map = build_vocab_map(vocab_names, list(spec.names.values()),
+                                        getattr(spec, "vocab_synonyms", None) or {})
+        except ValueError as e:
+            parser.error(str(e))
 
     # 输入尺寸：CLI > 权重 metadata > 640（预览行用；engine 构建后以 engine.imgsz 为准，onnx 取图内 shape）
     imgsz = resolve_imgsz(args.weights, args.imgsz)
@@ -178,7 +182,7 @@ def main():
             parser.error("yoloe-26 text mode currently requires --engine pt "
                          "(class-locked export for onnx/trt is not available yet)")
         engine.set_classes(list(spec.names.values()))
-        mode = "E2E (text prompts)"
+        mode = "E2E (text prompts)" if end2end else "o2m+NMS (text prompts)"
     elif arch in YOLOE26_FAMILY:
         mode = "E2E (prompt-free)"
     elif arch in YOLO26_FAMILY:

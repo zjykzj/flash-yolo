@@ -38,6 +38,9 @@ class PtEngine(BaseEngine):
         if model == "yoloe-26":
             pm = prompt_mode_from_weights(weights, meta)
             prompt_free = True if pm == "pf" else (False if pm == "text" else None)
+            if prompt_free and not end2end:
+                raise ValueError("YOLOE prompt-free (lrpc) supports E2E only; use end2end=True "
+                                 "(o2m+NMS is available for text-mode weights)")
         self.model = build_model(model, scale, imgsz=self.imgsz,
                                  nc=nc if nc is not None else meta.get("nc"), prompt_free=prompt_free)
         for key in apply_meta(self.model, meta):  # v3 anchors 随权重（yaml 为原版也能还原训练值）
