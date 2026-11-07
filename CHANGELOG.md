@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-08
+
 ### Added
 
 - **LVIS train split**: the LVIS descriptor now has a `train` role (100,170 images / 1,270,141 instances) backed by COCO train2017 images and a compat annotation (file name + descriptor-aligned class names), enabling LVIS fine-tuning and refer datasets.
