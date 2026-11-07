@@ -340,6 +340,7 @@ def test_visual_prompt_infer_and_export(tmp_path):
     img = cv2.imread(str(TEST_IMAGE))
     names = ["person", "car"]
     boxes = [[[85, 130, 175, 305]], [[410, 140, 535, 235]]]
+    prompts = [[{"kind": "bbox", "box": b} for b in group] for group in boxes]
     prompt = tmp_path / "visual.json"
     prompt.write_text(json.dumps({
         "image": str(TEST_IMAGE),
@@ -355,11 +356,96 @@ def test_visual_prompt_infer_and_export(tmp_path):
     assert meta["prompt_mode"] == "text" and meta["names"] == names and meta["nc"] == 2
 
     pt = PtEngine(str(TEXT_SAFE), model="yoloe-26", scale="n", device="cpu", imgsz=320)
-    pt.set_visual_prompts(img, names, boxes)
+    pt.set_visual_prompts(img, names, prompts)
     onnx = OnnxEngine(str(onnx_path), model="yoloe-26", scale="n", imgsz=320)
     d_pt = pt.predict(img, conf_thres=0.25)
     d_onnx = onnx.predict(img, conf_thres=0.25)
     assert len(d_pt.boxes) == len(d_onnx.boxes) == 2
+    assert np.abs(d_pt.boxes - d_onnx.boxes).max() < 1e-3
+    assert np.abs(d_pt.scores - d_onnx.scores).max() < 1e-3
+    assert np.array_equal(d_pt.class_ids, d_onnx.class_ids)
+
+
+def test_visual_prompt_mask_infer_and_export(tmp_path):
+    """mask 视觉 prompt：JSON 里的 PNG -> pt 推理；类锁定 ONNX 检出与 pt 一致"""
+    pytest.importorskip("onnxruntime")
+    if not TEXT_SAFE.exists() or not TEST_IMAGE.exists():
+        pytest.skip("需要 yoloe-26n-seg.safetensors / 测试图片")
+
+    import cv2
+    import json
+
+    from utils.engines import OnnxEngine, PtEngine
+
+    img = cv2.imread(str(TEST_IMAGE))
+    mask = np.zeros(img.shape[:2], np.uint8)
+    mask[130:305, 85:175] = 255
+    cv2.imwrite(str(tmp_path / "person.png"), mask)
+    prompt = tmp_path / "visual-mask.json"
+    prompt.write_text(json.dumps({
+        "image": str(TEST_IMAGE),
+        "prompts": [{"class": "person", "mask": "person.png"}],
+    }), encoding="utf-8")
+
+    onnx_path = tmp_path / "visual-mask.onnx"
+    subprocess.run(["python", "scripts/export.py", "--weights", str(TEXT_SAFE),
+                    "--visual-prompt", str(prompt), "--imgsz", "320", "--out", str(onnx_path)],
+                   cwd=ROOT, check=True)
+
+    pt = PtEngine(str(TEXT_SAFE), model="yoloe-26", scale="n", device="cpu", imgsz=320)
+    pt.set_visual_prompts(img, ["person"], [[{"kind": "mask", "mask": mask > 0}]])
+    onnx = OnnxEngine(str(onnx_path), model="yoloe-26", scale="n", imgsz=320)
+    d_pt = pt.predict(img, conf_thres=0.25)
+    d_onnx = onnx.predict(img, conf_thres=0.25)
+    assert len(d_pt.boxes) == len(d_onnx.boxes) and len(d_pt.boxes) >= 1
+    assert np.abs(d_pt.boxes - d_onnx.boxes).max() < 1e-3
+    assert np.abs(d_pt.scores - d_onnx.scores).max() < 1e-3
+    assert np.array_equal(d_pt.class_ids, d_onnx.class_ids)
+
+
+def test_mixed_text_visual_prompts(tmp_path):
+    """文本 + 视觉混合：嵌入 = cat([tpe, vpe])（官方 get_cls_pe 顺序）；导出类锁定 ONNX 对齐"""
+    pytest.importorskip("onnxruntime")
+    enc_path = ROOT / "weights" / "mobileclip2_b.safetensors"
+    if not TEXT_SAFE.exists() or not TEST_IMAGE.exists() or not enc_path.exists():
+        pytest.skip("需要 yoloe-26n-seg.safetensors / mobileclip2_b.safetensors / 测试图片")
+
+    import cv2
+    import json
+
+    from model.weights import load_meta
+    from utils.engines import OnnxEngine, PtEngine
+
+    img = cv2.imread(str(TEST_IMAGE))
+    text_names = ["person"]
+    vis_names = ["car"]
+    prompts = [[{"kind": "bbox", "box": [410, 140, 535, 235]}]]
+    prompt_json = tmp_path / "mixed.json"
+    prompt_json.write_text(json.dumps({
+        "image": str(TEST_IMAGE),
+        "prompts": [{"class": "car", "bbox": [410, 140, 535, 235]}],
+    }), encoding="utf-8")
+
+    pt = PtEngine(str(TEXT_SAFE), model="yoloe-26", scale="n", device="cpu", imgsz=320)
+    assert pt.set_mixed_prompts(text_names, img, vis_names, prompts) == 2
+    assert pt.mixed_mode and pt.prompt_names == ["person", "car"]
+    expected = torch.cat([pt.text_embeddings(text_names),
+                          pt.visual_embeddings(img, vis_names, prompts)], dim=1)
+    assert torch.equal(pt.model.model[-1]._tpe, expected)
+    with pytest.raises(ValueError, match="share class names"):
+        pt.set_mixed_prompts(["car"], img, ["car"], prompts)
+
+    onnx_path = tmp_path / "mixed.onnx"
+    subprocess.run(["python", "scripts/export.py", "--weights", str(TEXT_SAFE),
+                    "--classes", "person", "--visual-prompt", str(prompt_json),
+                    "--imgsz", "320", "--out", str(onnx_path)], cwd=ROOT, check=True)
+    meta = load_meta(onnx_path)
+    assert meta["names"] == ["person", "car"] and meta["nc"] == 2
+
+    onnx = OnnxEngine(str(onnx_path), model="yoloe-26", scale="n", imgsz=320)
+    d_pt = pt.predict(img, conf_thres=0.25)
+    d_onnx = onnx.predict(img, conf_thres=0.25)
+    assert len(d_pt.boxes) == len(d_onnx.boxes)
     assert np.abs(d_pt.boxes - d_onnx.boxes).max() < 1e-3
     assert np.abs(d_pt.scores - d_onnx.scores).max() < 1e-3
     assert np.array_equal(d_pt.class_ids, d_onnx.class_ids)

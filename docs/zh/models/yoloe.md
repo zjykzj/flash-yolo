@@ -1,6 +1,6 @@
 # YOLOE-26（开放词汇实例分割）
 
-> 开放词汇分割：类别不在训练期固定——推理时按文本 prompt、视觉 prompt（refer 图 + bbox）
+> 开放词汇分割：类别不在训练期固定——推理时按文本 prompt、视觉 prompt（refer 图 + bbox/mask）
 > 或内置 **4,585 名词汇**作答。当前版本支持 **prompt-free（-pf）**、**文本 prompt**
 > （自定义类别名，经 MobileCLIP2-B 文本编码器编码）与 **视觉 prompt**（refer 图示例经
 > SAVPE 提取嵌入）三种模式的推理 / 评估 / 导出。
@@ -106,10 +106,12 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --trt [--fp16]
 
-# ---- 视觉模式（yoloe-26*-seg 权重；refer 图 + bbox，JSON）----
+# ---- 视觉模式（yoloe-26*-seg 权重；refer 图 + bbox/mask，JSON）----
 
 # prompt.json: {"image": "refer.jpg",
-#               "prompts": [{"class": "person", "bbox": [x1,y1,x2,y2]}, ...]}
+#               "prompts": [{"class": "person", "bbox": [x1,y1,x2,y2]},
+#                           {"class": "person", "mask": "person.png"}]}
+# 每个示例 bbox / mask 二选一；mask 与 refer 图同尺寸（非 0 即前景），同类多示例 OR。
 
 # 推理：refer 图/框提取 vpe，再跑目标图（pt 引擎）
 python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
@@ -124,6 +126,14 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-m
 # 导出：vpe 融合进分类卷积，类锁定（可配 --nms / --trt）
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --visual-prompt prompt.json --out weights/yoloe-26n-visual.onnx
+
+# ---- 文本 + 视觉混合（文本类在前、视觉类在后——官方 get_cls_pe 顺序）----
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "bicycle" --visual-prompt prompt.json --image assets/traffic.jpg
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco \
+    --classes "bicycle" --visual-prompt prompt.json
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "bicycle" --visual-prompt prompt.json --out weights/yoloe-26n-mixed.onnx
 ```
 
 - `--model/--scale` 可从文件名推（`yoloe-26n-seg-pf` → yoloe-26 / n）；`--raw` 不适用
@@ -169,6 +179,10 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   逐位一致（maxdiff 0.0）；fuse 导出后 pt vs onnx 2/2 检出、框差 6.1e-5、分数差 1.1e-6、
   零类别翻转；refer 数据集逐类聚合与单图提取逐位一致。同图 top-2 与官方 Non-E2E 口径框差
   <0.6px、分数差 ≤0.011（低分尾部候选数受官方 predictor 的 NMS 默认值影响）。
+- **mask prompt**：mask 的 1/8 光栅化与官方 `LoadVisualPrompt(masks=...)` `torch.equal`；
+  类锁定导出 vs pt 检出一致。
+- **混合 prompt**：缓存嵌入 = `cat([tpe, vpe])`（文本在前，官方 `get_cls_pe` 顺序）；
+  同名类别明确报错；类锁定导出 vs pt 检出一致。
 - **TensorRT（fp32 / fp16）**：pf E2E、text E2E、text Non-E2E 的 engine 均可构建并
   `infer/eval --engine trt`；部署 metadata 写旁车 `<engine>.json`。text E2E fp16（@320
   冒烟）与 pt fp32：6/6 检出、框差 <0.35px、分数差 <3e-3、掩码 IoU ≥0.996；text NMS
@@ -214,9 +228,12 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
 
 ## 5. 已知边界
 
-- 视觉 prompt 的 JSON 输入目前只支持 bbox（mask 输入未接 CLI）；文本+视觉混合 prompt 未接
-  （官方 `get_cls_pe` 的拼接语义）。`--refer-data` 的参考集需与评估集同类别命名，缺失类零
-  嵌入（AP 0）；官方视觉 21.9 的 refer 数据来源需按官方口径对齐后再比较。
+- 视觉 prompt 的 mask 必须与 refer 图同尺寸（二值 PNG）；bbox/mask 二选一，同类多示例 OR。
+- 文本+视觉混合：infer/export 直接支持；eval 用 `--classes` 指定文本类名（子集，其余零
+  嵌入），文本与视觉类名不能重复。官方公开 API 没有混合入口，本工程按 `get_cls_pe` 的
+  拼接语义扩展。
+- `--refer-data` 参考集需与评估集同类别命名，缺失类零嵌入（AP 0）。官方视觉 val 默认
+  `load_vp=True` 用评估集自身抽 vpe，本工程对应 `--refer-data <同一数据集>`（§4 有对照）。
 - 文本模式的 pt 路径需要 `--classes` 与 MobileCLIP2-B 文本编码器；`onnx` / `trt` 只能消费
   `export --classes` 产出的类锁定图（类别名随 ONNX `metadata_props` / TRT 旁车 JSON 走，
   `--classes` 可省略，给出时必须与锁定列表一致）。旧的无 metadata 导出需重新导出。

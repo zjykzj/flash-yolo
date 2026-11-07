@@ -19,7 +19,7 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 # yoloe 文本模式 Non-E2E：导出 o2m 密集输出，推理/评估配 --nms
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --nms
-# yoloe 视觉模式：refer 图 + bbox JSON -> vpe 融合进分类卷积（类锁定）
+# yoloe 视觉模式：refer 图 + bbox/mask JSON -> vpe 融合进分类卷积（类锁定）
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --visual-prompt prompt.json
 ```
@@ -31,8 +31,8 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | `--raw` | off | 导出原始头 `(B, 4+nc, N)`（yolo26 专属；v3 报错） |
 | `--nms` | off | 导出 o2m 密集输出（yoloe-26 文本专属；推理/评估需配 `--nms`） |
 | `--dynamic` | off | 动态 batch 轴；默认固定 batch 1 |
-| `--classes` | — | yoloe-26 文本模式：锁定进导出模型的类别名（与 `--visual-prompt` 二选一） |
-| `--visual-prompt` | — | yoloe-26 视觉模式：refer 图 + bbox JSON（vpe 融合进分类卷积） |
+| `--classes` | — | yoloe-26 文本模式：锁定进导出模型的类别名（可与 `--visual-prompt` 组合） |
+| `--visual-prompt` | — | yoloe-26 视觉模式：refer 图 + bbox/mask JSON（vpe 融合进分类卷积） |
 | `--model` / `--scale` | 从文件名推断 | 架构/档位 |
 | `--nc` | metadata > 模型 yaml | 非 COCO 模型改头 |
 | `--imgsz` | metadata > 640 | 导出输入尺寸 |

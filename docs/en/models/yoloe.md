@@ -1,7 +1,7 @@
 # YOLOE-26 (open-vocabulary instance segmentation)
 
 > Open-vocabulary segmentation: classes are not fixed at training time — the model answers from
-> text prompts, visual prompts (a refer image + bboxes), or a built-in **4,585-name vocabulary**
+> text prompts, visual prompts (a refer image + bboxes/masks), or a built-in **4,585-name vocabulary**
 > at inference time. The current release supports **prompt-free (-pf)**, **text prompts**
 > (custom class names encoded by the MobileCLIP2-B text encoder) and **visual prompts**
 > (refer-image exemplars encoded by SAVPE) for inference / evaluation / export.
@@ -121,12 +121,15 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --trt [--fp16]
 
-# ---- visual mode (yoloe-26*-seg weights; refer image + bboxes via JSON) ----
+# ---- visual mode (yoloe-26*-seg weights; refer image + bboxes/masks via JSON) ----
 
 # prompt.json: {"image": "refer.jpg",
-#               "prompts": [{"class": "person", "bbox": [x1,y1,x2,y2]}, ...]}
+#               "prompts": [{"class": "person", "bbox": [x1,y1,x2,y2]},
+#                           {"class": "person", "mask": "person.png"}]}
+# each prompt uses exactly one of bbox / mask; masks match the refer image size
+# (non-zero = foreground); multiple prompts of one class are OR'ed.
 
-# inference: extract vpe from the refer image/boxes, then run on the target image (pt engine)
+# inference: extract vpe from the refer image/prompts, then run on the target image (pt engine)
 python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
     --visual-prompt prompt.json --image assets/traffic.jpg
 
@@ -139,6 +142,14 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-m
 # export: vpe fused into the cls conv, class-locked (works with --nms / --trt too)
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --visual-prompt prompt.json --out weights/yoloe-26n-visual.onnx
+
+# ---- mixed text + visual (text classes first, visual classes after — get_cls_pe order) ----
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "bicycle" --visual-prompt prompt.json --image assets/traffic.jpg
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco \
+    --classes "bicycle" --visual-prompt prompt.json
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "bicycle" --visual-prompt prompt.json --out weights/yoloe-26n-mixed.onnx
 ```
 
 - `--model/--scale` are inferred from the filename (`yoloe-26n-seg-pf` → yoloe-26 / n);
@@ -196,6 +207,10 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   detections, boxes <6.1e-5, scores <1.1e-6 and zero class flips; the refer-dataset aggregation
   matches single-image extraction exactly. Top-2 vs the official Non-E2E path: boxes <0.6px,
   scores ≤0.011 (the low-conf tail depends on the official predictor's NMS defaults).
+- **Mask prompts**: the 1/8 rasterization is `torch.equal` to the official
+  `LoadVisualPrompt(masks=...)`; the class-locked export matches the pt detections.
+- **Mixed prompts**: the cached embedding is `cat([tpe, vpe])` (text first, the official
+  `get_cls_pe` order); duplicate class names error out; the class-locked export matches pt.
 - **TensorRT (fp32 / fp16)**: pf E2E, text E2E and text Non-E2E engines build and run through
   `infer/eval --engine trt`; deploy metadata travels in the `<engine>.json` sidecar. Text E2E
   fp16 vs pt fp32 (@320 smoke): 6/6 detections, boxes <0.35px, scores <3e-3, mask IoU ≥0.996;
@@ -245,11 +260,14 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
 
 ## 5. Known limits
 
-- Visual-prompt JSON input currently supports bboxes only (mask input is not wired into the
-  CLI); mixing text and visual prompts is not wired (the official `get_cls_pe` concatenates
-  them). `--refer-data` needs the same class names as the evaluation set; classes without
-  exemplars get zero embeddings (AP 0). Matching the official 21.9 visual-prompt figure also
-  requires the same refer-data source as the official protocol.
+- Visual-prompt masks must match the refer image size (binary PNG); each prompt uses exactly
+  one of bbox/mask, and multiple prompts of one class are OR'ed.
+- Mixed text + visual: infer/export support it directly; eval uses `--classes` for the text
+  subset (all other classes get zero embeddings), and text/visual class names must be distinct.
+  The official public API has no mixed entry; this project extends the `get_cls_pe` semantics.
+- `--refer-data` needs the same class names as the evaluation set; classes without exemplars
+  get zero embeddings (AP 0). The official visual val defaults to `load_vp=True`, i.e. the
+  evaluation set itself; this project uses `--refer-data <same dataset>` for that protocol (§4).
 - Text-mode pt paths need `--classes` and the MobileCLIP2-B text encoder; `onnx` / `trt`
   consume only the class-locked graph produced by `export --classes` (class names travel in
   the ONNX `metadata_props` / TRT sidecar JSON, so `--classes` is optional and must match the

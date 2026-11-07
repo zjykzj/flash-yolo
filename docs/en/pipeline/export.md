@@ -20,7 +20,7 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 # yoloe text mode Non-E2E: dense o2m output; pass --nms at infer/eval time
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --nms
-# yoloe visual mode: refer image + bbox JSON -> vpe fused into the cls conv (class-locked)
+# yoloe visual mode: refer image + bbox/mask JSON -> vpe fused into the cls conv (class-locked)
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --visual-prompt prompt.json
 ```
@@ -32,8 +32,8 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | `--raw` | off | export the raw head `(B, 4+nc, N)` (yolo26 only; errors for v3) |
 | `--nms` | off | export the dense o2m output (yoloe-26 text only; pass `--nms` at infer/eval) |
 | `--dynamic` | off | dynamic batch axis; default fixed batch 1 |
-| `--classes` | — | yoloe-26 text mode: class names to lock into the exported model (or use `--visual-prompt`) |
-| `--visual-prompt` | — | yoloe-26 visual mode: refer image + bbox JSON (vpe fused into the cls conv) |
+| `--classes` | — | yoloe-26 text mode: class names to lock into the exported model (combine with `--visual-prompt`) |
+| `--visual-prompt` | — | yoloe-26 visual mode: refer image + bbox/mask JSON (vpe fused into the cls conv) |
 | `--model` / `--scale` | inferred from filename | architecture / scale |
 | `--nc` | metadata > model yaml | rebuild the head for non-COCO models |
 | `--imgsz` | metadata > 640 | export input size |

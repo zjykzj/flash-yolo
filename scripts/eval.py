@@ -100,7 +100,9 @@ def main():
     parser.add_argument("--eval-max-dets", dest="eval_max_dets", type=int, default=None,
                         help="evaluator maxDets for LVIS (default 300; use 100 to mirror ultralytics)")
     parser.add_argument("--visual-prompt", dest="visual_prompt", default=None,
-                        help="yoloe-26 text mode only: JSON refer image + bbox prompts (pt engine)")
+                        help="yoloe-26 text mode only: JSON refer image + bbox/mask prompts (pt engine)")
+    parser.add_argument("--classes", default=None,
+                        help="yoloe-26 pt text prompt subset; combine with --visual-prompt for mixed prompts")
     parser.add_argument("--refer-data", dest="refer_data", default=None,
                         help="yoloe-26 text mode only: refer dataset descriptor for per-class visual prompts")
     parser.add_argument("--refer-split", dest="refer_split", default="train",
@@ -140,6 +142,8 @@ def main():
     prompt_mode = (prompt_mode_from_weights(args.weights, meta)
                    if arch in YOLOE26_FAMILY else None)
     visual_mode = bool(args.visual_prompt or args.refer_data)
+    if args.classes and prompt_mode != "text":
+        parser.error("--classes requires yoloe-26 text-mode weights")
     if visual_mode:
         if prompt_mode != "text":
             parser.error("--visual-prompt / --refer-data require yoloe-26 text-mode weights")
@@ -147,8 +151,12 @@ def main():
             parser.error("visual prompts require --engine pt (SAVPE runs in the model graph)")
         if args.visual_prompt and args.refer_data:
             parser.error("--visual-prompt and --refer-data are mutually exclusive")
+        if args.classes and args.refer_data:
+            parser.error("--classes + --refer-data mixing is not supported (refer data covers all classes)")
         if args.refer_limit < 0:
             parser.error("--refer-limit must be >= 0")
+    elif args.classes and args.engine != "pt":
+        parser.error("--classes requires --engine pt")
     if args.nms:
         if arch in YOLOE26_FAMILY and prompt_mode != "text":
             parser.error("--nms is only supported for yoloe-26 text mode (prompt-free is E2E only)")
@@ -205,24 +213,39 @@ def main():
         engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
     if text_mode:
+        text_classes = [c.strip() for c in args.classes.split(",")] if args.classes else None
         if visual_mode:
             names = list(spec.names.values())
+            idx = {n: i for i, n in enumerate(names)}
+            full = None
             if args.visual_prompt:
                 from utils.visual_prompt import load_visual_prompt
 
                 try:
-                    refer_path, vis_names, vis_boxes = load_visual_prompt(args.visual_prompt)
+                    refer_path, vis_names, visual_prompts = load_visual_prompt(args.visual_prompt)
                 except ValueError as e:
                     parser.error(str(e))
+                if text_classes:
+                    dup = sorted(set(text_classes) & set(vis_names))
+                    if dup:
+                        parser.error(f"text and visual prompts share class names: {dup[:5]} — "
+                                     "rename one side or use a single prompt mode")
                 ref = Path(refer_path)
                 if not ref.is_absolute():  # 相对路径按 JSON 所在目录解析
                     ref = Path(args.visual_prompt).resolve().parent / ref
                 image = cv2.imread(str(ref))
                 if image is None:
                     parser.error(f"cannot read visual prompt refer image: {ref}")
-                vpe = engine.visual_embeddings(image, vis_names, vis_boxes)
+                vpe = engine.visual_embeddings(image, vis_names, visual_prompts)
                 full = torch.zeros(1, len(names), vpe.shape[-1], device=engine.device)
-                idx = {n: i for i, n in enumerate(names)}
+                if text_classes:
+                    tpe = engine.text_embeddings(text_classes)
+                    for q, n in enumerate(text_classes):
+                        if n in idx:
+                            full[0, idx[n]] = tpe[0, q]
+                    missing_text = [n for n in text_classes if n not in idx]
+                    if missing_text:
+                        logger.warning(f"text prompt classes not in the dataset (ignored): {missing_text[:10]}")
                 missing = [n for n in vis_names if n not in idx]
                 for q, n in enumerate(vis_names):
                     if n in idx:
@@ -231,6 +254,9 @@ def main():
                 if missing:
                     logger.warning(f"visual prompt classes not in the dataset (ignored): {missing[:10]}")
                 uncovered = [n for i, n in enumerate(names) if not torch.any(full[0, i])]
+                kind = "text + visual prompts" if text_classes else "visual prompts"
+                mode = (("E2E " if end2end else "o2m+NMS ") + kind
+                        + f" (refer: {Path(args.visual_prompt).name})")
             else:
                 from utils.visual_prompt import collect_visual_embeddings
 
@@ -243,12 +269,26 @@ def main():
                 if missing:
                     logger.warning(f"refer classes not in the dataset (ignored): {missing[:10]}")
                 uncovered = [n for i, n in enumerate(names) if not torch.any(vpe[0, i])]
+                mode = (("E2E visual prompts" if end2end else "o2m+NMS visual prompts")
+                        + f" (refer: {args.refer_data})")
             if uncovered:
-                logger.warning(f"dataset classes without visual prompts ({len(uncovered)}): "
+                logger.warning(f"dataset classes without visual/text prompts ({len(uncovered)}): "
                                f"{uncovered[:10]} — they get zero embeddings (AP 0)")
-            source = Path(args.visual_prompt).name if args.visual_prompt else args.refer_data
-            mode = (("E2E visual prompts" if end2end else "o2m+NMS visual prompts")
-                    + f" (refer: {source})")
+        elif text_classes:
+            # 纯文本子集：只给指定类别文本嵌入，其余类别零嵌入（AP 0）
+            names = list(spec.names.values())
+            idx = {n: i for i, n in enumerate(names)}
+            tpe = engine.text_embeddings(text_classes)
+            full = torch.zeros(1, len(names), tpe.shape[-1], device=engine.device)
+            for q, n in enumerate(text_classes):
+                if n in idx:
+                    full[0, idx[n]] = tpe[0, q]
+            engine.set_visual_embeddings(full)
+            uncovered = [n for i, n in enumerate(names) if not torch.any(full[0, i])]
+            if uncovered:
+                logger.warning(f"dataset classes without text prompts ({len(uncovered)}): "
+                               f"{uncovered[:10]} — they get zero embeddings (AP 0)")
+            mode = ("E2E (text prompts, subset)" if end2end else "o2m+NMS (text prompts, subset)")
         else:
             locked = args.engine != "pt"
             if not locked:

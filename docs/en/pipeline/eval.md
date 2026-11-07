@@ -36,7 +36,8 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--limit` | 0 (full) | evaluate the first N images only (GT restricted to the same subset) |
 | `--eval-style` | `auto` | `auto` (descriptor `eval_style`) / `coco` / `lvis` |
 | `--eval-max-dets` | LVIS 300 | evaluator maxDets; `100` mirrors ultralytics' current val behavior |
-| `--visual-prompt` | — | yoloe-26 visual mode: single refer-image JSON (pt only; mutually exclusive with `--refer-data`) |
+| `--visual-prompt` | — | yoloe-26 visual mode: single refer-image JSON (bbox/mask; pt only; mix with `--classes`) |
+| `--classes` | — | yoloe-26 pt text-prompt subset; combine with `--visual-prompt` for mixed prompts |
 | `--refer-data` | — | yoloe-26 visual mode: refer dataset descriptor, one vpe per class from GT boxes |
 | `--refer-split` / `--refer-limit` | train / 0 | refer-dataset role / first N images (0 = all) |
 | `--summary-only` | off | print only the all row |
@@ -136,11 +137,12 @@ is metric-implementation noise.
   `lvis_style`, see §2.1). The pt path needs `mobileclip2_b.safetensors` next to the model
   weights; `onnx` / `trt` consume the class-locked graph and map the deploy-metadata class
   names onto the dataset classes.
-- **visual prompts (`-seg` weights)**: `--visual-prompt` (one refer-image JSON) or
+- **visual prompts (`-seg` weights)**: `--visual-prompt` (one refer-image JSON, bbox/mask) or
   `--refer-data` (per-class exemplars from a refer dataset; `--refer-split` defaults to train,
   `--refer-limit` caps the number of refer images). Refer classes map onto the evaluation set by
-  name; classes without exemplars get zero embeddings (AP 0). Pt engine only; the class-locked
-  export is consumed through the text class-locked path.
+  name; classes without exemplars get zero embeddings (AP 0). Pt engine only. `--classes`
+  selects a text subset and combines with `--visual-prompt` for mixed prompts (text first;
+  names must be distinct). The class-locked export is consumed through the text path.
 - All three modes report Box + Mask tables like the other segmentation architectures.
 - Model details: [../models/yoloe.md](../models/yoloe.md).
 

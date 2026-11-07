@@ -56,6 +56,8 @@ class PtEngine(BaseEngine):
         self._text_encoder = None  # 惰性构建（set_classes 时）
         self.visual_mode = False  # 当前缓存的是 visual prompt 嵌入（set_visual_*）
         self.visual_names = None
+        self.mixed_mode = False  # 文本 + 视觉拼接（官方 get_cls_pe 顺序：文本在前）
+        self.prompt_names = None
         self._warmup()
 
     def _warmup(self):
@@ -74,8 +76,8 @@ class PtEngine(BaseEngine):
             if self.text_mode:
                 head.set_tpe(None)
 
-    def set_classes(self, texts, batch=80):
-        """文本模式：类名列表 -> 文本提示嵌入，缓存到 head
+    def text_embeddings(self, texts, batch=80):
+        """类名列表 -> 文本提示嵌入 (1, N, 512)（不缓存；set_classes / 混合 prompt 共用）
 
         官方 get_text_pe 口径：CLIP tokenize -> MobileCLIP 编码（L2 归一化）-> 按
         batch 分块 -> (1, N, 512) -> 头部 get_tpe（reprta 残差 + L2 归一化）。
@@ -83,14 +85,13 @@ class PtEngine(BaseEngine):
         mobileclip2_b.ts 的转换产物），惰性构建并缓存。
         """
         if not self.text_mode:
-            raise ValueError("set_classes is only available for yoloe-26 text-mode weights")
+            raise ValueError("text prompts are only available for yoloe-26 text-mode weights")
         head = self.model.model[-1]
         if getattr(head, "is_fused", False):
             raise ValueError("the model is class-locked (text embeddings fused); "
                              "it rejects new prompts — export a new one for different classes")
-        from model.text_encoder import MobileCLIPText, load_mobileclip_text
+        from model.text_encoder import load_mobileclip_text
         from model.tokenizer import tokenize
-        from model.weights import load_weights
 
         if self._text_encoder is None:
             enc_path = f"{self.weights_dir}/mobileclip2_b.safetensors"
@@ -105,16 +106,21 @@ class PtEngine(BaseEngine):
             # 会同时保留（1203 prompt 实测峰值 ~22G）。
             emb.append(self._text_encoder(chunk).detach())
         emb = torch.cat(emb, dim=0).unsqueeze(0)  # (1, N, 512)
-        head = self.model.model[-1]
-        # 推理件：detach 只切断 autograd 引用、不改数值。否则 1203 个 prompt 的编码图
-        # 会被缓存的 _tpe 一直引用（实测 ~24G 显存全程驻留，大档位评估可能 OOM）。
-        head.set_tpe(head.get_tpe(emb).detach())
+        # 推理件：detach 只切断 autograd 引用、不改数值；避免缓存 _tpe 时长期持有编码图。
+        return head.get_tpe(emb).detach()
+
+    def set_classes(self, texts, batch=80):
+        """文本模式：类名列表 -> 文本提示嵌入，缓存到 head（纯文本）"""
+        tpe = self.text_embeddings(texts, batch)
+        self.model.model[-1].set_tpe(tpe)
         self.visual_mode = False
+        self.mixed_mode = False
         self.visual_names = None
+        self.prompt_names = list(texts)
         return len(texts)
 
-    def visual_embeddings(self, image_bgr, names, boxes_by_class):
-        """refer 图 + 每类 bbox -> SAVPE vpe (1, Q, embed)（不缓存；评估侧重排用）"""
+    def visual_embeddings(self, image_bgr, names, prompts_by_class):
+        """refer 图 + 每类 bbox/mask -> SAVPE vpe (1, Q, embed)（不缓存；评估侧重排用）"""
         if not self.text_mode:
             raise ValueError("visual prompts are only available for yoloe-26 text-mode weights")
         head = self.model.model[-1]
@@ -126,20 +132,44 @@ class PtEngine(BaseEngine):
         from utils.visual_prompt import visual_masks
 
         tensor, ratio, pad = preprocess(image_bgr, self.imgsz)
-        masks = visual_masks(names, boxes_by_class, ratio, pad, self.imgsz).unsqueeze(0)
+        masks = visual_masks(names, prompts_by_class, ratio, pad, self.imgsz,
+                             image_bgr.shape[:2]).unsqueeze(0)
         with torch.no_grad():
             feats = self.model.forward_feats(tensor.to(self.device))
             return head.get_vpe(feats, masks.to(self.device))
 
-    def set_visual_prompts(self, image_bgr, names, boxes_by_class):
-        """视觉 prompt：refer 图 + 每类 bbox -> SAVPE vpe，缓存到 head
+    def set_visual_prompts(self, image_bgr, names, prompts_by_class):
+        """视觉 prompt：refer 图 + 每类 bbox/mask -> SAVPE vpe，缓存到 head
 
-        names/boxes_by_class 的顺序即输出类别顺序（vpe 行序一致）；bbox 为 refer 图
-        原始像素 xyxy。vpe 已由 SAVPE 做 L2 归一化，直接作为 ``tpe`` 使用（不过 reprta）。
+        names/prompts_by_class 的顺序即输出类别顺序（vpe 行序一致）；vpe 已由 SAVPE
+        做 L2 归一化，直接作为 ``tpe`` 使用（不过 reprta）。
         """
-        vpe = self.visual_embeddings(image_bgr, names, boxes_by_class)
+        vpe = self.visual_embeddings(image_bgr, names, prompts_by_class)
         self.set_visual_embeddings(vpe, names)
         return len(names)
+
+    def set_mixed_prompts(self, texts, image_bgr, visual_names, prompts_by_class):
+        """文本 + 视觉混合：按官方 `get_cls_pe` 顺序拼接（文本在前、视觉在后）
+
+        类别名 = texts + visual_names（顺序与嵌入行一致）；同名类别拒绝（避免同一类
+        出现两行分类器）。返回总类别数。
+        """
+        texts, visual_names = list(texts), list(visual_names)
+        if not texts or not visual_names:
+            raise ValueError("mixed prompts need both text and visual classes")
+        dup = sorted(set(texts) & set(visual_names))
+        if dup:
+            raise ValueError(f"text and visual prompts share class names: {dup[:5]} — "
+                             "rename one side or use a single prompt mode")
+        tpe = self.text_embeddings(texts)
+        vpe = self.visual_embeddings(image_bgr, visual_names, prompts_by_class)
+        pe = torch.cat([tpe, vpe], dim=1)
+        self.model.model[-1].set_tpe(pe.detach())
+        self.visual_mode = False
+        self.mixed_mode = True
+        self.visual_names = visual_names
+        self.prompt_names = texts + visual_names
+        return len(self.prompt_names)
 
     def set_visual_embeddings(self, vpe, names=None):
         """直接缓存已聚合的 vpe (1, N, D)（评估侧 refer 数据集逐类平均后调用）"""
@@ -152,7 +182,9 @@ class PtEngine(BaseEngine):
             raise ValueError(f"visual embeddings must be (1, N, D), got {tuple(vpe.shape)}")
         head.set_tpe(vpe.detach().to(self.device))
         self.visual_mode = True
+        self.mixed_mode = False
         self.visual_names = list(names) if names is not None else None
+        self.prompt_names = list(names) if names is not None else None
         return vpe.shape[1]
 
     def _forward(self, img):

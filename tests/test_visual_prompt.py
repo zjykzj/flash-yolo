@@ -16,7 +16,7 @@ def _write(tmp_path, payload):
 
 
 def test_load_visual_prompt_groups_boxes(tmp_path):
-    """类别按首次出现排序；同类多框归并；bbox 原图 xyxy"""
+    """类别按首次出现排序；同类多个 bbox 归并；bbox 原图 xyxy"""
     p = _write(tmp_path, {
         "image": "refer.jpg",
         "prompts": [
@@ -25,11 +25,30 @@ def test_load_visual_prompt_groups_boxes(tmp_path):
             {"class": "person", "bbox": [50, 60, 70, 80]},
         ],
     })
-    image, names, boxes = load_visual_prompt(p)
+    image, names, prompts = load_visual_prompt(p)
     assert image == "refer.jpg"
     assert names == ["person", "car"]
-    assert boxes == [[[10.0, 20.0, 30.0, 40.0], [50.0, 60.0, 70.0, 80.0]],
-                     [[1.0, 2.0, 3.0, 4.0]]]
+    assert prompts == [
+        [{"kind": "bbox", "box": [10.0, 20.0, 30.0, 40.0]},
+         {"kind": "bbox", "box": [50.0, 60.0, 70.0, 80.0]}],
+        [{"kind": "bbox", "box": [1.0, 2.0, 3.0, 4.0]}],
+    ]
+
+
+def test_load_visual_prompt_mask(tmp_path):
+    """mask 为路径（相对 JSON 目录），读成 bool HxW"""
+    import cv2
+
+    mask = np.zeros((16, 16), np.uint8)
+    mask[4:12, 4:12] = 255
+    cv2.imwrite(str(tmp_path / "m.png"), mask)
+    p = _write(tmp_path, {"image": "refer.jpg",
+                          "prompts": [{"class": "person", "mask": "m.png"}]})
+    _, names, prompts = load_visual_prompt(p)
+    assert names == ["person"]
+    assert prompts[0][0]["kind"] == "mask"
+    assert prompts[0][0]["mask"].shape == (16, 16)
+    assert prompts[0][0]["mask"].sum() == 64
 
 
 def test_load_visual_prompt_rejects_bad_schema(tmp_path):
@@ -42,11 +61,18 @@ def test_load_visual_prompt_rejects_bad_schema(tmp_path):
     with pytest.raises(ValueError, match="bbox has no area"):
         load_visual_prompt(_write(tmp_path, {"image": "x", "prompts": [
             {"class": "a", "bbox": [2, 2, 2, 3]}]}))
+    with pytest.raises(ValueError, match="exactly one of 'bbox' / 'mask'"):
+        load_visual_prompt(_write(tmp_path, {"image": "x", "prompts": [{"class": "a"}]}))
+    with pytest.raises(ValueError, match="exactly one of 'bbox' / 'mask'"):
+        load_visual_prompt(_write(tmp_path, {"image": "x", "prompts": [
+            {"class": "a", "bbox": [0, 0, 1, 1], "mask": "m.png"}]}))
 
 
 def test_visual_masks_rasterize_and_merge():
     """imgsz=64 -> 8×8；[8,8,16,16] 落在网格 (1,1)；同类两框 OR 合并"""
-    masks = visual_masks(["person"], [[[8, 8, 16, 16], [24, 24, 32, 32]]], 1.0, (0, 0), 64)
+    prompts = [[{"kind": "bbox", "box": [8, 8, 16, 16]},
+                {"kind": "bbox", "box": [24, 24, 32, 32]}]]
+    masks = visual_masks(["person"], prompts, 1.0, (0, 0), 64, (64, 64))
     assert tuple(masks.shape) == (1, 8, 8)
     assert masks[0].sum() == 2
     assert masks[0, 1, 1] == 1 and masks[0, 3, 3] == 1
@@ -55,9 +81,37 @@ def test_visual_masks_rasterize_and_merge():
 def test_visual_masks_letterbox_transform():
     """ratio/pad 先变换到输入坐标，再乘 1/8（官方 LoadVisualPrompt 口径）"""
     # x: 20*0.5+20=30 -> 3.75; 40*0.5+20=40 -> 5.0；y: 20*0.5+10=20 -> 2.5; 40*0.5+10=30 -> 3.75
-    masks = visual_masks(["a"], [[[20, 20, 40, 40]]], 0.5, (10, 20), 64)
+    prompts = [[{"kind": "bbox", "box": [20, 20, 40, 40]}]]
+    masks = visual_masks(["a"], prompts, 0.5, (10, 20), 64, (100, 100))
     assert masks[0, 3, 4] == 1
     assert masks[0].sum() == 1
+
+
+def test_visual_masks_input():
+    """mask 最近邻 letterbox 到输入尺寸，再降到 1/8；与同区域 mask 的 bbox 一致"""
+    mask = np.zeros((64, 64), np.uint8)
+    mask[8:16, 8:16] = 1
+    masks = visual_masks(["a"], [[{"kind": "mask", "mask": mask.astype(bool)}]],
+                         1.0, (0, 0), 64, (64, 64))
+    assert masks[0].sum() == 1 and masks[0, 1, 1] == 1
+    with pytest.raises(ValueError, match="mask shape"):
+        visual_masks(["a"], [[{"kind": "mask", "mask": mask.astype(bool)}]],
+                     1.0, (0, 0), 64, (32, 32))
+
+
+def test_mask_rasterization_matches_ultralytics():
+    """mask 1/8 光栅化与官方 LoadVisualPrompt 逐位一致（dev 依赖 ultralytics）"""
+    import torch
+    ultralytics = pytest.importorskip("ultralytics")
+    from ultralytics.data.augment import LoadVisualPrompt
+
+    mask = np.zeros((64, 64), np.uint8)
+    mask[8:16, 8:16] = 255
+    official = LoadVisualPrompt().get_visuals(
+        [0], (64, 64), masks=torch.from_numpy(mask.astype(np.float32))[None])
+    ours = visual_masks(["a"], [[{"kind": "mask", "mask": mask > 0}]],
+                        1.0, (0, 0), 64, (64, 64))
+    assert torch.equal(official, ours)
 
 
 def test_collect_visual_embeddings_orders_and_normalizes():

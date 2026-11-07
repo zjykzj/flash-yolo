@@ -1,20 +1,26 @@
 """视觉 prompt：JSON 解析 + 掩码光栅化（对齐官方 LoadVisualPrompt）
 
-视觉 prompt = 一张 refer 图 + 若干 bbox（每类可有多个）。掩码在 **模型输入坐标** 的
-1/8 分辨率（P3 网格）上生成：bbox 先按 letterbox 的 ratio/pad 变换到输入坐标，再乘 1/8，
-最后以 `x1 <= x < x2`、`y1 <= y < y2` 光栅化；同类别多框按 OR 合并。SAVPE 用这些掩码
-从 refer 图的三尺度特征中聚合出每类一个视觉嵌入（vpe）。
+视觉 prompt = 一张 refer 图 + 若干示例；每个示例可以是 **bbox** 或 **mask**（每类可有
+多个）。掩码在 **模型输入坐标** 的 1/8 分辨率（P3 网格）上生成：
+
+- bbox：按 letterbox 的 ratio/pad 变换到输入坐标，再乘 1/8，按半开区间光栅化；
+- mask：最近邻缩放到 letterbox 后的输入尺寸，padding 置 0，再最近邻降到 1/8；
+- 同类别多个示例按 OR 合并。
 
 JSON 契约：
     {"image": "refer.jpg",
      "prompts": [{"class": "person", "bbox": [x1, y1, x2, y2]},
-                 {"class": "person", "bbox": [...]}]}
-类别顺序 = 首次出现顺序（vpe 行序与之对应）；bbox 为 refer 图像素坐标 xyxy。
+                 {"class": "person", "mask": "person.png"}]}
+
+类别顺序 = 首次出现顺序（vpe 行序与之对应）；bbox 为 refer 图像素坐标 xyxy；mask 为
+与 refer 图同尺寸的二值图（非 0 即前景），相对路径按 JSON 所在目录解析。每个示例
+必须且只能给 bbox / mask 之一。
 """
 
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -22,10 +28,21 @@ import torch.nn.functional as F
 __all__ = ["load_visual_prompt", "visual_masks", "collect_visual_embeddings"]
 
 
-def load_visual_prompt(path):
-    """读视觉 prompt JSON -> (image_path, names, boxes_by_class)
+def _load_mask(mask_path, json_path):
+    p = Path(mask_path)
+    if not p.is_absolute():  # 相对路径按 JSON 所在目录解析
+        p = Path(json_path).resolve().parent / p
+    mask = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+    if mask is None:
+        raise ValueError(f"cannot read visual prompt mask: {p}")
+    return mask > 0
 
-    names 按首次出现排序；boxes_by_class[q] 是第 q 类的原始图像 xyxy 框列表。
+
+def load_visual_prompt(path):
+    """读视觉 prompt JSON -> (image_path, names, prompts_by_class)
+
+    names 按首次出现排序；prompts_by_class[q] 是第 q 类的示例列表，元素为
+    `{"kind": "bbox", "box": [x1,y1,x2,y2]}` 或 `{"kind": "mask", "mask": bool HxW}`。
     格式错误直接 ValueError（不静默丢 prompt）。
     """
     p = Path(path)
@@ -40,45 +57,70 @@ def load_visual_prompt(path):
     if not isinstance(prompts, list) or not prompts:
         raise ValueError(f"visual prompt JSON {p}: 'prompts' must be a non-empty list")
 
-    names, boxes = [], []
+    names, grouped = [], []
     for i, item in enumerate(prompts):
-        name, bbox = item.get("class"), item.get("bbox")
+        name, bbox, mask_path = item.get("class"), item.get("bbox"), item.get("mask")
         if not name or not isinstance(name, str):
             raise ValueError(f"visual prompt JSON {p}: prompts[{i}] needs a non-empty 'class'")
-        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
-            raise ValueError(f"visual prompt JSON {p}: prompts[{i}] 'bbox' must be [x1,y1,x2,y2]")
-        box = [float(v) for v in bbox]
-        if box[2] <= box[0] or box[3] <= box[1]:
-            raise ValueError(f"visual prompt JSON {p}: prompts[{i}] bbox has no area: {box}")
+        if (bbox is None) == (mask_path is None):
+            raise ValueError(f"visual prompt JSON {p}: prompts[{i}] needs exactly one of 'bbox' / 'mask'")
+        if bbox is not None:
+            if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                raise ValueError(f"visual prompt JSON {p}: prompts[{i}] 'bbox' must be [x1,y1,x2,y2]")
+            box = [float(v) for v in bbox]
+            if box[2] <= box[0] or box[3] <= box[1]:
+                raise ValueError(f"visual prompt JSON {p}: prompts[{i}] bbox has no area: {box}")
+            prompt = {"kind": "bbox", "box": box}
+        else:
+            if not isinstance(mask_path, str) or not mask_path:
+                raise ValueError(f"visual prompt JSON {p}: prompts[{i}] 'mask' must be a path")
+            prompt = {"kind": "mask", "mask": _load_mask(mask_path, p)}
         if name not in names:
             names.append(name)
-            boxes.append([])
-        boxes[names.index(name)].append(box)
-    return image, names, boxes
+            grouped.append([])
+        grouped[names.index(name)].append(prompt)
+    return image, names, grouped
 
 
-def visual_masks(names, boxes_by_class, ratio, pad, imgsz):
-    """原始图像 bbox -> (Q, imgsz/8, imgsz/8) 二值掩码（float32）
+def visual_masks(names, prompts_by_class, ratio, pad, imgsz, src_shape):
+    """原始图像示例（bbox / mask）-> (Q, imgsz/8, imgsz/8) 二值掩码（float32）
 
-    ratio/pad 来自 `data.preprocess.preprocess` 的 letterbox 结果；口径与官方
-    `LoadVisualPrompt` 一致：bbox 变换到输入坐标后乘 1/8，再按半开区间光栅化；
-    同类别多框 OR 合并。Q = len(names)，行序与 names 一致。
+    ratio/pad 来自 `data.preprocess.preprocess` 的 letterbox 结果；src_shape 是 refer 图
+    原始 (H, W)（mask 尺寸校验与 letterbox 缩放需要）。口径与官方 `LoadVisualPrompt`
+    一致；同类别多个示例 OR 合并。Q = len(names)，行序与 names 一致。
     """
-    if len(names) != len(boxes_by_class):
-        raise ValueError(f"names ({len(names)}) and boxes ({len(boxes_by_class)}) length mismatch")
+    if len(names) != len(prompts_by_class):
+        raise ValueError(f"names ({len(names)}) and prompts ({len(prompts_by_class)}) length mismatch")
     h8 = w8 = int(imgsz) // 8
     xs = np.arange(w8, dtype=np.float32)
     ys = np.arange(h8, dtype=np.float32)
     pad_top, pad_left = pad
+    src_h, src_w = src_shape
+    new_h, new_w = round(src_h * ratio), round(src_w * ratio)
     out = np.zeros((len(names), h8, w8), dtype=np.float32)
-    for q, boxes in enumerate(boxes_by_class):
-        for x1, y1, x2, y2 in boxes:
-            x1 = (x1 * ratio + pad_left) / 8
-            y1 = (y1 * ratio + pad_top) / 8
-            x2 = (x2 * ratio + pad_left) / 8
-            y2 = (y2 * ratio + pad_top) / 8
-            mask = ((xs[None, :] >= x1) & (xs[None, :] < x2) &
-                    (ys[:, None] >= y1) & (ys[:, None] < y2)).astype(np.float32)
+
+    for q, items in enumerate(prompts_by_class):
+        for item in items:
+            kind = item.get("kind")
+            if kind == "bbox":
+                x1, y1, x2, y2 = item["box"]
+                x1 = (x1 * ratio + pad_left) / 8
+                y1 = (y1 * ratio + pad_top) / 8
+                x2 = (x2 * ratio + pad_left) / 8
+                y2 = (y2 * ratio + pad_top) / 8
+                mask = ((xs[None, :] >= x1) & (xs[None, :] < x2) &
+                        (ys[:, None] >= y1) & (ys[:, None] < y2)).astype(np.float32)
+            elif kind == "mask":
+                raw = item["mask"]
+                if raw.shape != (src_h, src_w):
+                    raise ValueError(f"visual prompt mask shape {raw.shape} != refer image {(src_h, src_w)}")
+                resized = cv2.resize(raw.astype(np.uint8), (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+                canvas = np.zeros((imgsz, imgsz), dtype=np.uint8)
+                canvas[pad_top:pad_top + new_h, pad_left:pad_left + new_w] = resized
+                m = torch.from_numpy(canvas).float().unsqueeze(0).unsqueeze(0)
+                mask = F.interpolate(m, size=(h8, w8), mode="nearest")[0, 0].numpy()
+            else:
+                raise ValueError(f"unknown visual prompt kind: {kind!r}")
             out[q] = np.maximum(out[q], mask)
     return torch.from_numpy(out)
 
@@ -133,7 +175,8 @@ def collect_visual_embeddings(model, dataset, eval_names, imgsz, device="cpu", l
             continue
         tensor, ratio, pad = preprocess(image, imgsz)
         ids = sorted(by_cls)
-        masks = visual_masks([names[j] for j in ids], [by_cls[j] for j in ids], ratio, pad, imgsz)
+        prompts = [[{"kind": "bbox", "box": b} for b in by_cls[j]] for j in ids]
+        masks = visual_masks([names[j] for j in ids], prompts, ratio, pad, imgsz, image.shape[:2])
         with torch.no_grad():
             feats = model.forward_feats(tensor.to(device))
             vpe = head.get_vpe(feats, masks.unsqueeze(0).to(device))  # (1, Q, D)
