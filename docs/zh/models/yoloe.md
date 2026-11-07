@@ -184,6 +184,13 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   类锁定导出 vs pt 检出一致。
 - **混合 prompt**：缓存嵌入 = `cat([tpe, vpe])`（文本在前，官方 `get_cls_pe` 顺序）；
   同名类别明确报错；类锁定导出 vs pt 检出一致。
+- **视觉 val（官方默认协议）**：官方 `load_vp=True` 用**评估集自身**当 refer。官方 8.4.175
+  在 LVIS minival 的 COCO 表 Box 0.187 / Mask 0.141；用同一 LVIS 口径重打分官方预测：
+  Box 0.3557 / Mask 0.2826。本工程同协议（同一 YOLO 参考集、`--nms`、maxDets=100）：
+  Box **0.3534** / Mask **0.2805**（差 0.0023 / 0.0021），APr/APc/APf 差 ≤0.008。
+  COCO 表的 Mask 差 0.015 归因于官方表后端（其 faster-coco-eval 报错后走 fallback）；
+  LVIS 同口径是实现对齐的主证据。该 self-refer 是 transductive（测试集 GT 参与 vpe），
+  不是论文 21.9 的独立 refer 口径；论文的 refer 数据/采样未在公开文档给出，不把 0.35 当 21.9。
 - **TensorRT（fp32 / fp16）**：pf E2E、text E2E、text Non-E2E 的 engine 均可构建并
   `infer/eval --engine trt`；部署 metadata 写旁车 `<engine>.json`。text E2E fp16（@320
   冒烟）与 pt fp32：6/6 检出、框差 <0.35px、分数差 <3e-3、掩码 IoU ≥0.996；text NMS

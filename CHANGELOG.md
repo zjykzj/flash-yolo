@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **YOLOE-26 verification**: the model pages record the E2E/Non-E2E cross-implementation results against Ultralytics (LVIS minival, COCO val2017) and the released seg-checkpoint vs paper detection-config gap.
+- **YOLOE visual-prompt validation**: the model pages record the official `load_vp=True` self-refer protocol and the same-protocol LVIS comparison (0.3534 / 0.2805 vs 0.3557 / 0.2826), with the transductive-vs-paper-21.9 distinction.
 
 ### Fixed
 

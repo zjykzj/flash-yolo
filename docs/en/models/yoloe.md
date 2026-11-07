@@ -212,6 +212,16 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   `LoadVisualPrompt(masks=...)`; the class-locked export matches the pt detections.
 - **Mixed prompts**: the cached embedding is `cat([tpe, vpe])` (text first, the official
   `get_cls_pe` order); duplicate class names error out; the class-locked export matches pt.
+- **Visual val (official default protocol)**: official `load_vp=True` uses the **evaluation set
+  itself** as the refer set. On LVIS minival, the official 8.4.175 COCO table gives Box 0.187 /
+  Mask 0.141; rescoring the official predictions under the same LVIS protocol gives Box 0.3557 /
+  Mask 0.2826. This project, same protocol (same YOLO refer set, `--nms`, maxDets=100), gives
+  Box **0.3534** / Mask **0.2805** (Δ 0.0023 / 0.0021) with APr/APc/APf within 0.008. The
+  0.015 COCO-table Mask gap comes from the official table backend (its faster-coco-eval errored
+  and the table likely fell back); the LVIS rescore is the primary alignment evidence. This
+  self-refer protocol is transductive (test GT participates in the vpe), not the paper's 21.9
+  independent-refer protocol; the paper's refer data/sampling is not documented publicly, so
+  0.35 is not presented as 21.9.
 - **TensorRT (fp32 / fp16)**: pf E2E, text E2E and text Non-E2E engines build and run through
   `infer/eval --engine trt`; deploy metadata travels in the `<engine>.json` sidecar. Text E2E
   fp16 vs pt fp32 (@320 smoke): 6/6 detections, boxes <0.35px, scores <3e-3, mask IoU ≥0.996;
