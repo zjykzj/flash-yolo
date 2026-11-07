@@ -50,7 +50,7 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--show` | off | live video preview (needs GUI) |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--conf` | **0.25** | confidence threshold (eval defaults to 0.001 — different purposes) |
-| `--nms` | off | o2m + NMS (yolo26 family + yoloe-26 text; errors for v3, prompt-free is E2E only) |
+| `--nms` | off | o2m + NMS (yolo26 family + yoloe-26 text; errors for v3, prompt-free is E2E only; onnx/trt must be exported with `--nms`, checked via metadata) |
 | `--agnostic-nms` | off | cross-class NMS (requires `--nms`) |
 | `--classes` | — | yoloe-26 text mode: comma-separated class names (pt engine only) |
 | `--model` / `--scale` | inferred from filename/metadata | errors when nothing can be inferred |

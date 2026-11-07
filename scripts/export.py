@@ -7,12 +7,16 @@ raw: (B, 4+nc+nm, 8400)），output1 是原型 (B, nm, H/4, W/4)；掩码在外�
 utils/postprocess.process_mask 解码（与官方 val 逐像素一致）。
 yolov3-tiny：单输出解码 (B, NA, 5+nc)——obj×cls 与按类 NMS 在外部（utils/postprocess.v3_detections），
 --raw 不适用。
+yoloe-26 text：默认导出 fuse 后的 E2E 类锁定图；--nms 改出 o2m 密集输出
+(B, 4+V+nm, 8400)（像素 xyxy + sigmoid 分数），NMS 在外部（utils/postprocess.nms_per_image）。
 默认 batch 固定为 1（边缘工具链偏好固定 shape），--dynamic 打开动态 batch。
 
 用法:
     python scripts/export.py --weights weights/yolo26n.safetensors --out weights/yolo26n.onnx
     python scripts/export.py --weights weights/yolo26n.safetensors --out weights/yolo26n_raw.onnx --raw
     python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov3-tiny
+    python scripts/export.py --weights weights/yoloe-26n-seg.safetensors --classes "person, car"
+    python scripts/export.py --weights weights/yoloe-26n-seg.safetensors --classes "person, car" --nms
     python scripts/export.py --weights weights/yolo26n.safetensors --trt [--fp16]   # 顺带构建 TensorRT engine
 
 --trt：onnx 导出后继续构建序列化 engine（与构建机 GPU/TRT 版本绑定、不跨机移植；换机需重构建）。
@@ -68,6 +72,8 @@ def main():
     parser.add_argument("--weights", required=True, help=".safetensors path")
     parser.add_argument("--out", default=None, help="output .onnx path (default runs/export/<weights>.onnx)")
     parser.add_argument("--raw", action="store_true", help="export raw head output (yolo26 only)")
+    parser.add_argument("--nms", action="store_true",
+                        help="export the o2m+NMS path (yoloe-26 text only; class-locked dense output)")
     parser.add_argument("--dynamic", action="store_true", help="dynamic batch axis (default: fixed batch=1)")
     parser.add_argument("--model", default=None, choices=sorted(ARCHS),
                         help="architecture (default: inferred from the weights filename)")
@@ -96,6 +102,9 @@ def main():
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
     if arch not in YOLO26_FAMILY and args.raw:
         parser.error(f"--raw is only supported for yolo26 (got model={arch!r})")
+    if args.nms and args.raw:
+        parser.error("--nms and --raw are mutually exclusive (--raw is the yolo26 dense output; "
+                     "--nms is the yoloe-26 text o2m path)")
     if args.fp16 and not args.trt:
         parser.error("--fp16 requires --trt")
     if args.trt and args.dynamic:
@@ -107,7 +116,7 @@ def main():
     out_path = args.out or str(ROOT / "runs" / "export" / (Path(args.weights).stem + ".onnx"))
     log_params(logger, __file__, weights=args.weights, out=out_path, model=arch, imgsz=imgsz,
                nc=nc if nc is not None else 80, opset=args.opset,
-               dynamic=args.dynamic, raw=args.raw, trt=args.trt, fp16=args.fp16)
+               dynamic=args.dynamic, raw=args.raw, nms=args.nms, trt=args.trt, fp16=args.fp16)
 
     # YOLOE：prompt 模式经 metadata/文件名解析（pf -> lrpc 布局；text -> 类锁定 fuse 导出）
     prompt_free = None
@@ -122,11 +131,14 @@ def main():
                 parser.error("yoloe-26 text-mode export requires --classes "
                              '(the exported model is locked to them, e.g. --classes "person, bicycle")')
             locked_classes = [c.strip() for c in args.classes.split(",")]
+    if args.nms and not text_mode:
+        parser.error("--nms export is only supported for yoloe-26 text mode "
+                     "(prompt-free is E2E only; yolo26 uses --raw)")
     model = build_model(arch, scale, nc=nc, prompt_free=prompt_free)
     load_weights(model, args.weights, strict=True)
     head = model.model[-1]
     if hasattr(head, "end2end"):  # V3Detect 无此开关（前向即解码）
-        head.end2end = not args.raw
+        head.end2end = not (args.raw or args.nms)
     if hasattr(head, "export"):  # yoloe：export 标志 -> conf=0 静态路径（提案过滤全锚点通过，官方口径）
         head.export = True
     model.eval()
@@ -165,13 +177,14 @@ def main():
     deploy_meta = _deploy_meta(
         arch, scale, imgsz,
         len(locked_classes) if text_mode else nc,
-        end2end=not args.raw,
+        end2end=not (args.raw or args.nms),
         prompt_mode=("text" if text_mode else ("pf" if prompt_free else None)),
         names=(locked_classes if text_mode else (meta.get("names") if prompt_free else None)),
     )
     write_onnx_meta(out_path, deploy_meta)
     if arch in YOLOE26_FAMILY and text_mode:
-        mode = "E2E text prompts (class-locked) + prototypes"
+        mode = ("o2m+NMS text prompts (class-locked)" if args.nms
+                else "E2E text prompts (class-locked)") + " + prototypes"
     elif arch in YOLOE26_FAMILY:
         mode = "E2E prompt-free + prototypes"
     elif arch not in YOLO26_FAMILY:

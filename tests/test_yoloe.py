@@ -289,6 +289,42 @@ def test_text_onnx_class_locked(tmp_path):
     assert np.array_equal(d_pt.class_ids, d_onnx.class_ids)
 
 
+def test_text_onnx_non_e2e(tmp_path):
+    """text 类锁定 Non-E2E ONNX：metadata end2end=false；OnnxEngine 与 pt o2m+NMS 检出对齐"""
+    pytest.importorskip("onnxruntime")
+    enc_path = ROOT / "weights" / "mobileclip2_b.safetensors"
+    if not TEXT_SAFE.exists() or not TEST_IMAGE.exists() or not enc_path.exists():
+        pytest.skip("需要 yoloe-26n-seg.safetensors / mobileclip2_b.safetensors / 测试图片")
+
+    classes = ["person", "bicycle", "car"]
+    onnx_path = tmp_path / "text-locked-nms.onnx"
+    subprocess.run(["python", "scripts/export.py", "--weights", str(TEXT_SAFE),
+                    "--classes", ",".join(classes), "--nms", "--out", str(onnx_path)],
+                   cwd=ROOT, check=True)
+
+    from model.weights import load_meta
+    from utils.engines import OnnxEngine, PtEngine
+
+    meta = load_meta(onnx_path)
+    assert meta["prompt_mode"] == "text" and meta["end2end"] is False
+    assert meta["names"] == classes and meta["nc"] == len(classes)
+
+    import cv2
+
+    img = cv2.imread(str(TEST_IMAGE))
+    pt = PtEngine(str(TEXT_SAFE), model="yoloe-26", scale="n", device="cpu", end2end=False)
+    pt.set_classes(classes)
+    d_pt = pt.predict(img, conf_thres=0.25)
+    onnx = OnnxEngine(str(onnx_path), model="yoloe-26", scale="n", end2end=False)
+    assert onnx.text_mode
+    d_onnx = onnx.predict(img, conf_thres=0.25)
+
+    assert len(d_pt.boxes) == len(d_onnx.boxes)
+    assert np.abs(d_pt.boxes - d_onnx.boxes).max() < 1e-3
+    assert np.abs(d_pt.scores - d_onnx.scores).max() < 1e-3
+    assert np.array_equal(d_pt.class_ids, d_onnx.class_ids)
+
+
 def test_pf_nms_rejected():
     """pf（lrpc）只有 E2E 口径：end2end=False 在 engine 构造时明确报错"""
     if not PF_SAFE.exists():

@@ -27,7 +27,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--split` | `val` | role key (train/val/test) |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--model` / `--scale` | inferred from weights | pass explicitly when nothing can be inferred |
-| `--nms` | off | o2m + NMS (yolo26 family + yoloe-26 text; errors for v3, prompt-free is E2E only) |
+| `--nms` | off | o2m + NMS (yolo26 family + yoloe-26 text; errors for v3, prompt-free is E2E only; onnx/trt must be exported with `--nms`, checked via metadata) |
 | `--conf` / `--iou` / `--max-det` | 0.001 / 0.7 / 300 | matches the official val convention |
 | `--imgsz` | metadata > 640 | onnx follows the graph shape (conflicts error out) |
 | `--limit` | 0 (full) | evaluate the first N images only (GT restricted to the same subset) |

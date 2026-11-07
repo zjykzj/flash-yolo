@@ -17,6 +17,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg-pf.safetensors
 # yoloe text mode: the prompts are fused into the cls conv — a single-input, class-locked ONNX
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car"
+# yoloe text mode Non-E2E: dense o2m output; pass --nms at infer/eval time
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car" --nms
 ```
 
 | Argument | Default | Description |
@@ -24,6 +27,7 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | `--weights` | — | `.safetensors` |
 | `--out` | `runs/export/<stem>.onnx` | output path |
 | `--raw` | off | export the raw head `(B, 4+nc, N)` (yolo26 only; errors for v3) |
+| `--nms` | off | export the dense o2m output (yoloe-26 text only; pass `--nms` at infer/eval) |
 | `--dynamic` | off | dynamic batch axis; default fixed batch 1 |
 | `--classes` | — | yoloe-26 text mode: class names to lock into the exported model (required) |
 | `--model` / `--scale` | inferred from filename | architecture / scale |
@@ -44,6 +48,7 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | yolov3-tiny | `(B, NA, 5+nc)` | NA = 3·ΣH·W; obj×cls and NMS outside |
 | yoloe pf | `output0 (B, 1000, 6+nm)` + `output1 (B, nm, H/4, W/4)` | E2E, **max_det=1000**, conf=0 static proposal path |
 | yoloe text (`--classes`) | `output0 (B, 300, 6+nm)` + `output1` | single input: the text embeddings are fused into the cls conv (BN folded, reprta removed); the exported model rejects new prompts |
+| yoloe text `--nms` | `output0 (B, 4+V+nm, N)` + `output1` | dense output is already pixel xyxy + sigmoid; NMS runs outside (`nms_per_image`) |
 
 - Training artifacts carry metadata, so `--scale` / `--nc` can be omitted. Exported artifacts
   also carry deploy metadata: ONNX writes `metadata_props` (arch/scale/nc/imgsz/names/

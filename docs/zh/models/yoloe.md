@@ -92,6 +92,10 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-m
 # 导出：prompt 融合进分类卷积——单输入、类锁定 ONNX
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --out weights/yoloe-26n-3cls.onnx
+
+# 导出 Non-E2E 部署图（o2m 密集输出 + 外部 NMS）
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car" --nms --out weights/yoloe-26n-3cls-nms.onnx
 ```
 
 - `--model/--scale` 可从文件名推（`yoloe-26n-seg-pf` → yoloe-26 / n）；`--raw` 不适用
@@ -126,6 +130,8 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   框/分数/系数 < 1e-3、零类别翻转（4585 类的近并列分数只出现在低分尾部，由 torch/ORT 后端决胜）。
 - **导出对拍（文本）**：fuse 后的 pt 与未 fuse 差 1.8e-6、onnx 差 6e-5——conf>0.25 的检出
   完全一致、零类别翻转。
+- **Non-E2E 导出对拍（文本）**：`--nms` 导出的 o2m 图与 pt 同路径在 conf>0.25 下检出一致
+  （框/分数 <1e-3、零类别翻转）；coco-tiny 2 图评估 Box/Mask 四位一致。
 - **COCO 冒烟**（20 图，管线验证口径，pf）：Box 0.3485 / Mask 0.2865 mAP50-95。
 - **LVIS 协议**：`tests/test_lvis_evaluator.py` 在合成数据上验证 neg / not_exhaustive /
   未列出 pair 三条 LVIS 规则，以及零检出图计入、APr/APc/APf、segm RLE 路径；`--data

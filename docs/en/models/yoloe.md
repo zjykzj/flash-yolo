@@ -105,6 +105,10 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-m
 # export: the prompts are fused into the cls conv — a single-input, class-locked ONNX
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --out weights/yoloe-26n-3cls.onnx
+
+# export the Non-E2E deploy graph (dense o2m output + external NMS)
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car" --nms --out weights/yoloe-26n-3cls-nms.onnx
 ```
 
 - `--model/--scale` are inferred from the filename (`yoloe-26n-seg-pf` → yoloe-26 / n);
@@ -147,6 +151,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   4585 classes only occur in the low-conf tail, broken by the torch/ORT backends).
 - **Export parity (text)**: the fused pt model vs unfused differ by 1.8e-6 and the onnx by 6e-5 —
   same detections above conf=0.25, zero class flips.
+- **Non-E2E export parity (text)**: the `--nms` o2m graph matches the pt path above conf=0.25
+  (boxes/scores < 1e-3, zero class flips); a 2-image coco-tiny eval matches to four decimals
+  for both Box and Mask.
 - **COCO smoke** (20 images, pipeline-validation protocol, pf): Box 0.3485 / Mask 0.2865
   mAP50-95.
 - **LVIS protocol**: `tests/test_lvis_evaluator.py` verifies the three LVIS rules (neg /

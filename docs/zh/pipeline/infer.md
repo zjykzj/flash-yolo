@@ -49,7 +49,7 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--show` | off | 视频实时预览（需要 GUI） |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--conf` | **0.25** | 置信度阈值（eval 默认 0.001，两者用途不同） |
-| `--nms` | off | o2m + NMS（yolo26 系 + yoloe-26 文本模式；v3 报错，pf 仅 E2E） |
+| `--nms` | off | o2m + NMS（yolo26 系 + yoloe-26 文本模式；v3 报错，pf 仅 E2E；onnx/trt 需导出时加 `--nms`，metadata 会校验） |
 | `--agnostic-nms` | off | 跨类 NMS（需同时给 `--nms`） |
 | `--classes` | — | yoloe-26 文本模式：逗号分隔的类别名（pt 必填；onnx/trt 可省略，需与锁定列表一致） |
 | `--model` / `--scale` | 从文件名/metadata 推断 | 推不出时报错 |

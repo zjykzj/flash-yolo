@@ -26,7 +26,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--split` | `val` | 角色键（train/val/test） |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--model` / `--scale` | 从权重推断 | 推不出时显式给 |
-| `--nms` | off | o2m + NMS（yolo26 系 + yoloe-26 文本模式；v3 会报错，pf 仅 E2E） |
+| `--nms` | off | o2m + NMS（yolo26 系 + yoloe-26 文本模式；v3 会报错，pf 仅 E2E；onnx/trt 需导出时加 `--nms`，metadata 会校验） |
 | `--conf` / `--iou` / `--max-det` | 0.001 / 0.7 / 300 | 与官方 val 口径一致 |
 | `--imgsz` | metadata > 640 | onnx 以图内 shape 为准（冲突报错） |
 | `--limit` | 0（全量） | 只评前 N 张（GT 同步限制到该子集） |

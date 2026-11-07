@@ -16,6 +16,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg-pf.safetensors
 # yoloe 文本模式：prompt 融合进分类卷积——单输入、类锁定 ONNX
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car"
+# yoloe 文本模式 Non-E2E：导出 o2m 密集输出，推理/评估配 --nms
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car" --nms
 ```
 
 | 参数 | 默认 | 说明 |
@@ -23,6 +26,7 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | `--weights` | — | `.safetensors` |
 | `--out` | `runs/export/<stem>.onnx` | 输出路径 |
 | `--raw` | off | 导出原始头 `(B, 4+nc, N)`（yolo26 专属；v3 报错） |
+| `--nms` | off | 导出 o2m 密集输出（yoloe-26 文本专属；推理/评估需配 `--nms`） |
 | `--dynamic` | off | 动态 batch 轴；默认固定 batch 1 |
 | `--classes` | — | yoloe-26 文本模式：锁定进导出模型的类别名（必填） |
 | `--model` / `--scale` | 从文件名推断 | 架构/档位 |
@@ -43,6 +47,7 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | yolov3-tiny | `(B, NA, 5+nc)` | NA = 3·ΣH·W；obj×cls 与 NMS 在外 |
 | yoloe pf | `output0 (B, 1000, 6+nm)` + `output1 (B, nm, H/4, W/4)` | E2E，**max_det=1000**，conf=0 静态提案口径 |
 | yoloe 文本（`--classes`） | `output0 (B, 300, 6+nm)` + `output1` | 单输入：文本嵌入已融合进分类卷积（BN 折叠、reprta 移除）；导出模型拒收新 prompt |
+| yoloe 文本 `--nms` | `output0 (B, 4+V+nm, N)` + `output1` | 密集输出已是像素 xyxy + sigmoid；NMS 在外（`nms_per_image`） |
 
 - 训练产物自带 metadata，`--scale` / `--nc` 可省略。导出产物也带部署 metadata：ONNX 写入
   `metadata_props`（arch/scale/nc/imgsz/names/prompt_mode/end2end），TRT 写旁车
