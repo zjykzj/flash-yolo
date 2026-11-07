@@ -114,6 +114,28 @@ def test_mask_rasterization_matches_ultralytics():
     assert torch.equal(official, ours)
 
 
+def test_mask_letterbox_matches_ultralytics():
+    """letterbox mask（先最近邻缩放/补边，再 1/8）与官方 LoadVisualPrompt 逐位一致"""
+    import cv2
+    import torch
+    ultralytics = pytest.importorskip("ultralytics")
+    from ultralytics.data.augment import LoadVisualPrompt
+
+    src = np.zeros((100, 100), np.uint8)
+    src[20:40, 20:40] = 255
+    ratio, pad, imgsz = 0.5, (7, 7), 64
+    new_h, new_w = round(100 * ratio), round(100 * ratio)
+    resized = np.zeros((imgsz, imgsz), np.uint8)
+    resized[pad[0]:pad[0] + new_h, pad[1]:pad[1] + new_w] = cv2.resize(
+        src, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+    resized[resized == 114] = 0
+    official = LoadVisualPrompt().get_visuals(
+        [0], (imgsz, imgsz), masks=torch.from_numpy(resized.astype(np.float32))[None])
+    ours = visual_masks(["a"], [[{"kind": "mask", "mask": src > 0}]],
+                        ratio, pad, imgsz, (100, 100))
+    assert torch.equal(official, ours)
+
+
 def test_collect_visual_embeddings_orders_and_normalizes():
     """refer 数据集逐类聚合：已知类归一化、缺失类零行、返回未覆盖的 refer 类"""
     import torch
