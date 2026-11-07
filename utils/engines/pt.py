@@ -54,6 +54,8 @@ class PtEngine(BaseEngine):
         self.text_mode = model == "yoloe-26" and getattr(head, "lrpc", None) is None
         self.weights_dir = str(Path(weights).resolve().parent)
         self._text_encoder = None  # 惰性构建（set_classes 时）
+        self.visual_mode = False  # 当前缓存的是 visual prompt 嵌入（set_visual_*）
+        self.visual_names = None
         self._warmup()
 
     def _warmup(self):
@@ -107,7 +109,51 @@ class PtEngine(BaseEngine):
         # 推理件：detach 只切断 autograd 引用、不改数值。否则 1203 个 prompt 的编码图
         # 会被缓存的 _tpe 一直引用（实测 ~24G 显存全程驻留，大档位评估可能 OOM）。
         head.set_tpe(head.get_tpe(emb).detach())
+        self.visual_mode = False
+        self.visual_names = None
         return len(texts)
+
+    def visual_embeddings(self, image_bgr, names, boxes_by_class):
+        """refer 图 + 每类 bbox -> SAVPE vpe (1, Q, embed)（不缓存；评估侧重排用）"""
+        if not self.text_mode:
+            raise ValueError("visual prompts are only available for yoloe-26 text-mode weights")
+        head = self.model.model[-1]
+        if getattr(head, "is_fused", False):
+            raise ValueError("the model is class-locked (prompts fused); it rejects visual prompts")
+        if not names:
+            raise ValueError("visual prompts need at least one class")
+        from data.preprocess import preprocess
+        from utils.visual_prompt import visual_masks
+
+        tensor, ratio, pad = preprocess(image_bgr, self.imgsz)
+        masks = visual_masks(names, boxes_by_class, ratio, pad, self.imgsz).unsqueeze(0)
+        with torch.no_grad():
+            feats = self.model.forward_feats(tensor.to(self.device))
+            return head.get_vpe(feats, masks.to(self.device))
+
+    def set_visual_prompts(self, image_bgr, names, boxes_by_class):
+        """视觉 prompt：refer 图 + 每类 bbox -> SAVPE vpe，缓存到 head
+
+        names/boxes_by_class 的顺序即输出类别顺序（vpe 行序一致）；bbox 为 refer 图
+        原始像素 xyxy。vpe 已由 SAVPE 做 L2 归一化，直接作为 ``tpe`` 使用（不过 reprta）。
+        """
+        vpe = self.visual_embeddings(image_bgr, names, boxes_by_class)
+        self.set_visual_embeddings(vpe, names)
+        return len(names)
+
+    def set_visual_embeddings(self, vpe, names=None):
+        """直接缓存已聚合的 vpe (1, N, D)（评估侧 refer 数据集逐类平均后调用）"""
+        if not self.text_mode:
+            raise ValueError("visual embeddings are only available for yoloe-26 text-mode weights")
+        head = self.model.model[-1]
+        if getattr(head, "is_fused", False):
+            raise ValueError("the model is class-locked (prompts fused); it rejects visual embeddings")
+        if vpe.ndim != 3 or vpe.shape[0] != 1:
+            raise ValueError(f"visual embeddings must be (1, N, D), got {tuple(vpe.shape)}")
+        head.set_tpe(vpe.detach().to(self.device))
+        self.visual_mode = True
+        self.visual_names = list(names) if names is not None else None
+        return vpe.shape[1]
 
     def _forward(self, img):
         with torch.no_grad():

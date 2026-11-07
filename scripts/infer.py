@@ -238,6 +238,9 @@ def main():
     parser.add_argument("--classes", default=None,
                         help="yoloe-26 text mode only: comma-separated class names / text prompts "
                              "(encoded with the MobileCLIP text encoder; e.g. \"person, bicycle\")")
+    parser.add_argument("--visual-prompt", dest="visual_prompt", default=None,
+                        help="yoloe-26 text mode only: JSON with a refer image and bbox prompts "
+                             "(pt engine; mutually exclusive with --classes)")
     parser.add_argument("--imgsz", type=int, default=None,
                         help="model input size (default: weights metadata, else 640)")
     args = parser.parse_args()
@@ -288,15 +291,37 @@ def main():
             parser.error(f"--nms is only supported for yolo26 / yoloe-26 text (got model={arch!r})")
     if args.agnostic_nms and not args.nms:
         parser.error("--agnostic-nms only affects the NMS path — pass --nms as well")
+    if args.visual_prompt and prompt_mode != "text":
+        parser.error("--visual-prompt requires yoloe-26 text-mode weights")
+    if args.visual_prompt and args.classes:
+        parser.error("--classes and --visual-prompt are mutually exclusive")
+    visual_prompt_data = None
     if arch in YOLOE26_FAMILY:
         pm = prompt_mode
         if pm == "text":
             locked_names = meta.get("names")
-            if args.engine == "pt":
+            if args.visual_prompt:
+                if args.engine != "pt":
+                    parser.error("--visual-prompt requires --engine pt (visual prompts run through SAVPE)")
+                from utils.visual_prompt import load_visual_prompt
+
+                try:
+                    refer_path, vis_names, vis_boxes = load_visual_prompt(args.visual_prompt)
+                except ValueError as e:
+                    parser.error(str(e))
+                ref = Path(refer_path)
+                if not ref.is_absolute():  # 相对路径按 JSON 所在目录解析
+                    ref = Path(args.visual_prompt).resolve().parent / ref
+                refer_img = cv2.imread(str(ref))
+                if refer_img is None:
+                    parser.error(f"cannot read visual prompt refer image: {ref}")
+                visual_prompt_data = (refer_img, vis_names, vis_boxes)
+                names = {i: n for i, n in enumerate(vis_names)}
+            elif args.engine == "pt":
                 # pt：类名来自 --classes（经 MobileCLIP 编码），类别数随 prompt 数变
                 if not args.classes:
-                    parser.error("yoloe-26 text-mode weights require --classes "
-                                 '(comma-separated class names, e.g. --classes "person, bicycle")')
+                    parser.error("yoloe-26 text-mode weights require --classes or --visual-prompt "
+                                 '(e.g. --classes "person, bicycle")')
                 names = {i: n.strip() for i, n in enumerate(args.classes.split(","))}
             else:
                 # onnx/trt：导出时已 fuse 成类锁定图，类别名随部署 metadata 走
@@ -310,8 +335,9 @@ def main():
                                      f"requested {requested}, locked {list(locked_names)}")
                 names = {i: n for i, n in enumerate(locked_names)}
             if args.data:
-                logger.warning("--data is ignored for yoloe-26 text mode: class names come from "
-                               + ("--classes" if args.engine == "pt" else "the class-locked export metadata"))
+                source = ("--visual-prompt" if args.visual_prompt
+                          else ("--classes" if args.engine == "pt" else "the class-locked export metadata"))
+                logger.warning(f"--data is ignored for yoloe-26 text mode: class names come from {source}")
             nc = None
         else:  # pf：词汇即权重，名字必须来自烘焙词汇，--data/COCO 名不适用
             vocab_names = meta.get("names")
@@ -382,11 +408,15 @@ def main():
     engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
     if arch in YOLOE26_FAMILY and prompt_mode == "text":
-        locked = args.engine != "pt"
-        if not locked:
-            engine.set_classes([names[i] for i in sorted(names)])
-        suffix = ", class-locked" if locked else ""
-        mode = ("E2E (text prompts" if end2end else "o2m+NMS (text prompts") + suffix + ")"
+        if args.visual_prompt:
+            engine.set_visual_prompts(*visual_prompt_data)
+            mode = "E2E (visual prompts)" if end2end else "o2m+NMS (visual prompts)"
+        else:
+            locked = args.engine != "pt"
+            if not locked:
+                engine.set_classes([names[i] for i in sorted(names)])
+            suffix = ", class-locked" if locked else ""
+            mode = ("E2E (text prompts" if end2end else "o2m+NMS (text prompts") + suffix + ")"
     elif arch in YOLOE26_FAMILY:
         mode = "E2E (prompt-free)"
     elif arch in YOLO26_FAMILY:

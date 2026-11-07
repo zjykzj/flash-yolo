@@ -30,6 +30,9 @@ python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors --image a
 # yoloe text prompts: class names encoded with the MobileCLIP2-B text encoder (pt engine only)
 python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors --image assets/traffic.jpg \
     --classes "person, bicycle, car, bus, truck"
+# yoloe visual prompts: refer image + bboxes (JSON)
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors --image assets/traffic.jpg \
+    --visual-prompt prompt.json
 
 # video file (output <run_dir>/<source>.mp4, default runs/predict/predictN/)
 python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/video.mp4
@@ -52,7 +55,8 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--conf` | **0.25** | confidence threshold (eval defaults to 0.001 — different purposes) |
 | `--nms` | off | o2m + NMS (yolo26 family + yoloe-26 text; errors for v3, prompt-free is E2E only; onnx/trt must be exported with `--nms`, checked via metadata) |
 | `--agnostic-nms` | off | cross-class NMS (requires `--nms`) |
-| `--classes` | — | yoloe-26 text mode: comma-separated class names (pt engine only) |
+| `--classes` | — | yoloe-26 text mode: comma-separated class names (pt required; onnx/trt optional, must match the locked list) |
+| `--visual-prompt` | — | yoloe-26 visual mode: JSON with a refer image + bboxes (pt only; mutually exclusive with `--classes`) |
 | `--model` / `--scale` | inferred from filename/metadata | errors when nothing can be inferred |
 | `--output` | `runs/predict/predictN/` | image: file or directory; video: output video file |
 | `--data` | COCO labels | only `names` + `nc`; no images read (ignored for yoloe) |
@@ -102,6 +106,10 @@ Labels        -> runs/predict/predict21/labels
   - `--engine onnx|trt`: consumes the class-locked graph produced by `export --classes`;
     class names travel in the deploy metadata, so no text encoder is needed. `--classes` is
     optional and must match the locked list when given.
+- **visual prompts (`-seg` weights)**: `--visual-prompt prompt.json` (refer image + per-class
+  bboxes; class order = first appearance, bboxes are refer-image pixels). Pt engine only
+  (SAVPE runs in-graph), mutually exclusive with `--classes`; the class-locked export then runs
+  on onnx/trt.
 - `--raw` errors out for yoloe; `--nms` is supported for yoloe-26 text mode (o2m + class-aware
   NMS), while prompt-free (lrpc) remains E2E only (the raw column count varies with the
   proposal filter).

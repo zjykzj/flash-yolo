@@ -9,6 +9,7 @@ yolov3-tiny：单输出解码 (B, NA, 5+nc)——obj×cls 与按类 NMS 在外�
 --raw 不适用。
 yoloe-26 text：默认导出 fuse 后的 E2E 类锁定图；--nms 改出 o2m 密集输出
 (B, 4+V+nm, 8400)（像素 xyxy + sigmoid 分数），NMS 在外部（utils/postprocess.nms_per_image）。
+--visual-prompt（仅 text 权重）：refer 图 + bbox JSON -> SAVPE vpe -> 同一 fuse 路径。
 默认 batch 固定为 1（边缘工具链偏好固定 shape），--dynamic 打开动态 batch。
 
 用法:
@@ -17,6 +18,7 @@ yoloe-26 text：默认导出 fuse 后的 E2E 类锁定图；--nms 改出 o2m 密
     python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov3-tiny
     python scripts/export.py --weights weights/yoloe-26n-seg.safetensors --classes "person, car"
     python scripts/export.py --weights weights/yoloe-26n-seg.safetensors --classes "person, car" --nms
+    python scripts/export.py --weights weights/yoloe-26n-seg.safetensors --visual-prompt prompt.json
     python scripts/export.py --weights weights/yolo26n.safetensors --trt [--fp16]   # 顺带构建 TensorRT engine
 
 --trt：onnx 导出后继续构建序列化 engine（与构建机 GPU/TRT 版本绑定、不跨机移植；换机需重构建）。
@@ -86,6 +88,9 @@ def main():
                         help="yoloe-26 text mode only: comma-separated class names to lock into the "
                              "exported model (text embeddings are fused into the cls conv; "
                              "the exported onnx rejects new prompts)")
+    parser.add_argument("--visual-prompt", dest="visual_prompt", default=None,
+                        help="yoloe-26 text mode only: JSON with a refer image and bbox/mask prompts; "
+                             "the visual embeddings are fused into the cls conv (class-locked)")
     parser.add_argument("--imgsz", type=int, default=None,
                         help="export input size (default: weights metadata, else 640)")
     parser.add_argument("--opset", type=int, default=18)
@@ -122,15 +127,28 @@ def main():
     prompt_free = None
     text_mode = False
     locked_classes = None
+    refer_image = visual_boxes = None
     if arch in YOLOE26_FAMILY:
         pm = prompt_mode_from_weights(args.weights, meta)
         prompt_free = True if pm == "pf" else (False if pm == "text" else None)
         if pm == "text":
             text_mode = True
-            if not args.classes:
-                parser.error("yoloe-26 text-mode export requires --classes "
-                             '(the exported model is locked to them, e.g. --classes "person, bicycle")')
-            locked_classes = [c.strip() for c in args.classes.split(",")]
+            if args.visual_prompt:
+                if args.classes:
+                    parser.error("--classes and --visual-prompt are mutually exclusive")
+                from utils.visual_prompt import load_visual_prompt
+
+                try:
+                    refer_image, locked_classes, visual_boxes = load_visual_prompt(args.visual_prompt)
+                except ValueError as e:
+                    parser.error(str(e))
+            else:
+                if not args.classes:
+                    parser.error("yoloe-26 text-mode export requires --classes or --visual-prompt "
+                                 '(e.g. --classes "person, bicycle")')
+                locked_classes = [c.strip() for c in args.classes.split(",")]
+    if args.visual_prompt and not text_mode:
+        parser.error("--visual-prompt requires yoloe-26 text-mode weights")
     if args.nms and not text_mode:
         parser.error("--nms export is only supported for yoloe-26 text mode "
                      "(prompt-free is E2E only; yolo26 uses --raw)")
@@ -143,16 +161,37 @@ def main():
         head.export = True
     model.eval()
     if text_mode:
-        # 官方 fuse 口径：tokenize -> MobileCLIP -> get_tpe（reprta+L2）-> 融合进 cv3 尾卷积
-        from model.text_encoder import load_mobileclip_text
-        from model.tokenizer import tokenize
+        if args.visual_prompt:
+            # 官方视觉 prompt 口径：refer 图三尺度特征 + 1/8 掩码 -> SAVPE vpe -> fuse
+            import cv2
 
-        enc_dir = str(Path(args.weights).resolve().parent)
-        enc = load_mobileclip_text(f"{enc_dir}/mobileclip2_b.safetensors").eval()
-        with torch.no_grad():
-            tokens = tokenize(locked_classes)
-            emb = torch.cat([enc(chunk) for chunk in tokens.split(80)], dim=0).unsqueeze(0)
-            head.fuse_text(head.get_tpe(emb))  # fuse 后 nc 锁定、前向不依赖 tpe
+            from data.preprocess import preprocess
+            from utils.visual_prompt import visual_masks
+
+            ref = Path(refer_image)
+            if not ref.is_absolute():  # 相对路径按 JSON 所在目录解析（与 infer/eval 同口径）
+                ref = Path(args.visual_prompt).resolve().parent / ref
+            image = cv2.imread(str(ref))
+            if image is None:
+                parser.error(f"cannot read visual prompt refer image: {ref}")
+            tensor, ratio, pad = preprocess(image, imgsz)
+            masks = visual_masks(locked_classes, visual_boxes, ratio, pad, imgsz).unsqueeze(0)
+            with torch.no_grad():
+                feats = model.forward_feats(tensor)
+                vpe = head.get_vpe(feats, masks)
+                head.fuse_text(vpe)  # 与文本 fuse 同一路径；fuse 后 nc 锁定
+            logger.info(f"visual prompts fused: {len(locked_classes)} classes from {refer_image}")
+        else:
+            # 官方文本 fuse 口径：tokenize -> MobileCLIP -> get_tpe（reprta+L2）-> 融合进 cv3 尾卷积
+            from model.text_encoder import load_mobileclip_text
+            from model.tokenizer import tokenize
+
+            enc_dir = str(Path(args.weights).resolve().parent)
+            enc = load_mobileclip_text(f"{enc_dir}/mobileclip2_b.safetensors").eval()
+            with torch.no_grad():
+                tokens = tokenize(locked_classes)
+                emb = torch.cat([enc(chunk) for chunk in tokens.split(80)], dim=0).unsqueeze(0)
+                head.fuse_text(head.get_tpe(emb))  # fuse 后 nc 锁定、前向不依赖 tpe
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -183,8 +222,9 @@ def main():
     )
     write_onnx_meta(out_path, deploy_meta)
     if arch in YOLOE26_FAMILY and text_mode:
-        mode = ("o2m+NMS text prompts (class-locked)" if args.nms
-                else "E2E text prompts (class-locked)") + " + prototypes"
+        kind = "visual prompts" if args.visual_prompt else "text prompts"
+        mode = (("o2m+NMS " if args.nms else "E2E ") + kind +
+                " (class-locked) + prototypes")
     elif arch in YOLOE26_FAMILY:
         mode = "E2E prompt-free + prototypes"
     elif arch not in YOLO26_FAMILY:

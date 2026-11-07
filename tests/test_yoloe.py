@@ -325,6 +325,46 @@ def test_text_onnx_non_e2e(tmp_path):
     assert np.array_equal(d_pt.class_ids, d_onnx.class_ids)
 
 
+def test_visual_prompt_infer_and_export(tmp_path):
+    """视觉 prompt：refer 图 + bbox -> pt 推理；导出类锁定 ONNX 后检出与 pt 一致"""
+    pytest.importorskip("onnxruntime")
+    if not TEXT_SAFE.exists() or not TEST_IMAGE.exists():
+        pytest.skip("需要 yoloe-26n-seg.safetensors / 测试图片")
+
+    import cv2
+    import json
+
+    from model.weights import load_meta
+    from utils.engines import OnnxEngine, PtEngine
+
+    img = cv2.imread(str(TEST_IMAGE))
+    names = ["person", "car"]
+    boxes = [[[85, 130, 175, 305]], [[410, 140, 535, 235]]]
+    prompt = tmp_path / "visual.json"
+    prompt.write_text(json.dumps({
+        "image": str(TEST_IMAGE),
+        "prompts": [{"class": "person", "bbox": boxes[0][0]},
+                    {"class": "car", "bbox": boxes[1][0]}],
+    }), encoding="utf-8")
+
+    onnx_path = tmp_path / "visual.onnx"
+    subprocess.run(["python", "scripts/export.py", "--weights", str(TEXT_SAFE),
+                    "--visual-prompt", str(prompt), "--imgsz", "320", "--out", str(onnx_path)],
+                   cwd=ROOT, check=True)
+    meta = load_meta(onnx_path)
+    assert meta["prompt_mode"] == "text" and meta["names"] == names and meta["nc"] == 2
+
+    pt = PtEngine(str(TEXT_SAFE), model="yoloe-26", scale="n", device="cpu", imgsz=320)
+    pt.set_visual_prompts(img, names, boxes)
+    onnx = OnnxEngine(str(onnx_path), model="yoloe-26", scale="n", imgsz=320)
+    d_pt = pt.predict(img, conf_thres=0.25)
+    d_onnx = onnx.predict(img, conf_thres=0.25)
+    assert len(d_pt.boxes) == len(d_onnx.boxes) == 2
+    assert np.abs(d_pt.boxes - d_onnx.boxes).max() < 1e-3
+    assert np.abs(d_pt.scores - d_onnx.scores).max() < 1e-3
+    assert np.array_equal(d_pt.class_ids, d_onnx.class_ids)
+
+
 def test_pf_nms_rejected():
     """pf（lrpc）只有 E2E 口径：end2end=False 在 engine 构造时明确报错"""
     if not PF_SAFE.exists():

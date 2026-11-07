@@ -19,6 +19,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 # yoloe 文本模式 Non-E2E：导出 o2m 密集输出，推理/评估配 --nms
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --nms
+# yoloe 视觉模式：refer 图 + bbox JSON -> vpe 融合进分类卷积（类锁定）
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --visual-prompt prompt.json
 ```
 
 | 参数 | 默认 | 说明 |
@@ -28,7 +31,8 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | `--raw` | off | 导出原始头 `(B, 4+nc, N)`（yolo26 专属；v3 报错） |
 | `--nms` | off | 导出 o2m 密集输出（yoloe-26 文本专属；推理/评估需配 `--nms`） |
 | `--dynamic` | off | 动态 batch 轴；默认固定 batch 1 |
-| `--classes` | — | yoloe-26 文本模式：锁定进导出模型的类别名（必填） |
+| `--classes` | — | yoloe-26 文本模式：锁定进导出模型的类别名（与 `--visual-prompt` 二选一） |
+| `--visual-prompt` | — | yoloe-26 视觉模式：refer 图 + bbox JSON（vpe 融合进分类卷积） |
 | `--model` / `--scale` | 从文件名推断 | 架构/档位 |
 | `--nc` | metadata > 模型 yaml | 非 COCO 模型改头 |
 | `--imgsz` | metadata > 640 | 导出输入尺寸 |
@@ -53,6 +57,8 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   `metadata_props`（arch/scale/nc/imgsz/names/prompt_mode/end2end），TRT 写旁车
   `<engine>.json`——类锁定的 yoloe text 图因此无需原 `.safetensors` 即可
   `infer/eval --engine onnx|trt`；旧的无 metadata 产物仍需 `--model` / `--scale`。
+- yoloe 视觉模式导出：refer 图前向 + 1/8 bbox 掩码 → SAVPE vpe → `fuse_text` 同一融合路径；
+  导出图即类锁定，部署侧不需要 refer 图（metadata `prompt_mode: text`，names 为 prompt 类名）。
 - yoloe 文本模式导出会先跑完整 prompt 链（tokenize → MobileCLIP2-B → reprta+L2——
   `mobileclip2_b.safetensors` 需与模型权重同目录），再把结果融合进分类卷积，导出的 onnx
   无文本编码器依赖。fuse 等价性已验证：fused pt vs 未 fuse 1.8e-6、onnx vs fused 6e-5、

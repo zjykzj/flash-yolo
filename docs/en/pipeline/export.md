@@ -20,6 +20,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 # yoloe text mode Non-E2E: dense o2m output; pass --nms at infer/eval time
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --nms
+# yoloe visual mode: refer image + bbox JSON -> vpe fused into the cls conv (class-locked)
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --visual-prompt prompt.json
 ```
 
 | Argument | Default | Description |
@@ -29,7 +32,8 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | `--raw` | off | export the raw head `(B, 4+nc, N)` (yolo26 only; errors for v3) |
 | `--nms` | off | export the dense o2m output (yoloe-26 text only; pass `--nms` at infer/eval) |
 | `--dynamic` | off | dynamic batch axis; default fixed batch 1 |
-| `--classes` | — | yoloe-26 text mode: class names to lock into the exported model (required) |
+| `--classes` | — | yoloe-26 text mode: class names to lock into the exported model (or use `--visual-prompt`) |
+| `--visual-prompt` | — | yoloe-26 visual mode: refer image + bbox JSON (vpe fused into the cls conv) |
 | `--model` / `--scale` | inferred from filename | architecture / scale |
 | `--nc` | metadata > model yaml | rebuild the head for non-COCO models |
 | `--imgsz` | metadata > 640 | export input size |
@@ -55,6 +59,10 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   prompt_mode/end2end) and TRT writes a `<engine>.json` sidecar — so a class-locked yoloe text
   graph can run `infer/eval --engine onnx|trt` without the original `.safetensors`. Older
   exports without metadata still need `--model` / `--scale`.
+- yoloe visual-mode export runs the refer image through the backbone, rasterizes bboxes at
+  1/8, computes SAVPE vpe and feeds the same `fuse_text` path; the exported graph is
+  class-locked, so deployment needs no refer image (metadata `prompt_mode: text`, names = the
+  prompt class names).
 - yoloe text-mode export runs the full prompt chain (tokenize → MobileCLIP2-B → reprta+L2) —
   `mobileclip2_b.safetensors` must sit next to the model weights — then fuses the result into
   the cls conv, so the onnx has no text-encoder dependency. Fuse equivalence is verified:

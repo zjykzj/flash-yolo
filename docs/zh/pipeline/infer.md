@@ -29,6 +29,9 @@ python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors --image a
 # yoloe 文本 prompt：pt 经 MobileCLIP2-B 编码；onnx/trt 消费类锁定图
 python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors --image assets/traffic.jpg \
     --classes "person, bicycle, car, bus, truck"
+# yoloe 视觉 prompt：refer 图 + bbox（JSON）
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors --image assets/traffic.jpg \
+    --visual-prompt prompt.json
 
 # 视频文件（输出 <run_dir>/<源名>.mp4，默认 runs/predict/predictN/）
 python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/video.mp4
@@ -52,6 +55,7 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--nms` | off | o2m + NMS（yolo26 系 + yoloe-26 文本模式；v3 报错，pf 仅 E2E；onnx/trt 需导出时加 `--nms`，metadata 会校验） |
 | `--agnostic-nms` | off | 跨类 NMS（需同时给 `--nms`） |
 | `--classes` | — | yoloe-26 文本模式：逗号分隔的类别名（pt 必填；onnx/trt 可省略，需与锁定列表一致） |
+| `--visual-prompt` | — | yoloe-26 视觉模式：refer 图 + bbox 的 JSON（仅 pt；与 `--classes` 互斥） |
 | `--model` / `--scale` | 从文件名/metadata 推断 | 推不出时报错 |
 | `--output` | `runs/predict/predictN/` | 图片：文件或目录；视频：输出视频文件 |
 | `--data` | COCO 标签 | 只用 `names` + `nc`；不读图片（yoloe 忽略） |
@@ -96,6 +100,9 @@ Labels        -> runs/predict/predict21/labels
     不在模型图里）。
   - `--engine onnx|trt`：消费 `export --classes` 产出的类锁定图，类别名随部署 metadata
     走，无需文本编码器；`--classes` 可省略，给出时必须与锁定列表逐项一致。
+- **视觉 prompt（`-seg` 权重）**：`--visual-prompt prompt.json`（refer 图 + 每类 bbox；
+  类别顺序 = 首次出现，bbox 为 refer 原图像素）；仅 pt 引擎（SAVPE 在图内），
+  与 `--classes` 互斥。类锁定导出后可走 onnx/trt。
 - `--raw` 对 yoloe 直接报错；`--nms` 支持 yoloe-26 文本模式（o2m + 类感知 NMS），
   pf（lrpc）仍只有 E2E（原始输出列数随提案过滤变化）。
 - 模型细节：[../models/yoloe.md](../models/yoloe.md)。

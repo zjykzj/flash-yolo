@@ -17,6 +17,9 @@ python scripts/eval.py --weights weights/yolo26n-seg.safetensors --data coco    
 python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco       # pf vocab mapping
 python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis          # text prompts (1203 classes)
 python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival  # LVIS minival (5k)
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco --visual-prompt prompt.json  # visual prompts
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival \
+    --refer-data lvis --refer-split train --refer-limit 1000                            # refer-dataset visual prompts
 python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-dets 100  # ultralytics-matching protocol
 ```
 
@@ -33,6 +36,9 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--limit` | 0 (full) | evaluate the first N images only (GT restricted to the same subset) |
 | `--eval-style` | `auto` | `auto` (descriptor `eval_style`) / `coco` / `lvis` |
 | `--eval-max-dets` | LVIS 300 | evaluator maxDets; `100` mirrors ultralytics' current val behavior |
+| `--visual-prompt` | — | yoloe-26 visual mode: single refer-image JSON (pt only; mutually exclusive with `--refer-data`) |
+| `--refer-data` | — | yoloe-26 visual mode: refer dataset descriptor, one vpe per class from GT boxes |
+| `--refer-split` / `--refer-limit` | train / 0 | refer-dataset role / first N images (0 = all) |
 | `--summary-only` | off | print only the all row |
 | `--device` | auto | pt engine device |
 
@@ -130,7 +136,12 @@ is metric-implementation noise.
   `lvis_style`, see §2.1). The pt path needs `mobileclip2_b.safetensors` next to the model
   weights; `onnx` / `trt` consume the class-locked graph and map the deploy-metadata class
   names onto the dataset classes.
-- Both modes report Box + Mask tables like the other segmentation architectures.
+- **visual prompts (`-seg` weights)**: `--visual-prompt` (one refer-image JSON) or
+  `--refer-data` (per-class exemplars from a refer dataset; `--refer-split` defaults to train,
+  `--refer-limit` caps the number of refer images). Refer classes map onto the evaluation set by
+  name; classes without exemplars get zero embeddings (AP 0). Pt engine only; the class-locked
+  export is consumed through the text class-locked path.
+- All three modes report Box + Mask tables like the other segmentation architectures.
 - Model details: [../models/yoloe.md](../models/yoloe.md).
 
 ## 7. Reference baselines (COCO val2017)

@@ -32,6 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 仓库根目录入 sys.path
 
+import cv2
 import numpy as np
 import torch
 
@@ -98,6 +99,14 @@ def main():
                         help="evaluation protocol (default: from the dataset descriptor)")
     parser.add_argument("--eval-max-dets", dest="eval_max_dets", type=int, default=None,
                         help="evaluator maxDets for LVIS (default 300; use 100 to mirror ultralytics)")
+    parser.add_argument("--visual-prompt", dest="visual_prompt", default=None,
+                        help="yoloe-26 text mode only: JSON refer image + bbox prompts (pt engine)")
+    parser.add_argument("--refer-data", dest="refer_data", default=None,
+                        help="yoloe-26 text mode only: refer dataset descriptor for per-class visual prompts")
+    parser.add_argument("--refer-split", dest="refer_split", default="train",
+                        help="role inside the refer dataset (default train)")
+    parser.add_argument("--refer-limit", dest="refer_limit", type=int, default=0,
+                        help="use the first N refer images only (0 = all)")
     parser.add_argument("--summary-only", action="store_true",
                         help="print the all-classes row only (per-class rows are shown by default)")
     parser.add_argument("--verbose", action="store_true", help="show third-party (pycocotools) debug output")
@@ -130,6 +139,16 @@ def main():
     meta = load_meta(args.weights)
     prompt_mode = (prompt_mode_from_weights(args.weights, meta)
                    if arch in YOLOE26_FAMILY else None)
+    visual_mode = bool(args.visual_prompt or args.refer_data)
+    if visual_mode:
+        if prompt_mode != "text":
+            parser.error("--visual-prompt / --refer-data require yoloe-26 text-mode weights")
+        if args.engine != "pt":
+            parser.error("visual prompts require --engine pt (SAVPE runs in the model graph)")
+        if args.visual_prompt and args.refer_data:
+            parser.error("--visual-prompt and --refer-data are mutually exclusive")
+        if args.refer_limit < 0:
+            parser.error("--refer-limit must be >= 0")
     if args.nms:
         if arch in YOLOE26_FAMILY and prompt_mode != "text":
             parser.error("--nms is only supported for yoloe-26 text mode (prompt-free is E2E only)")
@@ -186,11 +205,56 @@ def main():
         engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
     if text_mode:
-        locked = args.engine != "pt"
-        if not locked:
-            engine.set_classes(list(spec.names.values()))
-        suffix = ", class-locked" if locked else ""
-        mode = ("E2E (text prompts" if end2end else "o2m+NMS (text prompts") + suffix + ")"
+        if visual_mode:
+            names = list(spec.names.values())
+            if args.visual_prompt:
+                from utils.visual_prompt import load_visual_prompt
+
+                try:
+                    refer_path, vis_names, vis_boxes = load_visual_prompt(args.visual_prompt)
+                except ValueError as e:
+                    parser.error(str(e))
+                ref = Path(refer_path)
+                if not ref.is_absolute():  # 相对路径按 JSON 所在目录解析
+                    ref = Path(args.visual_prompt).resolve().parent / ref
+                image = cv2.imread(str(ref))
+                if image is None:
+                    parser.error(f"cannot read visual prompt refer image: {ref}")
+                vpe = engine.visual_embeddings(image, vis_names, vis_boxes)
+                full = torch.zeros(1, len(names), vpe.shape[-1], device=engine.device)
+                idx = {n: i for i, n in enumerate(names)}
+                missing = [n for n in vis_names if n not in idx]
+                for q, n in enumerate(vis_names):
+                    if n in idx:
+                        full[0, idx[n]] = vpe[0, q]
+                engine.set_visual_embeddings(full)
+                if missing:
+                    logger.warning(f"visual prompt classes not in the dataset (ignored): {missing[:10]}")
+                uncovered = [n for i, n in enumerate(names) if not torch.any(full[0, i])]
+            else:
+                from utils.visual_prompt import collect_visual_embeddings
+
+                refer_spec = load_dataset(args.refer_data)
+                refer_ds = build_eval_dataset(refer_spec, args.refer_split, progress=True,
+                                              task=arch_task(arch))
+                vpe, missing = collect_visual_embeddings(
+                    engine.model, refer_ds, names, engine.imgsz, engine.device, args.refer_limit)
+                engine.set_visual_embeddings(vpe)
+                if missing:
+                    logger.warning(f"refer classes not in the dataset (ignored): {missing[:10]}")
+                uncovered = [n for i, n in enumerate(names) if not torch.any(vpe[0, i])]
+            if uncovered:
+                logger.warning(f"dataset classes without visual prompts ({len(uncovered)}): "
+                               f"{uncovered[:10]} — they get zero embeddings (AP 0)")
+            source = Path(args.visual_prompt).name if args.visual_prompt else args.refer_data
+            mode = (("E2E visual prompts" if end2end else "o2m+NMS visual prompts")
+                    + f" (refer: {source})")
+        else:
+            locked = args.engine != "pt"
+            if not locked:
+                engine.set_classes(list(spec.names.values()))
+            suffix = ", class-locked" if locked else ""
+            mode = ("E2E (text prompts" if end2end else "o2m+NMS (text prompts") + suffix + ")"
     elif arch in YOLOE26_FAMILY:
         mode = "E2E (prompt-free)"
     elif arch in YOLO26_FAMILY:

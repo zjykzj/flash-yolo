@@ -16,6 +16,9 @@ python scripts/eval.py --weights weights/yolo26n-seg.safetensors --data coco    
 python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco       # pf 词汇映射
 python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis          # 文本 prompt（1203 类）
 python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival  # LVIS minival（5k）
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco --visual-prompt prompt.json  # 视觉 prompt
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival \
+    --refer-data lvis --refer-split train --refer-limit 1000                            # refer 数据集视觉 prompt
 python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-dets 100  # 对齐 ultralytics 口径
 ```
 
@@ -32,6 +35,9 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--limit` | 0（全量） | 只评前 N 张（GT 同步限制到该子集） |
 | `--eval-style` | `auto` | `auto`（读描述符 `eval_style`）/ `coco` / `lvis` |
 | `--eval-max-dets` | LVIS 300 | 评估器 maxDets；`100` 用于对齐 ultralytics 当前 val 行为 |
+| `--visual-prompt` | — | yoloe-26 视觉模式：单 refer 图 JSON（仅 pt；与 `--refer-data` 互斥） |
+| `--refer-data` | — | yoloe-26 视觉模式：参考集描述符，逐类 GT 框提取 vpe |
+| `--refer-split` / `--refer-limit` | train / 0 | 参考集角色 / 只取前 N 张（0=全量） |
 | `--summary-only` | off | 只打印 all 行 |
 | `--device` | auto | pt 引擎设备 |
 
@@ -114,7 +120,10 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
   LVIS prompt 口径）。官方 LVIS minival 对比用 `--data lvis-minival`，走 faster_coco_eval
   `lvis_style`（见 §2.1）。pt 路径需要 `mobileclip2_b.safetensors` 与模型权重同目录；
   `onnx` / `trt` 消费类锁定图（类别名来自部署 metadata，按名字映射到数据集类别）。
-- 两种模式都像其他分割架构一样自动出 Box + Mask 双表。
+- **视觉 prompt（`-seg` 权重）**：`--visual-prompt`（单 refer 图 JSON）或 `--refer-data`
+  （参考集逐类 exemplar；`--refer-split` 默认 train，`--refer-limit` 限流）。参考类别按名字
+  对齐评估集，缺失类零嵌入（AP 0）；仅 pt 引擎，类锁定导出图按文本类锁定路径消费。
+- 三种模式都像其他分割架构一样自动出 Box + Mask 双表。
 - 模型细节：[../models/yoloe.md](../models/yoloe.md)。
 
 ## 7. 参考基准（COCO val2017）

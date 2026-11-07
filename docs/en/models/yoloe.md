@@ -1,16 +1,17 @@
 # YOLOE-26 (open-vocabulary instance segmentation)
 
 > Open-vocabulary segmentation: classes are not fixed at training time — the model answers from
-> text prompts or a built-in **4,585-name vocabulary** at inference time (visual prompts come in
-> a later release). The current release supports **prompt-free (-pf)** and **text prompts**
-> (custom class names encoded by the MobileCLIP2-B text encoder) for inference / evaluation /
-> export. Structure: `config/models/yoloe-26-seg.yaml`; the backbone/neck rows are identical to
+> text prompts, visual prompts (a refer image + bboxes), or a built-in **4,585-name vocabulary**
+> at inference time. The current release supports **prompt-free (-pf)**, **text prompts**
+> (custom class names encoded by the MobileCLIP2-B text encoder) and **visual prompts**
+> (refer-image exemplars encoded by SAVPE) for inference / evaluation / export.
+> Structure: `config/models/yoloe-26-seg.yaml`; the backbone/neck rows are identical to
 > [yolo26-seg.md](yolo26-seg.md) — only the head line differs.
 
 ## 1. Conventions
 
-- The official 26 family ships **seg checkpoints only**: `yoloe-26*-seg.pt` (text mode) /
-  `yoloe-26*-seg-pf.pt` (prompt-free); both modes are in scope on this page.
+- The official 26 family ships **seg checkpoints only**: `yoloe-26*-seg.pt` (text/visual modes) /
+  `yoloe-26*-seg-pf.pt` (prompt-free); all three prompt modes are in scope on this page.
 - Official LVIS minival numbers (paper protocol, **detection configuration**, 640 input):
   YOLOE-26n-pf **16.6 E2E / 17.7 Non-E2E** mAP50-95; text prompts 24.7 / visual prompts 21.9
   (Non-E2E). The paper's params/FLOPs are for the detection configuration — the released seg
@@ -23,7 +24,9 @@
 - Text mode needs the MobileCLIP2-B text encoder weights (`mobileclip2_b.safetensors`, converted
   from Apple's `mobileclip2_b.ts`) next to the model weights — it is loaded only when
   `set_classes` runs (infer/eval) and never enters the exported graph (the embeddings are fused
-  into the cls conv at export).
+  into the cls conv at export). Visual mode needs no text encoder: refer-image bboxes/masks are
+  rasterized on the P3 grid (1/8), and SAVPE aggregates the three feature scales into one
+  L2-normalized vpe per class.
 - "Official" refers to the Ultralytics-released YOLOE-26 weights/docs; this repo does not
   redistribute them.
 
@@ -70,6 +73,10 @@ includes the semseg forward, and the official docs' numbers are the detection co
 - Text prompts flow through `set_classes`: CLIP BPE tokenize (77 context) → MobileCLIP2-B encode
   → `reprta` (SwiGLUFFN residual) → L2 normalize → cached on the head. The class count is the
   prompt count, per forward.
+- Visual prompts: refer-image bboxes/masks are rasterized on the P3 grid (input 1/8) → `SAVPE`
+  (mask-attention aggregation over the three feature scales) → one L2-normalized vpe per class
+  → fed directly as the class embeddings into the same `BNContrastiveHead` (no `reprta`).
+  Multiple boxes of one class are OR'ed; the class count is the prompt count.
 - **max_det=300** for the text layout (the released text checkpoints carry the Detect default;
   the pf checkpoints carry 1000).
 - The text encoder is external (63.4M params, not in the FLOPs count — the official does the
@@ -113,6 +120,25 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 # TensorRT (pf / text; the engine is bound to the build GPU + TRT version)
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --trt [--fp16]
+
+# ---- visual mode (yoloe-26*-seg weights; refer image + bboxes via JSON) ----
+
+# prompt.json: {"image": "refer.jpg",
+#               "prompts": [{"class": "person", "bbox": [x1,y1,x2,y2]}, ...]}
+
+# inference: extract vpe from the refer image/boxes, then run on the target image (pt engine)
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
+    --visual-prompt prompt.json --image assets/traffic.jpg
+
+# evaluation: a single refer-image JSON, or a refer dataset (per-class exemplars)
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco \
+    --visual-prompt prompt.json
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival \
+    --refer-data lvis --refer-split train --refer-limit 1000
+
+# export: vpe fused into the cls conv, class-locked (works with --nms / --trt too)
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --visual-prompt prompt.json --out weights/yoloe-26n-visual.onnx
 ```
 
 - `--model/--scale` are inferred from the filename (`yoloe-26n-seg-pf` → yoloe-26 / n);
@@ -129,6 +155,13 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   rejects new prompts (`is_fused` guard). Class-locked artifacts carry deploy metadata
   (arch/scale/names/end2end), so `--engine onnx|trt` works without
   `--model/--scale/--classes`; TRT uses a `<engine>.json` sidecar.
+- Visual mode notes: JSON class order = first appearance (the vpe row order), bboxes are refer
+  image pixels, and a relative `image` path resolves against the JSON directory; multiple boxes
+  of one class are OR'ed into one mask. `--visual-prompt` and `--classes` are mutually
+  exclusive; infer/eval require the pt engine (SAVPE runs in-graph), while the class-locked
+  export runs on onnx/trt. `--refer-data` extracts one vpe per class from the refer set's GT
+  boxes; classes without exemplars get zero embeddings (AP 0). Text+visual mixing is not wired
+  yet (the official `get_cls_pe` concatenates them).
 - LVIS evaluation runs on **faster_coco_eval `lvis_style`** (the descriptor's `eval_style: lvis`):
   it honors `neg_category_ids` / `not_exhaustive_category_ids`, uses maxDets=300 and reports
   APr/APc/APf. Pycocotools on LVIS does not produce the LVIS metric; add
@@ -158,6 +191,11 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 - **Non-E2E export parity (text)**: the `--nms` o2m graph matches the pt path above conf=0.25
   (boxes/scores < 1e-3, zero class flips); a 2-image coco-tiny eval matches to four decimals
   for both Box and Mask.
+- **Visual prompts**: the vpe for the same refer image + bboxes is bit-identical to the official
+  environment (`.pt` + `YOLOEVPSegPredictor`, maxdiff 0.0); the fused export vs pt gives 2/2
+  detections, boxes <6.1e-5, scores <1.1e-6 and zero class flips; the refer-dataset aggregation
+  matches single-image extraction exactly. Top-2 vs the official Non-E2E path: boxes <0.6px,
+  scores ≤0.011 (the low-conf tail depends on the official predictor's NMS defaults).
 - **TensorRT (fp32 / fp16)**: pf E2E, text E2E and text Non-E2E engines build and run through
   `infer/eval --engine trt`; deploy metadata travels in the `<engine>.json` sidecar. Text E2E
   fp16 vs pt fp32 (@320 smoke): 6/6 detections, boxes <0.35px, scores <3e-3, mask IoU ≥0.996;
@@ -207,7 +245,11 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
 
 ## 5. Known limits
 
-- The **visual prompt** forward (SAVPE / refer images) is not implemented yet; text mode is.
+- Visual-prompt JSON input currently supports bboxes only (mask input is not wired into the
+  CLI); mixing text and visual prompts is not wired (the official `get_cls_pe` concatenates
+  them). `--refer-data` needs the same class names as the evaluation set; classes without
+  exemplars get zero embeddings (AP 0). Matching the official 21.9 visual-prompt figure also
+  requires the same refer-data source as the official protocol.
 - Text-mode pt paths need `--classes` and the MobileCLIP2-B text encoder; `onnx` / `trt`
   consume only the class-locked graph produced by `export --classes` (class names travel in
   the ONNX `metadata_props` / TRT sidecar JSON, so `--classes` is optional and must match the

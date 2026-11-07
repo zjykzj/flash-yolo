@@ -1,22 +1,24 @@
 # YOLOE-26（开放词汇实例分割）
 
-> 开放词汇分割：类别不在训练期固定——推理时按文本 prompt 或内置 **4,585 名词汇**作答
-> （视觉 prompt 在后续版本提供）。当前版本支持 **prompt-free（-pf）** 与 **文本 prompt**
-> （自定义类别名，经 MobileCLIP2-B 文本编码器编码）两种模式的推理 / 评估 / 导出。
+> 开放词汇分割：类别不在训练期固定——推理时按文本 prompt、视觉 prompt（refer 图 + bbox）
+> 或内置 **4,585 名词汇**作答。当前版本支持 **prompt-free（-pf）**、**文本 prompt**
+> （自定义类别名，经 MobileCLIP2-B 文本编码器编码）与 **视觉 prompt**（refer 图示例经
+> SAVPE 提取嵌入）三种模式的推理 / 评估 / 导出。
 > 结构定义：`config/models/yoloe-26-seg.yaml`；骨架 = YOLO26（backbone/neck 与
 > [yolo26-seg.md](yolo26-seg.md) 逐行相同，只换最后一行头）。
 
 ## 1. 口径声明
 
-- 官方 26 家族只发布 **seg 权重**：`yoloe-26*-seg.pt`（文本模式）/ `yoloe-26*-seg-pf.pt`
-  （prompt-free）；本页覆盖两种模式。
+- 官方 26 家族只发布 **seg 权重**：`yoloe-26*-seg.pt`（文本/视觉模式）/
+  `yoloe-26*-seg-pf.pt`（prompt-free）；本页覆盖三种 prompt 模式。
 - 官方 LVIS minival 数字（论文口径、**检测配置**、640 输入）：YOLOE-26n-pf **16.6 E2E /
   17.7 Non-E2E** mAP50-95；文本 prompt 24.7 / 视觉 prompt 21.9（Non-E2E）。论文的参数量/FLOPs
   是检测配置——发布的 seg checkpoint 额外带 mask 分支 / SAVPE / 文本投影，实际更大
   （n-pf 7.84M），官方文档已注明此差异；FLOPs 不含区域-文本相似度，真实成本随 prompt 集增大。
 - 文本模式需要 MobileCLIP2-B 文本编码器权重（`mobileclip2_b.safetensors`，由 Apple 的
   `mobileclip2_b.ts` 转换而来）与模型权重同目录——只在 `set_classes`（推理/评估）时加载，
-  不进导出图（导出时嵌入已融合进分类卷积）。
+  不进导出图（导出时嵌入已融合进分类卷积）。视觉模式不需要文本编码器：refer 图的
+  bbox/mask 在 P3 网格（1/8）上光栅化，SAVPE 从三尺度特征聚合出每类 vpe（L2 归一化）。
 - 本仓库的复现口径 = 同权重、同前后处理重跑：与官方 fp32 前向**逐位一致**（§4）；20 图 COCO
   冒烟是管线检查，5,000 图全量跨实现数字见 §4。
 - 文中「官方」指 Ultralytics 发布的 YOLOE-26 权重/文档，本仓库不分发。
@@ -59,6 +61,9 @@ vocab Linear 对 8400 锚点 × 4585 词汇的前向是 pf 的固有开销）；
   余弦相似度，乘可学习 `exp(logit_scale)` + bias；`cv5`/`proto` 与 pf 布局同构。无 `lrpc`。
 - 文本 prompt 流程（`set_classes`）：CLIP BPE tokenize（77 上下文）→ MobileCLIP2-B 编码 →
   `reprta`（SwiGLUFFN 残差）→ L2 归一化 → 缓存到 head。类别数 = prompt 数，随每次前向变。
+- 视觉 prompt 流程：refer 图 bbox/mask 在 P3 网格（输入 1/8）光栅化 → `SAVPE`（三尺度
+  特征 + 掩码注意力聚合）→ 每类一个 L2 归一化 vpe → 直接作为类别嵌入送入同一
+  `BNContrastiveHead`（不再过 `reprta`）。同图同类多框 OR；类别数 = prompt 类数。
 - 文本布局 **max_det=300**（官方文本 ckpt 带的是 Detect 类默认；pf ckpt 带的是 1000）。
 - 文本编码器是外部件（63.4M 参数，不计入 FLOPs——官方同口径）；导出时融合进分类卷积，
   导出图即类锁定、单输入。
@@ -100,6 +105,25 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 # TensorRT（pf / text 均适用；engine 绑定构建机 GPU + TRT 版本）
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --trt [--fp16]
+
+# ---- 视觉模式（yoloe-26*-seg 权重；refer 图 + bbox，JSON）----
+
+# prompt.json: {"image": "refer.jpg",
+#               "prompts": [{"class": "person", "bbox": [x1,y1,x2,y2]}, ...]}
+
+# 推理：refer 图/框提取 vpe，再跑目标图（pt 引擎）
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
+    --visual-prompt prompt.json --image assets/traffic.jpg
+
+# 评估：单 refer 图 JSON，或 refer 数据集（每类 exemplar）
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco \
+    --visual-prompt prompt.json
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival \
+    --refer-data lvis --refer-split train --refer-limit 1000
+
+# 导出：vpe 融合进分类卷积，类锁定（可配 --nms / --trt）
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --visual-prompt prompt.json --out weights/yoloe-26n-visual.onnx
 ```
 
 - `--model/--scale` 可从文件名推（`yoloe-26n-seg-pf` → yoloe-26 / n）；`--raw` 不适用
@@ -113,6 +137,11 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   类锁定 ONNX 拒收新 prompt（`is_fused` 守卫）。类锁定产物自带部署 metadata
   （arch/scale/names/end2end），导出后可直接 `--engine onnx|trt`，无需再传
   `--model/--scale/--classes`；TRT 旁车为 `<engine>.json`。
+- 视觉模式说明：JSON 的类别顺序 = 首次出现顺序（vpe 行序一致），bbox 为 refer 图原始像素，
+  相对 `image` 路径按 JSON 所在目录解析；同图同类的多框 OR 成一张掩码。`--visual-prompt`
+  与 `--classes` 互斥；推理/评估只支持 pt 引擎（SAVPE 在图内），导出后的类锁定图可走
+  onnx/trt。`--refer-data` 用参考集 GT 框逐类提取 vpe，缺失类别零嵌入（AP 0）；文本+视觉
+  混合 prompt 暂未接入（官方 `get_cls_pe` 是拼接语义）。
 - LVIS 评估走 **faster_coco_eval `lvis_style`**（`eval_style: lvis` 描述符字段）：处理
   `neg_category_ids` / `not_exhaustive_category_ids`、maxDets=300，并输出 APr/APc/APf。
   用 pycocotools 评 LVIS 得到的不是 LVIS 指标；与 ultralytics 代码逐字对齐时加
@@ -136,6 +165,10 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   完全一致、零类别翻转。
 - **Non-E2E 导出对拍（文本）**：`--nms` 导出的 o2m 图与 pt 同路径在 conf>0.25 下检出一致
   （框/分数 <1e-3、零类别翻转）；coco-tiny 2 图评估 Box/Mask 四位一致。
+- **视觉 prompt**：同一 refer 图 + bbox 的 vpe 与官方环境（`.pt` + `YOLOEVPSegPredictor`）
+  逐位一致（maxdiff 0.0）；fuse 导出后 pt vs onnx 2/2 检出、框差 6.1e-5、分数差 1.1e-6、
+  零类别翻转；refer 数据集逐类聚合与单图提取逐位一致。同图 top-2 与官方 Non-E2E 口径框差
+  <0.6px、分数差 ≤0.011（低分尾部候选数受官方 predictor 的 NMS 默认值影响）。
 - **TensorRT（fp32 / fp16）**：pf E2E、text E2E、text Non-E2E 的 engine 均可构建并
   `infer/eval --engine trt`；部署 metadata 写旁车 `<engine>.json`。text E2E fp16（@320
   冒烟）与 pt fp32：6/6 检出、框差 <0.35px、分数差 <3e-3、掩码 IoU ≥0.996；text NMS
@@ -181,7 +214,9 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
 
 ## 5. 已知边界
 
-- **视觉 prompt** 前向（SAVPE / refer 图）未实现；文本模式已实现。
+- 视觉 prompt 的 JSON 输入目前只支持 bbox（mask 输入未接 CLI）；文本+视觉混合 prompt 未接
+  （官方 `get_cls_pe` 的拼接语义）。`--refer-data` 的参考集需与评估集同类别命名，缺失类零
+  嵌入（AP 0）；官方视觉 21.9 的 refer 数据来源需按官方口径对齐后再比较。
 - 文本模式的 pt 路径需要 `--classes` 与 MobileCLIP2-B 文本编码器；`onnx` / `trt` 只能消费
   `export --classes` 产出的类锁定图（类别名随 ONNX `metadata_props` / TRT 旁车 JSON 走，
   `--classes` 可省略，给出时必须与锁定列表一致）。旧的无 metadata 导出需重新导出。

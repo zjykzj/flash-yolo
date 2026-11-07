@@ -354,6 +354,20 @@ class YOLOESegment26(nn.Module):
         """文本提示嵌入的头部变换（官方 get_tpe 口径）：reprta 残差 + L2 归一化"""
         return None if tpe is None else F.normalize(self.reprta(tpe), dim=-1, p=2)
 
+    def get_vpe(self, x, vp):
+        """视觉提示嵌入（官方 get_vpe 口径）：多尺度特征 + 1/8 掩码 -> SAVPE 聚合
+
+        x 是 head 的输入特征列表，vp 是 (B, Q, H/8, W/8) 掩码；返回 (B, Q, embed)
+        （SAVPE 已做 L2 归一化，前向时直接作为 tpe 使用，不再过 reprta）。
+        """
+        if vp.shape[1] == 0:  # 无 visual prompt：返回空嵌入（官方同口径）
+            return torch.zeros(x[0].shape[0], 0, self.embed, device=x[0].device, dtype=x[0].dtype)
+        if vp.ndim == 4:
+            vp = self.savpe(x, vp)
+        if vp.ndim != 3:
+            raise ValueError(f"visual prompt embeddings must be (B, Q, D), got {tuple(vp.shape)}")
+        return vp
+
     def forward_text(self, x, tpe):
         """文本前向（官方 YOLOEDetect.forward_head 口径）
 
