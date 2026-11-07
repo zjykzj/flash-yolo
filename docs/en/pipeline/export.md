@@ -102,6 +102,10 @@ python scripts/export.py --weights weights/yolo26n.safetensors --trt --fp16    #
 Both `scripts/infer.py` and `scripts/eval.py` accept `--engine pt|onnx|trt` with the same
 pre/postprocessing.
 
+- **YOLOE works the same way**: pf / text (including `--nms`) can all export `--trt`; the text
+  prompts are fused into the graph before engine construction, so no text encoder is needed at
+  engine time. fp16 E2E top-k ties may flip classes — validate on detections above conf=0.25.
+
 ## 4. Acceptance thresholds
 
 | Cross-check | Threshold | Test |

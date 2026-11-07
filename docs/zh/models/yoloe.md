@@ -96,6 +96,10 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 # 导出 Non-E2E 部署图（o2m 密集输出 + 外部 NMS）
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --nms --out weights/yoloe-26n-3cls-nms.onnx
+
+# TensorRT（pf / text 均适用；engine 绑定构建机 GPU + TRT 版本）
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car" --trt [--fp16]
 ```
 
 - `--model/--scale` 可从文件名推（`yoloe-26n-seg-pf` → yoloe-26 / n）；`--raw` 不适用
@@ -132,6 +136,11 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   完全一致、零类别翻转。
 - **Non-E2E 导出对拍（文本）**：`--nms` 导出的 o2m 图与 pt 同路径在 conf>0.25 下检出一致
   （框/分数 <1e-3、零类别翻转）；coco-tiny 2 图评估 Box/Mask 四位一致。
+- **TensorRT（fp32 / fp16）**：pf E2E、text E2E、text Non-E2E 的 engine 均可构建并
+  `infer/eval --engine trt`；部署 metadata 写旁车 `<engine>.json`。text E2E fp16（@320
+  冒烟）与 pt fp32：6/6 检出、框差 <0.35px、分数差 <3e-3、掩码 IoU ≥0.996；text NMS
+  fp32 的 2 图评估 Box 0.2651 vs pt 0.2656、Mask 完全一致。E2E top-k 对累加差敏感
+  （fp32 也会在低分尾部产生不同候选），跨实现比较仍以 Non-E2E 为准。
 - **COCO 冒烟**（20 图，管线验证口径，pf）：Box 0.3485 / Mask 0.2865 mAP50-95。
 - **LVIS 协议**：`tests/test_lvis_evaluator.py` 在合成数据上验证 neg / not_exhaustive /
   未列出 pair 三条 LVIS 规则，以及零检出图计入、APr/APc/APf、segm RLE 路径；`--data

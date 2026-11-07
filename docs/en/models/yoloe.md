@@ -109,6 +109,10 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 # export the Non-E2E deploy graph (dense o2m output + external NMS)
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --nms --out weights/yoloe-26n-3cls-nms.onnx
+
+# TensorRT (pf / text; the engine is bound to the build GPU + TRT version)
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car" --trt [--fp16]
 ```
 
 - `--model/--scale` are inferred from the filename (`yoloe-26n-seg-pf` → yoloe-26 / n);
@@ -154,6 +158,12 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 - **Non-E2E export parity (text)**: the `--nms` o2m graph matches the pt path above conf=0.25
   (boxes/scores < 1e-3, zero class flips); a 2-image coco-tiny eval matches to four decimals
   for both Box and Mask.
+- **TensorRT (fp32 / fp16)**: pf E2E, text E2E and text Non-E2E engines build and run through
+  `infer/eval --engine trt`; deploy metadata travels in the `<engine>.json` sidecar. Text E2E
+  fp16 vs pt fp32 (@320 smoke): 6/6 detections, boxes <0.35px, scores <3e-3, mask IoU ≥0.996;
+  the text NMS fp32 2-image eval is Box 0.2651 vs pt 0.2656 with identical Mask. E2E top-k is
+  sensitive to accumulation differences (different low-conf candidates even in fp32), so
+  cross-implementation comparisons still use Non-E2E.
 - **COCO smoke** (20 images, pipeline-validation protocol, pf): Box 0.3485 / Mask 0.2865
   mAP50-95.
 - **LVIS protocol**: `tests/test_lvis_evaluator.py` verifies the three LVIS rules (neg /

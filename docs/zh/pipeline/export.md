@@ -95,6 +95,10 @@ python scripts/export.py --weights weights/yolo26n.safetensors --trt --fp16    #
 
 `scripts/infer.py` 与 `scripts/eval.py` 都吃 `--engine pt|onnx|trt`，同一套前后处理。
 
+- **YOLOE 同样适用**：pf / text（含 `--nms`）都可 `--trt`；text 的 prompt 在构建 engine
+  前已 fuse 进图，engine 侧不需要文本编码器。fp16 的 E2E top-k 近并列可能翻转类别，
+  按 conf>0.25 的检出验收。
+
 ## 4. 验收阈值
 
 | 对拍 | 阈值 | 测试 |
