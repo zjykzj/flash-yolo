@@ -16,9 +16,10 @@
   是检测配置——发布的 seg checkpoint 额外带 mask 分支 / SAVPE / 文本投影，实际更大
   （n-pf 7.84M），官方文档已注明此差异；FLOPs 不含区域-文本相似度，真实成本随 prompt 集增大。
 - 文本模式需要 MobileCLIP2-B 文本编码器权重（`mobileclip2_b.safetensors`，由 Apple 的
-  `mobileclip2_b.ts` 转换而来）与模型权重同目录——只在 `set_classes`（推理/评估）时加载，
-  不进导出图（导出时嵌入已融合进分类卷积）。视觉模式不需要文本编码器：refer 图的
-  bbox/mask 在 P3 网格（1/8）上光栅化，SAVPE 从三尺度特征聚合出每类 vpe（L2 归一化）。
+  `mobileclip2_b.ts` 转换而来，随本仓库 Releases 提供）与模型权重同目录——只在
+  `set_classes`（推理/评估）时加载，不进导出图（导出时嵌入已融合进分类卷积）。视觉模式
+  不需要文本编码器：refer 图的 bbox/mask 在 P3 网格（1/8）上光栅化，SAVPE 从三尺度特征
+  聚合出每类 vpe（L2 归一化）。
 - 本仓库的复现口径 = 同权重、同前后处理重跑：与官方 fp32 前向**逐位一致**（§4）；20 图 COCO
   冒烟是管线检查，5,000 图全量跨实现数字见 §4。
 - 文中「官方」指 Ultralytics 发布的 YOLOE-26 权重/文档，本仓库不分发。
@@ -256,3 +257,5 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
   少数低分检测可能不同；conf>0.25 的有效检测实测一致。
 - 参数量以 strict-load 一致的 `parameters()` 为准，文本布局的 5,615,540 已含 savpe/reprta；
   官方文档表中的较小数字是**检测配置**口径，与本页的分割布局不是同一结构。
+- **训练尚未接入**：本版本只覆盖推理 / 评估 / 导出。`scripts/train.py` 的损失分派没有
+  `yoloe-26` 条目，`--model yoloe-26` 会在构建损失时报错；YOLOE 微调 / 从零训练当前不支持。

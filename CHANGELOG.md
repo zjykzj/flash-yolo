@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **YOLOE docs match the code**: the model matrix no longer claims `--nms` is unsupported (text-mode YOLOE supports it), documents that YOLOE training is not wired in, and describes the `mobileclip2_b.safetensors` text-encoder conversion as a release asset kept next to the model weights.
+
 ## [1.4.0] - 2026-11-08
 
 ### Added

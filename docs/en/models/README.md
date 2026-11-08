@@ -27,13 +27,18 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 - `yolo26` / `yolo26-seg` / `yoloe-26` have the `n/s/m/l/x` scales; `flash-yolo` /
   `flash-yolo-seg` only `flash`, `yolov3-tiny` only `tiny` — passing `--scale` for those warns
   and does nothing.
-- `yoloe-26` supports prompt-free (-pf) and text-prompt weights; `--nms` / `--raw` do not apply
-  (see yoloe.md). Text mode additionally needs `mobileclip2_b.safetensors` (the converted
-  Apple MobileCLIP2-B text encoder) next to the model weights.
+- `yoloe-26` supports prompt-free (-pf) and text-prompt weights; `--raw` does not apply and
+  `--nms` is text-mode only (o2m + NMS; pf stays E2E, see yoloe.md). Text mode additionally
+  needs `mobileclip2_b.safetensors` (the converted Apple MobileCLIP2-B text encoder) next to
+  the model weights.
+- `yoloe-26` currently covers inference / evaluation / export only; training is not wired in
+  (the training loss dispatch has no entry for this architecture).
 - Structures live in `config/models/<model>.yaml`; `--cfg` can point at a custom yaml (custom
   variants).
-- Each model page's download links point to the **latest release** assets (the v1.0.0
-  checkpoints; the YOLOE text-mode encoder asset ships with v1.2.0).
+- From-scratch weight download links point to the **latest release** assets (the v1.0.0
+  checkpoints); the official YOLOE weights are linked from yoloe.md (Ultralytics assets), and
+  the text-encoder conversion `mobileclip2_b.safetensors` is provided through Releases (next
+  to the model weights, see yoloe.md).
 
 ## 2. Shared structure conventions
 

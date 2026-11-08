@@ -22,11 +22,11 @@
   official fp32 forward (§4). The 20-image COCO smoke is a pipeline check; the full
   5,000-image cross-implementation numbers are in §4.
 - Text mode needs the MobileCLIP2-B text encoder weights (`mobileclip2_b.safetensors`, converted
-  from Apple's `mobileclip2_b.ts`) next to the model weights — it is loaded only when
-  `set_classes` runs (infer/eval) and never enters the exported graph (the embeddings are fused
-  into the cls conv at export). Visual mode needs no text encoder: refer-image bboxes/masks are
-  rasterized on the P3 grid (1/8), and SAVPE aggregates the three feature scales into one
-  L2-normalized vpe per class.
+  from Apple's `mobileclip2_b.ts` and provided through this repo's Releases) next to the model
+  weights — it is loaded only when `set_classes` runs (infer/eval) and never enters the exported
+  graph (the embeddings are fused into the cls conv at export). Visual mode needs no text
+  encoder: refer-image bboxes/masks are rasterized on the P3 grid (1/8), and SAVPE aggregates
+  the three feature scales into one L2-normalized vpe per class.
 - "Official" refers to the Ultralytics-released YOLOE-26 weights/docs; this repo does not
   redistribute them.
 
@@ -298,3 +298,6 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
 - Parameter counts follow the strict-load-consistent `parameters()`; the text layout's 5,615,540
   already includes savpe/reprta, while the smaller figure in the official docs is the
   **detection-configuration** count and describes a different structure.
+- **Training is not wired in**: this version covers inference / evaluation / export only.
+  The training loss dispatch has no `yoloe-26` entry, so `--model yoloe-26` fails while
+  building the loss; YOLOE finetuning / from-scratch training is not supported yet.
