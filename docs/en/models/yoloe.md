@@ -168,6 +168,27 @@ python scripts/train.py --data lvis --model yoloe-26 --scale n --pe \
 python scripts/eval.py --weights runs/train/train-yoloe-pe-coco/weights/best.safetensors --data coco
 python scripts/export.py --weights runs/train/train-yoloe-pe-coco/weights/best.safetensors \
     --out weights/yoloe-26n-coco-pe.onnx
+
+# ---- Full fine-tuning (text mode; starts from the official text checkpoint) ----
+# The dataset class-name CLIP embeddings are cached once (reprta stays in-graph and trains),
+# mask/proto train too; the learning rate is ~100x lower than PE. The output is unfused and
+# carries the prompt names in metadata.
+python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
+    --weights weights/yoloe-26n-seg.safetensors \
+    --epochs 10 --batch 32 --imgsz 640 --lr0 0.001
+
+# LVIS (federated masks on; cross-image augmentation off)
+python scripts/train.py --data lvis --model yoloe-26 --scale n --full-finetune \
+    --weights weights/yoloe-26n-seg.safetensors \
+    --epochs 10 --batch 16 --imgsz 640 --lr0 0.001
+
+# eval on the same descriptor; infer/export reuse the training names unless --classes is given
+python scripts/eval.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors --data coco
+python scripts/infer.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors \
+    --image assets/traffic.jpg
+python scripts/export.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors \
+    --text-encoder weights/mobileclip2_b.safetensors \
+    --out weights/yoloe-26n-coco-ft.onnx
 ```
 
 - PE training accepts text-mode weights only (prompt-free is rejected, and `--model yoloe-26`
@@ -179,6 +200,22 @@ python scripts/export.py --weights runs/train/train-yoloe-pe-coco/weights/best.s
   structure; `resume.pt` then restores the state). Suggested lr0: 0.1 for COCO's 80 classes,
   0.01 for LVIS's 1,203 classes (federated class masks turn on automatically; mosaic and the
   other cross-image augmentations are disabled for federated data).
+- Full fine-tuning (`--full-finetune`) differs from PE: nothing is fused or frozen — the
+  text-side reprta trains together with the visual side, and the segmentation loss (mask/proto
+  included) is used. The structural nc still comes from the weight metadata (80 for official
+  checkpoints), while the live nc is the dataset class count. Use a ~100x lower learning rate
+  than PE (COCO probes hold the zero-shot baseline at 0.0005–0.001 and drift clearly at ≥0.005;
+  LVIS uses the same order) — PE's 0.1/0.01 drift the pretrained features and degrade a
+  one-epoch probe. `--pe` and `--full-finetune` are mutually exclusive and both
+  need a text checkpoint; `--full-finetune` accepts `--freeze N`. With `--resume`, repeat the
+  mode flag and `--weights` (same rule as PE). PE outputs are class-locked,
+  while full-fine-tune outputs stay unfused: eval feeds the dataset names as prompts (mismatched
+  names error out), and infer/export reuse the metadata names when `--classes` is omitted.
+- Choosing between them: PE for vocabulary swaps on small data (hundreds to a few thousand
+  images) with minute-level turnaround; full fine-tuning for clear domain shift or 10k+ images
+  when accuracy matters. Full fine-tuning re-arranges the open-vocabulary feature space, so the
+  output is specialized to the training vocabulary — do not treat it as a new zero-shot model
+  (PE drifts less, but is still best used for its training vocabulary).
 
 - `--model/--scale` are inferred from the filename (`yoloe-26n-seg-pf` → yoloe-26 / n);
   `--raw` errors out (the pf raw output's column count varies with the proposal filter);
@@ -367,12 +404,13 @@ evaluation (pycocotools, all 5,000 images):
 - Parameter counts follow the strict-load-consistent `parameters()`; the text layout's 5,615,540
   already includes savpe/reprta, while the smaller figure in the official docs is the
   **detection-configuration** count and describes a different structure.
-- **Training covers PE linear probing only**: `--model yoloe-26 --pe --weights ...` trains
-  the six cv3 / one2one_cv3 tail convolutions (backbone, neck, BN, mask branch and proto stay
-  frozen; the loss is the detection trio). Full finetuning and from-scratch training are not
-  wired; prompt-free weights are inference-only (training errors out explicitly). The PE output
-  is class-locked and carries its prompt names in metadata, so evaluation must use the matching
-  dataset descriptor.
+- **Training covers PE linear probing and full fine-tuning**: `--pe` trains only the six
+  cv3 / one2one_cv3 tail convolutions (backbone, neck, BN, mask branch and proto stay frozen;
+  detection loss only) and emits a class-locked checkpoint; `--full-finetune` trains every
+  weight (reprta in-graph) and emits an unfused text checkpoint. Both start from an official
+  text checkpoint and require `--weights`; from-scratch training is not wired, and prompt-free
+  weights are inference-only (training errors out explicitly). Full-fine-tune evaluation must
+  use the same dataset descriptor it was trained on (mismatched class names error out).
 - **LVIS PE uses federated class masks**: LVIS annotates only part of the categories per image;
   training treats `positives ∪ neg_category_ids` as valid classes, ignores
   `not_exhaustive_category_ids` and unlabeled classes in the BCE, and disables

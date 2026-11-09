@@ -152,15 +152,47 @@ python scripts/train.py --data lvis --model yoloe-26 --scale n --pe \
 python scripts/eval.py --weights runs/train/train-yoloe-pe-coco/weights/best.safetensors --data coco
 python scripts/export.py --weights runs/train/train-yoloe-pe-coco/weights/best.safetensors \
     --out weights/yoloe-26n-coco-pe.onnx
+
+# ---- 全量微调（文本模式；从官方文本权重出发，全部参数训练）----
+# 数据集类名的原始 CLIP 嵌入缓存一次（reprta 留在图内随训练更新），mask/proto 也训练；
+# 学习率比 PE 低两个数量级。产物未 fused，prompt 名随 metadata 走。
+python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
+    --weights weights/yoloe-26n-seg.safetensors \
+    --epochs 10 --batch 32 --imgsz 640 --lr0 0.001
+
+# LVIS（federated 掩码自动启用；跨图增强自动关闭）
+python scripts/train.py --data lvis --model yoloe-26 --scale n --full-finetune \
+    --weights weights/yoloe-26n-seg.safetensors \
+    --epochs 10 --batch 16 --imgsz 640 --lr0 0.001
+
+# eval 用同一数据集描述符；infer/export 未给 --classes 时自动用训练 names
+python scripts/eval.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors --data coco
+python scripts/infer.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors \
+    --image assets/traffic.jpg
+python scripts/export.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors \
+    --text-encoder weights/mobileclip2_b.safetensors \
+    --out weights/yoloe-26n-coco-ft.onnx
 ```
 
-- PE 训练只接受文本模式权重（prompt-free 拒绝，`--model yoloe-26` 不带 `--pe` 也会报错）；
-  结构 nc 取权重 metadata（官方 80），prompt 数 = 数据集类数，因此 LVIS 1203 类不会改变
-  cv3 主体结构。`--freeze` 不能与 `--pe` 同用；融合后的产物类锁定，eval/infer/export
-  再传 `--classes` / `--visual-prompt` 会被拒绝。PE 的 `--resume` 必须同时带
-  `--weights`（用原始文本权重重建融合结构，再由 resume.pt 覆盖状态）。学习率建议：
-  COCO 80 类 lr0=0.1；LVIS 1203 类 lr0=0.01（federated 分类掩码会自动启用，
+- PE 训练只接受文本模式权重（prompt-free 拒绝）；`--model yoloe-26` 不带 `--pe` /
+  `--full-finetune` 也会报错。结构 nc 取权重 metadata（官方 80），prompt 数 = 数据集类数，
+  因此 LVIS 1203 类不会改变 cv3 主体结构。`--freeze` 不能与 `--pe` 同用；融合后的产物
+  类锁定，eval/infer/export 再传 `--classes` / `--visual-prompt` 会被拒绝。PE 的
+  `--resume` 必须同时带 `--weights`（用原始文本权重重建融合结构，再由 resume.pt 覆盖状态）。
+  学习率建议：COCO 80 类 lr0=0.1；LVIS 1203 类 lr0=0.01（federated 分类掩码会自动启用，
   mosaic 等跨图增强自动关闭）。
+- 全量微调（`--full-finetune`）与 PE 的边界：不 fuse、不冻结，文本侧 reprta 与视觉侧一起
+  训练，损失走分割三项（含 mask/proto），结构 nc 仍取权重 metadata（官方 80），活 nc =
+  数据集类数。学习率要比 PE 低两个数量级（COCO 探针 0.0005–0.001 与零样本持平，
+  ≥0.005 明显漂移；LVIS 同量级）——PE 的 0.1/0.01 会让预训练特征漂移，1 epoch 探针即
+  明显退化。`--pe` 与 `--full-finetune` 互斥，两者都要求文本权重；`--full-finetune`
+  允许 `--freeze N` 冻结浅层。`--resume` 时两者都要重复对应 flag 与 `--weights`
+  （与 PE 同口径）。PE 产物类锁定；
+  全量微调产物未 fused，eval 用数据集 names 做 prompt（名字不一致报错），infer/export 在
+  未显式给 `--classes` 时自动用 metadata 的训练 names。
+- 选择建议：只换词汇、数据量小（几百到几千张）、要分钟级产出 → PE；域偏移明显或数据量
+  上万、追求精度 → 全量微调。全量微调会重排开放词汇的特征空间，产物只适合训练时的词汇，
+  不要拿它当新的零样本模型（PE 的漂移小一些，但同样建议只用于训练词汇）。
 - `--model/--scale` 可从文件名推（`yoloe-26n-seg-pf` → yoloe-26 / n）；`--raw` 不适用
   （直接报错——pf 原始输出列数随提案过滤变化）；`--nms`（o2m + 类感知 NMS）支持 **text 模式**，
   pf 仍只有 E2E。官方文本/视觉 prompt 表的 24.7 就是 Non-E2E 口径。
@@ -314,10 +346,11 @@ train2017，10 轮，lr0 0.1 / batch 32 / 640）。正式评估（pycocotools，
   少数低分检测可能不同；conf>0.25 的有效检测实测一致。
 - 参数量以 strict-load 一致的 `parameters()` 为准，文本布局的 5,615,540 已含 savpe/reprta；
   官方文档表中的较小数字是**检测配置**口径，与本页的分割布局不是同一结构。
-- **训练只接入 PE 线性探测**：`--model yoloe-26 --pe --weights ...` 只训练 cv3 /
-  one2one_cv3 的 6 个尾卷积（backbone、neck、BN、掩码分支、原型全部冻结，损失只算检测三项）。
-  全量微调与从零训练尚未接入；prompt-free 权重仅推理（训练会显式报错）。PE 产物类锁定，
-  prompt 名随权重 metadata 走，评估时必须使用与之匹配的数据集描述符。
+- **训练支持 PE 线性探测与全量微调**：`--pe` 只训练 cv3 / one2one_cv3 的 6 个尾卷积
+  （backbone、neck、BN、掩码分支、原型全部冻结，损失只算检测三项），产物类锁定；
+  `--full-finetune` 训练全部参数（reprta 在图内），产物未 fused。两者都从官方文本权重
+  出发、需要 `--weights`；从零训练尚未接入，prompt-free 权重仅推理（训练会显式报错）。
+  全量微调评估必须使用与训练一致的数据集描述符（类名不一致会报错）。
 - **LVIS PE 的 federated 掩码**：LVIS 每图只标注部分类别；训练自动把「正类 ∪
   `neg_category_ids`」作为有效类，`not_exhaustive_category_ids` 与未标注类从 BCE 忽略，
   并自动关闭 mosaic/mixup/cutmix/copy_paste。总体指标可超过零样本，但 rare 类 AP 可能

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **YOLOE-26 full fine-tuning**: `--full-finetune --weights <text checkpoint>` caches the dataset class-name CLIP embeddings, runs reprta in-graph and trains every weight (mask/proto included) with the segmentation loss; outputs carry `full_finetune`/`struct_nc`/`names` metadata, and infer/export reuse those names without `--classes`.
+
+### Changed
+
+- **YOLOE training boundary**: `--pe` (linear probing) and `--full-finetune` are the two wired modes; both require a text checkpoint and are mutually exclusive, while prompt-free and from-scratch training remain rejected. Docs and CLI help cover the ~100x learning-rate gap between them.
+
 ## [1.5.0] - 2026-11-09
 
 ### Added

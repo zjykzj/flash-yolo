@@ -29,7 +29,8 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
   文本模式（o2m + NMS；pf 仅 E2E，见 yoloe.md）。文本模式另需 `mobileclip2_b.safetensors`
   （Apple MobileCLIP2-B 文本编码器的转换产物）与模型权重同目录。
 - `yoloe-26` 训练支持 PE 线性探测（`--pe --weights <文本权重>`：只训练 cv3 尾卷积，
-  backbone/BN/掩码分支冻结）；全量微调与从零训练尚未接入。产物类锁定，可直接评估/导出。
+  backbone/BN/掩码分支冻结；产物类锁定，可直接评估/导出）与全量微调（`--full-finetune`：
+  全部参数训练，reprta 在图内；产物未 fused，评估需同一数据集描述符）。从零训练尚未接入。
 - 结构定义在 `config/models/<model>.yaml`；`--cfg` 可指向自定义 yaml（自定义变体）。
 - 自训权重的下载链接指向**最新发布**资产（v1.0.0 的 checkpoint）；YOLOE 官方权重见
   yoloe.md（Ultralytics assets），文本编码器的转换产物 `mobileclip2_b.safetensors` 随

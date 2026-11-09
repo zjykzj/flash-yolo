@@ -23,9 +23,11 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416 --name v3tin
 python scripts/train.py --data coco --model yolov3-tiny-silu --imgsz 416 \
     --obj-iou-target --name v3tiny-silu
 
-# YOLOE-26 PE 线性探测（只训 cv3 尾卷积；全量微调 / 从零训练尚未接入）
+# YOLOE-26 训练：PE 线性探测（只训 cv3 尾卷积）/ 全量微调（全部参数；从零训练尚未接入）
 python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
     --weights weights/yoloe-26n-seg.safetensors --name yoloe-pe-coco
+python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
+    --weights weights/yoloe-26n-seg.safetensors --name yoloe-ft-coco --lr0 0.001
 ```
 
 ## 2. 配方（recipe）
@@ -64,7 +66,8 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu` / `yoloe-26` |
 | `--scale` | `n` | yolo26 系档位；其他架构固定 |
 | `--pe` | false | YOLOE-26 文本模式 PE 线性探测（需 `--weights` 文本权重；只训 cv3 尾卷积） |
-| `--text-encoder` | 权重同目录 | PE 用的 MobileCLIP2-B `.safetensors` 路径 |
+| `--full-finetune` | false | YOLOE-26 全量微调（需 `--weights` 文本权重；全部参数训练，reprta 在图内） |
+| `--text-encoder` | 权重同目录 | PE / 全量微调用的 MobileCLIP2-B `.safetensors` 路径 |
 | `--federated-mask` | true | federated 数据（LVIS）启用每图分类有效掩码；`--no-federated-mask` 回到旧行为（仅对照/复现） |
 | `--mask-ratio` | 4 | 分割 GT 下采样倍率（`imgsz/mask_ratio`） |
 | `--overlap-mask` | true | 实例索引图 vs 每实例二值掩码 |

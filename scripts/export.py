@@ -90,6 +90,9 @@ def main():
                              "exported model (text embeddings are fused into the cls conv; "
                              "the exported onnx rejects new prompts); combine with --visual-prompt "
                              "for mixed prompts")
+    parser.add_argument("--text-encoder", dest="text_encoder", default=None,
+                        help="MobileCLIP2-B text encoder .safetensors used to fuse text prompts "
+                             "(default: mobileclip2_b.safetensors next to --weights)")
     parser.add_argument("--visual-prompt", dest="visual_prompt", default=None,
                         help="yoloe-26 text mode only: JSON with a refer image and bbox/mask prompts; "
                              "the visual embeddings are fused into the cls conv (class-locked); "
@@ -161,8 +164,12 @@ def main():
                         locked_classes = visual_names
                 else:
                     if not text_classes:
-                        parser.error("yoloe-26 text-mode export requires --classes or --visual-prompt "
-                                     '(e.g. --classes "person, bicycle")')
+                        # 全量微调产物自带训练时的类名：默认按原词汇导出（仍可用 --classes 覆盖）
+                        if meta.get("full_finetune") and meta.get("names"):
+                            text_classes = list(meta["names"])
+                        else:
+                            parser.error("yoloe-26 text-mode export requires --classes or --visual-prompt "
+                                         '(e.g. --classes "person, bicycle")')
                     locked_classes = text_classes
     if args.visual_prompt and not text_mode:
         parser.error("--visual-prompt requires yoloe-26 text-mode weights")
@@ -219,10 +226,14 @@ def main():
         if text_classes:
             # 官方文本 fuse 口径：tokenize -> MobileCLIP -> get_tpe（reprta+L2）
             from model.text_encoder import load_mobileclip_text
+            from model.text_prompt import resolve_text_encoder
             from model.tokenizer import tokenize
 
-            enc_dir = str(Path(args.weights).resolve().parent)
-            enc = load_mobileclip_text(f"{enc_dir}/mobileclip2_b.safetensors").eval()
+            try:
+                enc_path = resolve_text_encoder(args.weights, args.text_encoder)
+            except (ValueError, FileNotFoundError) as e:
+                parser.error(str(e))
+            enc = load_mobileclip_text(str(enc_path)).eval()
             with torch.no_grad():
                 tokens = tokenize(text_classes)
                 emb = torch.cat([enc(chunk) for chunk in tokens.split(80)], dim=0).unsqueeze(0)

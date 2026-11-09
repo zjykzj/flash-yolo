@@ -306,6 +306,11 @@ def main():
                 mode = ("E2E (text prompts, subset)" if end2end else "o2m+NMS (text prompts, subset)")
             else:
                 locked = args.engine != "pt"
+                ft_names = meta.get("names") if meta.get("full_finetune") else None
+                if ft_names and list(ft_names) != list(spec.names.values()):
+                    parser.error(f"this fine-tuned checkpoint was trained on different class names "
+                                 f"({len(ft_names)} vs {len(spec.names.values())}) — evaluate on the "
+                                 "same descriptor it was trained on")
                 if not locked:
                     engine.set_classes(list(spec.names.values()))
                 kind = "class-locked prompts" if locked else "text prompts"

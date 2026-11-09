@@ -310,6 +310,8 @@ class YOLOESegment26(nn.Module):
         else:
             if tpe is None:
                 tpe = getattr(self, "_tpe", None)
+            if tpe is None and getattr(self, "_tpe_raw", None) is not None:
+                tpe = self.get_tpe(self._tpe_raw)
             if tpe is None and not getattr(self, "is_fused", False):
                 raise ValueError(
                     "YOLOE text mode requires tpe (text prompt embeddings) — "
@@ -319,9 +321,17 @@ class YOLOESegment26(nn.Module):
         return y, proto
 
     def _resolve_tpe(self, tpe):
-        """训练/验证共用的 prompt 解析：显式 tpe > 缓存 _tpe；fused 后无需 tpe"""
+        """训练/验证共用的 prompt 解析：显式 tpe > 缓存 _tpe > 原始嵌入 _tpe_raw；fused 后无需 tpe
+
+        全量微调缓存的是 reprta 之前的原始文本嵌入：每次前向在图内过 get_tpe，reprta
+        因此可训练；PE/推理缓存的是 get_tpe 之后的常量嵌入（无梯度）。
+        """
         if tpe is None:
             tpe = getattr(self, "_tpe", None)
+        if tpe is None:
+            raw = getattr(self, "_tpe_raw", None)
+            if raw is not None:
+                tpe = self.get_tpe(raw)
         if tpe is None and not getattr(self, "is_fused", False):
             raise ValueError(
                 "YOLOE text-mode training requires tpe (text prompt embeddings) — "
@@ -392,6 +402,15 @@ class YOLOESegment26(nn.Module):
     def set_tpe(self, tpe):
         """缓存文本提示嵌入（引擎 set_classes 调用）；前向未显式传 tpe 时使用"""
         self._tpe = tpe
+        self._tpe_raw = None
+
+    def set_tpe_raw(self, emb):
+        """全量微调：缓存 reprta 之前的原始文本嵌入；前向在图内过 get_tpe
+
+        与 set_tpe 的常量嵌入不同，reprta + L2 每次前向重算，梯度可回传到文本侧模块。
+        """
+        self._tpe_raw = emb
+        self._tpe = None
 
     def fuse_text(self, tpe):
         """导出 fuse（官方 fuse/_fuse_tp 口径）：文本嵌入融合进 cv3 尾卷积，类锁定
@@ -422,6 +441,7 @@ class YOLOESegment26(nn.Module):
                 cv4h[i].fuse()
         del self.reprta
         self.reprta = nn.Identity()
+        self._tpe_raw = None  # 类锁定后不再需要（reprta 已删）
         self.nc = tpe.shape[0]  # fuse 后类别数 = 锁定的 prompt 数（前向不再依赖 tpe）
         self.is_fused = True
 

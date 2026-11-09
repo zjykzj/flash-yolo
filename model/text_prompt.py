@@ -44,11 +44,13 @@ def load_text_encoder(path, device="cpu"):
     return load_mobileclip_text(str(path)).to(device).eval()
 
 
-def encode_text_prompts(head, texts, encoder, batch=80):
-    """类名列表 -> head 所需的文本提示嵌入 (1, N, 512)（已过 get_tpe）
+def encode_text_prompts(head, texts, encoder, batch=80, transform=True):
+    """类名列表 -> 文本提示嵌入 (1, N, 512)
 
-    逐 chunk detach：只切断 autograd 引用、不改数值；否则全部 chunk 的编码图会同时保留
-    （1203 prompt 实测峰值 ~22G）。训练 PE 时 tpe 也是常量（不复用文本编码器梯度）。
+    transform=True（默认）：过 head.get_tpe（reprta + L2），返回常量嵌入（PE / 推理）；
+    transform=False：返回文本编码器的原始输出（reprta 之前），供全量微调在图内过 reprta
+    （reprta 因此可训练）。逐 chunk detach：只切断 autograd 引用、不改数值；否则全部
+    chunk 的编码图会同时保留（1203 prompt 实测峰值 ~22G）。
     """
     from model.tokenizer import tokenize
 
@@ -56,4 +58,4 @@ def encode_text_prompts(head, texts, encoder, batch=80):
     tokens = tokenize(list(texts)).to(device)
     emb = [encoder(chunk).detach() for chunk in tokens.split(batch)]
     emb = torch.cat(emb, dim=0).unsqueeze(0)  # (1, N, 512)
-    return head.get_tpe(emb).detach()
+    return head.get_tpe(emb).detach() if transform else emb

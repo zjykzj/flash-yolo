@@ -217,3 +217,80 @@ def test_fused_checkpoint_pt_engine_roundtrip(tmp_path):
         got = engine.model.model[-1]._forward_train(feats)
     for branch in ("one2many", "one2one"):
         assert torch.equal(got[branch]["scores"], want[branch]["scores"])
+
+
+def test_full_finetune_raw_tpe_trains_reprta():
+    """全量微调：缓存原始嵌入（reprta 之前），前向在图内过 get_tpe，reprta 拿到梯度"""
+    model = _build().train()
+    head = model.model[-1]
+    head.set_tpe_raw(_tpe(k=5))
+    assert head._tpe is None and head._tpe_raw is not None
+    out = model(torch.zeros(1, 3, 640, 640))
+    (out["one2many"]["scores"].sum() + out["one2one"]["scores"].sum()).backward()
+    assert head.reprta.m.w3.weight.grad is not None, "reprta w3 应有梯度（文本侧参与训练）"
+    assert head.reprta.m.w12.weight.grad is not None, "reprta w12 应有梯度"
+    assert head.cv3[0][-1].weight.grad is not None, "视觉侧 cv3 尾卷积应有梯度"
+
+
+def test_set_tpe_clears_raw_cache():
+    """显式常量 tpe 优先于全量微调的原始嵌入缓存，避免两套缓存同时生效"""
+    head = _build().model[-1]
+    head.set_tpe_raw(_tpe(k=2))
+    head.set_tpe(_tpe(k=2, seed=1))
+    assert head._tpe_raw is None and head._tpe is not None
+
+
+def test_full_finetune_param_groups_boost_cv3():
+    """全量微调保留官方 cv3 3× 学习率提升（PE 线性探测才关闭）"""
+    from train.optimizer import build_param_groups
+
+    cfg = TrainConfig(full_finetune=True)
+    model = _build()
+    head = model.model[-1]
+    groups = build_param_groups(model, cfg, head)
+    boosted = [g for g in groups if g["lr_mult"] == 3.0]
+    assert boosted, "full fine-tuning should keep the cv3 lr x3 boost"
+    ids = {id(p) for g in boosted for p in g["params"]}
+    assert id(head.cv3[0][-1].weight) in ids
+
+
+def test_profile_flops_restores_raw_tpe_cache():
+    """summary 的 FLOPs 统计会临时塞 dummy tpe：必须原样恢复全量微调的 _tpe_raw 缓存"""
+    from model.summary import profile_flops
+
+    model = _build()
+    head = model.model[-1]
+    raw = _tpe(k=3)
+    head.set_tpe_raw(raw)
+    profile_flops(model, imgsz=160, device="cpu")
+    assert head._tpe is None and head._tpe_raw is not None
+    assert torch.equal(head._tpe_raw, raw)
+
+
+def test_full_finetune_checkpoint_pt_engine_roundtrip(tmp_path):
+    """全量微调产物读取契约：未 fused 文本布局按 struct_nc 重建 + strict load 后前向一致"""
+    from model.weights import load_meta, save_weights
+    from utils.engines.pt import PtEngine
+
+    model = _build().eval()
+    head = model.model[-1]
+    tpe = _tpe(k=3)
+    head.set_tpe(tpe)
+    path = tmp_path / "yoloe-ft.safetensors"
+    save_weights(model, path, metadata={
+        "arch": "yoloe-26", "scale": "n", "nc": 3, "struct_nc": 80, "imgsz": 640,
+        "names": ["a", "b", "c"], "prompt_mode": "text", "full_finetune": True,
+    })
+    meta = load_meta(path)
+    assert meta["full_finetune"] is True and meta["struct_nc"] == 80, meta
+
+    engine = PtEngine(str(path), model="yoloe-26", scale="n", device="cpu")
+    assert engine.text_mode and not engine.fused
+    engine.model.model[-1].set_tpe(tpe)
+    feats = [torch.randn(1, c, 640 // 2 ** (i + 3), 640 // 2 ** (i + 3))
+             for i, c in enumerate((64, 128, 256))]
+    with torch.no_grad():
+        want = head._forward_train(feats)
+        got = engine.model.model[-1]._forward_train(feats)
+    for branch in ("one2many", "one2one"):
+        assert torch.equal(got[branch]["scores"], want[branch]["scores"]), branch

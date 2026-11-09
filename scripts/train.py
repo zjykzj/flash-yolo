@@ -10,6 +10,8 @@
     torchrun --standalone --nproc_per_node=2 scripts/train.py --data coco ...     # torchrun 入口
     python scripts/train.py --data coco --model yoloe-26 --pe --weights yoloe-26n-seg.safetensors
                                                                                   # YOLOE PE 线性探测
+    python scripts/train.py --data coco --model yoloe-26 --full-finetune \
+        --weights yoloe-26n-seg.safetensors                                       # YOLOE 全量微调
 """
 
 import argparse
@@ -101,8 +103,12 @@ def _build_parser():
     parser.add_argument("--pe", action=argparse.BooleanOptionalAction, default=None,
                         help="YOLOE-26 text-mode PE linear probing: fuse class-name text embeddings into the "
                              "cv3 tails and train only those 6 convolutions (requires --weights; default: false)")
+    parser.add_argument("--full-finetune", dest="full_finetune", action=argparse.BooleanOptionalAction, default=None,
+                        help="YOLOE-26 full fine-tuning: cache the dataset class-name text embeddings and train "
+                             "every weight (mask/proto and text-side reprta included; requires --weights; "
+                             "default: false)")
     parser.add_argument("--text-encoder", dest="text_encoder", default=None,
-                        help="MobileCLIP2-B text encoder .safetensors for --pe "
+                        help="MobileCLIP2-B text encoder .safetensors for --pe / --full-finetune "
                              "(default: mobileclip2_b.safetensors next to --weights)")
     parser.add_argument("--federated-mask", dest="federated_mask", action=argparse.BooleanOptionalAction, default=None,
                         help="use per-image valid-class masks for federated annotations (LVIS; default: true; "
@@ -231,15 +237,18 @@ def _train(args, parser, info):
     except (ValueError, FileNotFoundError) as e:
         parser.error(str(e))
     apply_cli(cfg, args)
-    if cfg.model == "yoloe-26" and not cfg.pe:
-        parser.error("--model yoloe-26 training requires --pe (PE linear probing); "
-                     "full YOLOE fine-tuning is not wired yet")
-    if cfg.pe:
+    if cfg.pe and cfg.full_finetune:
+        parser.error("--pe and --full-finetune are mutually exclusive")
+    if cfg.model == "yoloe-26" and not (cfg.pe or cfg.full_finetune):
+        parser.error("--model yoloe-26 training requires --pe (linear probing) or --full-finetune "
+                     "(all weights; text-mode checkpoint required)")
+    if cfg.pe or cfg.full_finetune:
         if not args.weights:
-            parser.error("--pe requires --weights (a text-mode YOLOE checkpoint); "
+            flag = "--pe" if cfg.pe else "--full-finetune"
+            parser.error(f"{flag} requires --weights (a text-mode YOLOE checkpoint); "
                          "pass it together with --resume as well")
-        if cfg.freeze:
-            parser.error("--pe freezes every layer except the cv3 tails — --freeze cannot be combined")
+    if cfg.pe and cfg.freeze:
+        parser.error("--pe freezes every layer except the cv3 tails — --freeze cannot be combined")
     if arch_task(cfg.model) == "segment":
         if cfg.mask_ratio < 1 or cfg.imgsz % cfg.mask_ratio:
             parser.error(f"--mask-ratio must be >=1 and divide --imgsz (got {cfg.mask_ratio} / {cfg.imgsz})")
@@ -277,6 +286,8 @@ def _train(args, parser, info):
                **(dict(mask_ratio=cfg.mask_ratio, overlap_mask=cfg.overlap_mask)
                   if arch_task(cfg.model) == "segment" else {}),
                **(dict(pe=True, text_encoder=cfg.text_encoder or "next to weights") if cfg.pe else {}),
+               **(dict(full_finetune=True, text_encoder=cfg.text_encoder or "next to weights")
+                  if cfg.full_finetune else {}),
                # 单卡首行保持逐字符不变：DDP 才追加设备/规模
                **(dict(device=args.device, world_size=info.world_size) if info.enabled else {}))
     # 启动信息块由 Trainer 按构建时机分段打印（环境 -> 模型 -> 数据集 -> 组件 -> 起跑），见 train/trainer.py

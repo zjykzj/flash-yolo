@@ -493,3 +493,34 @@ def test_train_smoke_yoloe_pe_gpu_options(tmp_path):
     rows = list(csv_reader(run_dir / "results.csv"))
     assert len(rows) == 1 and np.isfinite(float(rows[0]["loss"])), rows
     print("  PE GPU 选项冒烟通过 (AMP/multi_scale/single_cls/channels_last)")
+
+
+def test_train_smoke_yoloe_full_finetune(tmp_path):
+    """YOLOE-26 全量微调：原始文本嵌入缓存 + reprta 在图内 + 分割损失 + 未 fused 产物 metadata"""
+    root = Path(__file__).resolve().parent.parent
+    weights = root / "weights" / "yoloe-26n-seg.safetensors"
+    encoder = root / "weights" / "mobileclip2_b.safetensors"
+    if not (weights.is_file() and encoder.is_file()):
+        pytest.skip("需要 weights/yoloe-26n-seg.safetensors 与 mobileclip2_b.safetensors")
+    data = _make_mini_coco(tmp_path, n_img=8, size=160, seg=True)
+    cfg = TrainConfig(
+        data=str(data), model="yoloe-26", scale="n", epochs=1, batch=2, nbs=2, imgsz=160,
+        workers=0, val_epochs=1, val_limit=4, limit=0, amp=False, mosaic=0.0, mixup=0.0,
+        copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0, aug_samples=0, plots=False,
+        full_finetune=True, lr0=0.001,
+    )
+    run_dir = tmp_path / "run-yoloe-ft"
+    trainer = Trainer(cfg, device="cpu", run_dir=run_dir, weights=str(weights))
+    head = trainer.head
+    assert not getattr(head, "is_fused", False) and head.nc == 2
+    assert head._tpe_raw is not None and head._tpe is None
+    assert head.reprta.m.w3.weight.requires_grad, "全量微调的 reprta 应可训练"
+    trainer.train()
+    rows = list(csv_reader(run_dir / "results.csv"))
+    assert len(rows) == 1 and "seg" in rows[0], list(rows[0])  # 全量微调走分割损失（含 mask 项）
+    from model.weights import load_meta
+    wm = load_meta(run_dir / "weights" / "best.safetensors")
+    assert wm["arch"] == "yoloe-26" and wm["nc"] == 2 and wm["struct_nc"] == 80, wm
+    assert wm["full_finetune"] and wm["names"] == ["cls0", "cls1"], wm
+    assert not wm.get("pe") and not wm.get("fused"), wm
+    print("  YOLOE 全量微调冒烟通过")

@@ -177,6 +177,9 @@ class Trainer:
         self._n_corrupt_seen = 0  # 惰性 corrupt 累计（每 epoch 读一次数据集里的共享计数）
 
         self.pe = bool(cfg.pe)
+        self.full_finetune = bool(cfg.full_finetune)
+        if self.pe and self.full_finetune:
+            raise ValueError("PE linear probing and full fine-tuning are mutually exclusive")
         if self.pe:
             if cfg.model != "yoloe-26":
                 raise ValueError(f"PE linear probing is only supported for yoloe-26 (got {cfg.model!r})")
@@ -185,6 +188,12 @@ class Trainer:
                                  "pass it together with --resume as well")
             if cfg.freeze:
                 raise ValueError("PE freezes the whole model except the cv3 tails — --freeze cannot be combined")
+        if self.full_finetune:
+            if cfg.model != "yoloe-26":
+                raise ValueError(f"full fine-tuning is only supported for yoloe-26 (got {cfg.model!r})")
+            if not weights:
+                raise ValueError("full fine-tuning requires --weights (a text-mode YOLOE checkpoint); "
+                                 "pass it together with --resume as well")
 
         # ① 环境 + 超参快照：在建模型、解析数据集之前打印（启动白屏只剩 import 时间）
         self._print_env()
@@ -198,8 +207,9 @@ class Trainer:
         struct_nc = self.spec.nc
         if cfg.model == "yoloe-26":
             if struct_meta.get("fused"):
-                raise ValueError(f"{weights} is already class-locked (PE fused); start PE from an "
-                                 "unfused text-mode checkpoint, or continue this run with --resume")
+                raise ValueError(f"{weights} is already class-locked (PE fused); start PE or full "
+                                 "fine-tuning from an unfused text-mode checkpoint, or continue this "
+                                 "run with --resume")
             meta_nc = struct_meta.get("struct_nc") or struct_meta.get("nc")
             if meta_nc:
                 struct_nc = int(meta_nc)
@@ -222,6 +232,8 @@ class Trainer:
             self.head.nc = self.spec.nc  # 活 nc = 数据集类数（PE 的 fuse_text 也会覆写为 prompt 数）
         if self.pe:
             self._setup_pe(model, weights, struct_nc)
+        elif self.full_finetune:
+            self._setup_full_finetune(model, weights, struct_nc)
         if cfg.channels_last:  # NHWC 训练（在 EMA deepcopy 之前，副本继承布局）
             model.to(memory_format=torch.channels_last)
         model.train()
@@ -230,6 +242,9 @@ class Trainer:
         self._freeze_n = freeze_layers(model, cfg.freeze) if cfg.freeze else 0
         if self._freeze_n:
             logger.info(f"freeze: first {self._freeze_n} layer(s) frozen (BN stays in eval)")
+        if self.full_finetune:
+            n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            logger.info(f"full finetune: {n_params:,} trainable params")
 
         # 随权重走的模型参数（写入 best/last/epochN 的 safetensors header；读取侧可选消费，
         # 缺失不影响加载——见 model/weights.py::load_meta）
@@ -245,6 +260,8 @@ class Trainer:
             self.weights_meta["prompt_mode"] = "text"
         if self.pe:  # 融合训练产物：cv3 尾卷积已类锁定（读取侧需按 struct_nc 重建后再 fuse）
             self.weights_meta.update({"pe": True, "fused": True})
+        if self.full_finetune:  # 文本布局全量微调：未 fused，prompt 名随 metadata 走
+            self.weights_meta["full_finetune"] = True
 
         # ② 模型信息（逐层表 + 汇总；--weights 提示跟在模型段里）
         self._print_model_info(weights)
@@ -368,6 +385,33 @@ class Trainer:
         logger.info(f"PE: fused {len(texts)} class prompts into cv3 tails (struct nc {struct_nc}) · "
                     f"trainable {n} tensors / {n_params:,} params · all other weights frozen")
         model.train()
+
+    def _setup_full_finetune(self, model, weights, struct_nc):
+        """全量微调：缓存原始文本嵌入（reprta 之前），前向时在图内过 reprta + L2
+
+        与 PE 的区别：不 fuse、不冻结——文本侧 reprta 与视觉侧全参数一起训练（官方
+        文本布局训练口径）；结构 nc 仍取权重的 struct_nc（官方 80），活 nc = 数据集
+        类数。原始嵌入只编码一次（常量张量），reprta 每次前向重算，梯度可回传。
+        """
+        head = model.model[-1]
+        if getattr(head, "is_fused", False):
+            raise ValueError("checkpoint is already fused (class-locked); full fine-tuning expects "
+                             "an unfused text-mode checkpoint")
+        if getattr(head, "lrpc", None) is not None:
+            raise ValueError("YOLOE-26 prompt-free weights are inference-only; "
+                             "full fine-tuning expects a text-mode checkpoint")
+        texts = [self.spec.names[i] for i in range(self.spec.nc)]
+        enc_path = resolve_text_encoder(weights, self.cfg.text_encoder or None)
+        encoder = load_text_encoder(enc_path, device=self.device)
+        try:
+            emb = encode_text_prompts(head, texts, encoder, transform=False)
+        finally:  # 文本编码器只编码一次：显存/内存不驻留
+            del encoder
+            if self.device.type == "cuda":
+                torch.cuda.empty_cache()
+        head.set_tpe_raw(emb)
+        logger.info(f"full finetune: cached {len(texts)} text prompts (raw CLIP embeddings, struct nc "
+                    f"{struct_nc}) · reprta in-graph")
 
     def _wrap_ddp(self):
         """world_size>1 时包 DDP（构造是集合操作：各 rank 在这里对齐并广播初值）
@@ -627,6 +671,8 @@ class Trainer:
             else:
                 seg = (f" · seg BCE (gain {self.cfg.box_gain}) · sem BCE-Dice (gain {self.cfg.box_gain})"
                        if self.task == "segment" else "")
+                if self.full_finetune:
+                    seg = " · full finetune (all weights, prompt embeddings in-graph)" + seg
             logger.info(f"loss: box {self.cfg.box_gain} CIoU · cls {self.cfg.cls_gain} BCE · "
                         f"l1 {self.cfg.dfl_gain}{seg} · "
                         f"EMA {self.cfg.ema_decay} (tau {self.cfg.ema_tau})")

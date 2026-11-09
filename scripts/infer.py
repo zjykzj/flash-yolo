@@ -305,6 +305,8 @@ def main():
             locked_names = meta.get("names")
             text_prompt_names = ([c.strip() for c in args.classes.split(",")]
                                  if args.classes else None)
+            finetune_names = (list(locked_names)
+                              if (meta.get("full_finetune") and locked_names) else None)
             if meta.get("fused"):
                 if not locked_names:
                     parser.error("class-locked (PE fused) checkpoint has no 'names' metadata — "
@@ -334,10 +336,14 @@ def main():
                 combined = (text_prompt_names or []) + vis_names
                 names = {i: n for i, n in enumerate(combined)}
             elif args.engine == "pt":
-                # pt：类名来自 --classes（经 MobileCLIP 编码），类别数随 prompt 数变
+                # pt：类名来自 --classes（经 MobileCLIP 编码），类别数随 prompt 数变；
+                # 全量微调产物自带训练时的 names，未显式给 --classes 时直接复用
                 if not text_prompt_names:
-                    parser.error("yoloe-26 text-mode weights require --classes or --visual-prompt "
-                                 '(e.g. --classes "person, bicycle")')
+                    if finetune_names:
+                        text_prompt_names = finetune_names
+                    else:
+                        parser.error("yoloe-26 text-mode weights require --classes or --visual-prompt "
+                                     '(e.g. --classes "person, bicycle")')
                 names = {i: n for i, n in enumerate(text_prompt_names)}
             else:
                 # onnx/trt：导出时已 fuse 成类锁定图，类别名随部署 metadata 走
@@ -352,7 +358,10 @@ def main():
             if args.data:
                 source = ("visual/mixed prompts" if args.visual_prompt
                           else ("the class-locked checkpoint metadata" if meta.get("fused")
-                                else ("--classes" if args.engine == "pt" else "the class-locked export metadata")))
+                                else ("the fine-tuned checkpoint metadata"
+                                      if (args.engine == "pt" and finetune_names and not args.classes)
+                                      else ("--classes" if args.engine == "pt"
+                                            else "the class-locked export metadata"))))
                 logger.warning(f"--data is ignored for yoloe-26 text mode: class names come from {source}")
             nc = None
         else:  # pf：词汇即权重，名字必须来自烘焙词汇，--data/COCO 名不适用

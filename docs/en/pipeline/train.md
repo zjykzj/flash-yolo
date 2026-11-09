@@ -23,9 +23,12 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416 --name v3tin
 python scripts/train.py --data coco --model yolov3-tiny-silu --imgsz 416 \
     --obj-iou-target --name v3tiny-silu
 
-# YOLOE-26 PE linear probing (only the cv3 tails train; full finetune / from scratch not wired)
+# YOLOE-26 training: PE linear probing (cv3 tails only) / full fine-tuning (all weights;
+# from-scratch training is not wired)
 python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
     --weights weights/yoloe-26n-seg.safetensors --name yoloe-pe-coco
+python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
+    --weights weights/yoloe-26n-seg.safetensors --name yoloe-ft-coco --lr0 0.001
 ```
 
 ## 2. Recipes
@@ -66,7 +69,8 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu` / `yoloe-26` |
 | `--scale` | `n` | yolo26-family scale; fixed for other architectures |
 | `--pe` | false | YOLOE-26 text-mode PE linear probing (requires a text `--weights`; only the cv3 tails train) |
-| `--text-encoder` | next to weights | MobileCLIP2-B `.safetensors` path used by `--pe` |
+| `--full-finetune` | false | YOLOE-26 full fine-tuning (requires a text `--weights`; all weights train, reprta in-graph) |
+| `--text-encoder` | next to weights | MobileCLIP2-B `.safetensors` path used by `--pe` / `--full-finetune` |
 | `--federated-mask` | true | per-image valid-class masks for federated data (LVIS); `--no-federated-mask` restores the legacy behavior (A/B only) |
 | `--mask-ratio` | 4 | segmentation GT downsample factor (`imgsz/mask_ratio`) |
 | `--overlap-mask` | true | instance index map vs per-instance binary masks |

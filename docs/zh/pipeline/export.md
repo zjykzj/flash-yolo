@@ -32,6 +32,7 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | `--nms` | off | 导出 o2m 密集输出（yoloe-26 文本专属；推理/评估需配 `--nms`） |
 | `--dynamic` | off | 动态 batch 轴；默认固定 batch 1 |
 | `--classes` | — | yoloe-26 文本模式：锁定进导出模型的类别名（可与 `--visual-prompt` 组合） |
+| `--text-encoder` | 权重同目录 | MobileCLIP2-B `.safetensors`（文本/混合 prompt fuse 用） |
 | `--visual-prompt` | — | yoloe-26 视觉模式：refer 图 + bbox/mask JSON（vpe 融合进分类卷积） |
 | `--model` / `--scale` | 从文件名推断 | 架构/档位 |
 | `--nc` | metadata > 模型 yaml | 非 COCO 模型改头 |
@@ -60,7 +61,8 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 - yoloe 视觉模式导出：refer 图前向 + 1/8 bbox/mask 掩码 → SAVPE vpe → `fuse_text` 同一融合路径；
   导出图即类锁定，部署侧不需要 refer 图（metadata `prompt_mode: text`，names 为 prompt 类名）。
 - yoloe 文本模式导出会先跑完整 prompt 链（tokenize → MobileCLIP2-B → reprta+L2——
-  `mobileclip2_b.safetensors` 需与模型权重同目录），再把结果融合进分类卷积，导出的 onnx
+  `mobileclip2_b.safetensors` 默认取模型权重同目录，`--text-encoder` 可显式指定；
+  全量微调产物通常落在 run 目录，建议显式传该参数），再把结果融合进分类卷积，导出的 onnx
   无文本编码器依赖。fuse 等价性已验证：fused pt vs 未 fuse 1.8e-6、onnx vs fused 6e-5、
   conf>0.25 零类别翻转。
 - **TorchScript 导出器**：`torch.onnx.export` 在 torch 2.9 起默认走 dynamo，其

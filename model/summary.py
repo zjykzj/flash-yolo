@@ -46,14 +46,23 @@ def profile_flops(model, imgsz=640, batch=1, device=None):
     if saved is not None:
         head.end2end = False
     # yoloe 文本布局前向需要 tpe：dummy（K = 头内 nc = yaml nc）——BNContrastiveHead
-    # 的 einsum FLOPs 随 K 线性缩放，口径 = 结构 nc 下的 FLOPs（与官方 yaml 注释同量级）
-    if getattr(head, "lrpc", None) is None and hasattr(head, "set_tpe"):
+    # 的 einsum FLOPs 随 K 线性缩放，口径 = 结构 nc 下的 FLOPs（与官方 yaml 注释同量级）。
+    # 缓存必须原样恢复：全量微调把训练用的原始嵌入放在 _tpe_raw，套一层 dummy 会把它清掉。
+    saved_tpe = getattr(head, "_tpe", None)
+    saved_raw = getattr(head, "_tpe_raw", None)
+    has_tpe_api = getattr(head, "lrpc", None) is None and hasattr(head, "set_tpe")
+    if has_tpe_api:
         head.set_tpe(torch.zeros(1, head.nc, 512, device=device))
     x = torch.zeros(batch, 3, imgsz, imgsz, device=device)
     model.eval()
     with torch.no_grad():
         with FlopCounterMode(display=False) as fcm:
             model(x)
+    if has_tpe_api:  # 恢复调用方状态（常量 tpe 或全量微调的原始嵌入）
+        if saved_raw is not None:
+            head.set_tpe_raw(saved_raw)
+        else:
+            head.set_tpe(saved_tpe)
     if saved is not None:
         head.end2end = saved
     return fcm.get_total_flops()

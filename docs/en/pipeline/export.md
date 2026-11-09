@@ -33,6 +33,7 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | `--nms` | off | export the dense o2m output (yoloe-26 text only; pass `--nms` at infer/eval) |
 | `--dynamic` | off | dynamic batch axis; default fixed batch 1 |
 | `--classes` | — | yoloe-26 text mode: class names to lock into the exported model (combine with `--visual-prompt`) |
+| `--text-encoder` | next to weights | MobileCLIP2-B `.safetensors` used to fuse text/mixed prompts |
 | `--visual-prompt` | — | yoloe-26 visual mode: refer image + bbox/mask JSON (vpe fused into the cls conv) |
 | `--model` / `--scale` | inferred from filename | architecture / scale |
 | `--nc` | metadata > model yaml | rebuild the head for non-COCO models |
@@ -64,7 +65,8 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   class-locked, so deployment needs no refer image (metadata `prompt_mode: text`, names = the
   prompt class names).
 - yoloe text-mode export runs the full prompt chain (tokenize → MobileCLIP2-B → reprta+L2) —
-  `mobileclip2_b.safetensors` must sit next to the model weights — then fuses the result into
+  `mobileclip2_b.safetensors` defaults to the model-weights directory, and `--text-encoder`
+  overrides it (recommended for full-fine-tune run checkpoints) — then fuses the result into
   the cls conv, so the onnx has no text-encoder dependency. Fuse equivalence is verified:
   fused pt vs unfused 1.8e-6, onnx vs fused 6e-5, zero class flips above conf=0.25.
 - **TorchScript exporter**: since torch 2.9 `torch.onnx.export` defaults to the dynamo exporter,

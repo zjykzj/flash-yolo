@@ -38,7 +38,10 @@ class TrainConfig:
     cfg_path: str = ""  # 自定义模型 yaml 覆盖 ARCHS 注册路径（架构筛选实验用；"" = 用注册表）
     pe: bool = False  # YOLOE-26 文本模式 PE 线性探测：类名文本嵌入融合进 cv3 尾卷积，
                       # 只训练 cv3 / one2one_cv3 的 6 个尾卷积（官方 PE 口径）
-    text_encoder: str = ""  # MobileCLIP2-B 文本编码器权重路径（PE 用；"" = 模型权重同目录）
+    full_finetune: bool = False  # YOLOE-26 文本模式全量微调：缓存数据集类名的原始文本嵌入
+                                 # （reprta 留在图内一起训练），全参数训练；与 pe 互斥
+    text_encoder: str = ""  # MobileCLIP2-B 文本编码器权重路径（pe / full_finetune 用；
+                           # "" = 模型权重同目录）
     federated_mask: bool = True  # federated 数据集（LVIS）启用每图分类有效掩码；
                                  # false = 旧行为（未标注类当负样本），仅供对照/复现
     epochs: int = 100
