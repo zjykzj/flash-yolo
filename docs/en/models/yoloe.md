@@ -322,6 +322,9 @@ evaluation (pycocotools, all 5,000 images):
 - Deployment: the same fused weights score Box 0.4031 (pt) vs 0.4032 (exported ONNX) on the
   first 100 COCO images (E2E); the class-locked graph runs with `--engine onnx` and no
   `--classes`.
+- Scales and single-GPU options: all five scales pass the strict-load → fuse → six-tail
+  backward contract; a one-epoch GPU smoke passes with
+  `--amp --multi-scale --single-cls --channels-last` (PE defaults to fp32; AMP is optional).
 - **LVIS (1,203 classes, federated)**: each image annotates only a subset of classes.
   Training builds a valid-class mask (`positives ∪ neg_category_ids`); unknown and
   `not_exhaustive_category_ids` classes are ignored by the BCE instead of trained as

@@ -8,6 +8,7 @@
 """
 
 import copy
+from pathlib import Path
 
 import pytest
 import torch
@@ -106,6 +107,37 @@ def test_pf_training_rejected():
     x = torch.zeros(1, 3, 640, 640)
     with pytest.raises(NotImplementedError, match="prompt-free"):
         model(x)
+
+
+def test_pe_all_scales_fuse_backward():
+    """PE 单卡功能覆盖 n/s/m/l/x：官方文本权重 strict load -> fuse -> 只训 6 个尾卷积
+
+    不依赖文本编码器（随机 tpe 即可验证结构/梯度）；权重缺失的档位跳过。
+    """
+    from model.weights import load_weights
+    from train.trainer import freeze_pe
+
+    root = Path(__file__).resolve().parent.parent
+    tested = []
+    for scale in ("n", "s", "m", "l", "x"):
+        path = root / "weights" / f"yoloe-26{scale}-seg.safetensors"
+        if not path.is_file():
+            continue
+        model = build_model("yoloe-26", scale, 320, nc=80)
+        load_weights(model, path, strict=True)
+        model.eval()
+        head = model.model[-1]
+        head.fuse_text(_tpe(k=5))
+        n = freeze_pe(model)
+        assert n == 2 * NL * 2, f"{scale}: trainable tensors {n}"
+        model.train()
+        out = model(torch.randn(1, 3, 320, 320))
+        (out["one2many"]["scores"].sum() + out["one2one"]["scores"].sum()).backward()
+        grads = {name for name, p in model.named_parameters() if p.grad is not None}
+        assert len(grads) == n, f"{scale}: unexpected grads {sorted(grads)[:5]}"
+        assert all("cv3" in name and name.endswith((".weight", ".bias")) for name in grads), scale
+        tested.append(scale)
+    assert tested, "no official text weights found for any scale"
 
 
 def test_loss_dispatch_fused_vs_text():

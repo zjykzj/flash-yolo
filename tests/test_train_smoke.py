@@ -468,3 +468,28 @@ def test_train_smoke_federated_cls_mask(tmp_path):
     rows = list(csv_reader(run_dir / "results.csv"))
     assert len(rows) == 1 and np.isfinite(float(rows[0]["loss"]))
     print("  federated 训练冒烟通过")
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="PE GPU options smoke needs CUDA (AMP)")
+def test_train_smoke_yoloe_pe_gpu_options(tmp_path):
+    """PE 单卡完整选项：AMP + multi_scale + single_cls + channels_last 组合可训练"""
+    root = Path(__file__).resolve().parent.parent
+    weights = root / "weights" / "yoloe-26n-seg.safetensors"
+    encoder = root / "weights" / "mobileclip2_b.safetensors"
+    if not (weights.is_file() and encoder.is_file()):
+        pytest.skip("需要 weights/yoloe-26n-seg.safetensors 与 mobileclip2_b.safetensors")
+    data = _make_mini_coco(tmp_path, n_img=8, size=160, seg=True)
+    cfg = TrainConfig(
+        data=str(data), model="yoloe-26", scale="n", epochs=1, batch=2, nbs=2, imgsz=160,
+        workers=0, val_epochs=0, limit=0, amp=True, multi_scale=0.1, channels_last=True,
+        mosaic=0.0, mixup=0.0, copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0,
+        aug_samples=0, plots=False, pe=True, single_cls=True,
+    )
+    run_dir = tmp_path / "run-yoloe-pe-gpu"
+    trainer = Trainer(cfg, device="cuda:0", run_dir=run_dir, weights=str(weights))
+    assert trainer.head.is_fused and trainer.head.nc == 1
+    assert len([p for p in trainer.model.parameters() if p.requires_grad]) == 12
+    trainer.train()
+    rows = list(csv_reader(run_dir / "results.csv"))
+    assert len(rows) == 1 and np.isfinite(float(rows[0]["loss"])), rows
+    print("  PE GPU 选项冒烟通过 (AMP/multi_scale/single_cls/channels_last)")

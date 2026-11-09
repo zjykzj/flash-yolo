@@ -278,6 +278,9 @@ train2017，10 轮，lr0 0.1 / batch 32 / 640）。正式评估（pycocotools，
 - 10 轮结束时训练中指标仍在上升，10 轮不是饱和点——提升轮数仍有收益空间。
 - 部署链路：同一 fused 权重在 pt 与导出 ONNX 上评估 COCO 前 100 图，Box 0.4031 vs
   0.4032（E2E）；类锁定图可直接 `--engine onnx` 消费，无需 `--classes`。
+- 规模与单卡选项：n/s/m/l/x 五档均通过「官方文本权重 strict load → fuse → 只训 6 个尾卷积」
+  的 backward 契约；GPU 上 `--amp --multi-scale --single-cls --channels-last` 组合 1 epoch
+  冒烟通过（PE 默认 fp32，AMP 为可选）。
 - **LVIS（1203 类，federated）**：每图只标注部分类别。训练自动生成「正类 ∪
   `neg_category_ids`」分类掩码，`not_exhaustive_category_ids` 与未标注类从 BCE 忽略
   （不再当负样本）；federated 数据自动关闭 mosaic/mixup/cutmix/copy_paste。PE 10 轮
