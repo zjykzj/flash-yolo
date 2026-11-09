@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-09
+
 ### Added
 
 - **YOLOE-26 PE linear probing training**: `--pe` fuses dataset class-name text embeddings into the cv3 tails and trains only the six tail convolutions; backbone, mask/proto branch and every BN stay frozen. Class-locked outputs carry `pe`/`fused`/`struct_nc` metadata and load directly in infer/eval/export.
