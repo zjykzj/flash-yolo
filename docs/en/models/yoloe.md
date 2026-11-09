@@ -318,7 +318,10 @@ evaluation (pycocotools, all 5,000 images):
 - The fused initialization matches the unfused text path on the first 500 images
   (Box 0.3338 / Mask 0.2790): PE starts at the zero-shot baseline, so the gains above come
   entirely from the six tail convolutions.
-- Training metrics were still rising at epoch 10; 10 epochs is not a saturation point.
+- **10 epochs is the recommended budget**: the COCO 20-epoch control (lr0=0.05) reaches
+  E2E 0.3091 / 0.2510 and Non-E2E 0.3223 / 0.2582, only +0.0002 / +0.0012 over 10 epochs
+  at roughly twice the time; LVIS 5 vs 10 epochs differ by ~0.002 (5 has slightly higher
+  APr, 10 slightly higher overall). Extend only if the validation curve is clearly not flat.
 - Deployment: the same fused weights score Box 0.4031 (pt) vs 0.4032 (exported ONNX) on the
   first 100 COCO images (E2E); the class-locked graph runs with `--engine onnx` and no
   `--classes`.

@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **YOLOE PE epoch budget**: the model pages now recommend 10 epochs — a COCO 20-epoch control added only +0.0002 E2E / +0.0012 Non-E2E at roughly twice the time, and LVIS 5 vs 10 epochs differ by ~0.002.
 - **YOLOE docs match the code**: the model matrix no longer claims `--nms` is unsupported (text-mode YOLOE supports it) and describes the `mobileclip2_b.safetensors` text-encoder conversion as a release asset kept next to the model weights.
 - **YOLOE text-mode training boundary**: only PE linear probing is wired; full fine-tuning and from-scratch YOLOE training are rejected by the CLI, and prompt-free weights remain inference-only.
 
