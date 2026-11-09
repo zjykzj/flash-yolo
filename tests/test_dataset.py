@@ -382,4 +382,10 @@ def test_federated_cls_mask(tmp_path):
     imgs, targets, cls_mask = collate_fn([ds[0], ds[1], ds[2]])
     assert imgs.shape[0] == 3 and cls_mask.dtype == torch.bool and cls_mask.shape == (3, 2)
     assert cls_mask.tolist() == [m.tolist() for m in ds.cls_masks]
-    print("  federated 掩码与 collate 正确")
+
+    # --no-federated-mask：回到旧行为（无掩码、批次 2 元组），供 A/B 对照
+    ds_off = build_train_dataset(TrainConfig(federated_mask=False), _descriptor(data_dir, tmp_path),
+                                 "train", augment=False)
+    assert not ds_off.federated and ds_off.cls_masks is None
+    assert len(collate_fn([ds_off[0], ds_off[1], ds_off[2]])) == 2
+    print("  federated 掩码、collate 与 --no-federated-mask 正确")

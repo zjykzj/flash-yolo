@@ -104,6 +104,9 @@ def _build_parser():
     parser.add_argument("--text-encoder", dest="text_encoder", default=None,
                         help="MobileCLIP2-B text encoder .safetensors for --pe "
                              "(default: mobileclip2_b.safetensors next to --weights)")
+    parser.add_argument("--federated-mask", dest="federated_mask", action=argparse.BooleanOptionalAction, default=None,
+                        help="use per-image valid-class masks for federated annotations (LVIS; default: true; "
+                             "--no-federated-mask restores the legacy all-classes-as-negatives behavior)")
     parser.add_argument("--overlap-mask", dest="overlap_mask", action=argparse.BooleanOptionalAction, default=None,
                         help="segmentation GT masks: one per-image instance index map (default: yaml `overlap_mask`, "
                              "true; --no-overlap-mask = one binary mask per instance)")

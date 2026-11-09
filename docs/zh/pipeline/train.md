@@ -65,6 +65,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--scale` | `n` | yolo26 系档位；其他架构固定 |
 | `--pe` | false | YOLOE-26 文本模式 PE 线性探测（需 `--weights` 文本权重；只训 cv3 尾卷积） |
 | `--text-encoder` | 权重同目录 | PE 用的 MobileCLIP2-B `.safetensors` 路径 |
+| `--federated-mask` | true | federated 数据（LVIS）启用每图分类有效掩码；`--no-federated-mask` 回到旧行为（仅对照/复现） |
 | `--mask-ratio` | 4 | 分割 GT 下采样倍率（`imgsz/mask_ratio`） |
 | `--overlap-mask` | true | 实例索引图 vs 每实例二值掩码 |
 | `--cfg` | — | 模型 yaml 覆盖 |
@@ -181,4 +182,5 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
 8. **LVIS 等 federated 数据集**：每图只标注部分类别。训练自动生成「正类 ∪
    `neg_category_ids`」的分类掩码，`not_exhaustive_category_ids` 与未标注类被忽略
    （不再当负样本），并自动关闭 mosaic/mixup/cutmix/copy_paste（掩码按中心图构造）。
-   COCO 没有该字段，批次形状与损失路径逐位不变。
+   COCO 没有该字段，批次形状与损失路径逐位不变。`--no-federated-mask` 可关闭掩码，
+   仅用于 A/B 对照或复现旧行为。

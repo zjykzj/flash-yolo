@@ -39,6 +39,8 @@ class TrainConfig:
     pe: bool = False  # YOLOE-26 文本模式 PE 线性探测：类名文本嵌入融合进 cv3 尾卷积，
                       # 只训练 cv3 / one2one_cv3 的 6 个尾卷积（官方 PE 口径）
     text_encoder: str = ""  # MobileCLIP2-B 文本编码器权重路径（PE 用；"" = 模型权重同目录）
+    federated_mask: bool = True  # federated 数据集（LVIS）启用每图分类有效掩码；
+                                 # false = 旧行为（未标注类当负样本），仅供对照/复现
     epochs: int = 100
     batch: int = 16  # 物理 batch（开箱即用值；nbs 累积保证梯度语义不变）
     nbs: int = 64

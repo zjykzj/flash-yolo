@@ -323,7 +323,7 @@ class CocoTrainDataset(TrainMixin):
         res = scan_split(self.ann_file, self.img_dir, label, limit=limit, drop_crowd=True,
                          build_labels=True, build_segments=segment,
                          progress=progress, progress_file=progress_file, single_cls=self.single_cls,
-                         build_cls_mask=not self.single_cls)
+                         build_cls_mask=getattr(self.cfg, "federated_mask", True) and not self.single_cls)
         self.images, self.labels, self.cat_id_to_idx = res.images, res.labels, res.cat_id_to_idx
         self.segments = res.segments if segment else None
         self.cls_masks = res.cls_masks  # federated 数据集（LVIS）的训练分类掩码；COCO 为 None

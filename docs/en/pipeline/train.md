@@ -67,6 +67,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--scale` | `n` | yolo26-family scale; fixed for other architectures |
 | `--pe` | false | YOLOE-26 text-mode PE linear probing (requires a text `--weights`; only the cv3 tails train) |
 | `--text-encoder` | next to weights | MobileCLIP2-B `.safetensors` path used by `--pe` |
+| `--federated-mask` | true | per-image valid-class masks for federated data (LVIS); `--no-federated-mask` restores the legacy behavior (A/B only) |
 | `--mask-ratio` | 4 | segmentation GT downsample factor (`imgsz/mask_ratio`) |
 | `--overlap-mask` | true | instance index map vs per-instance binary masks |
 | `--cfg` | — | model yaml override |
@@ -200,3 +201,4 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
    `not_exhaustive_category_ids` classes are ignored instead of trained as negatives, and
    mosaic/mixup/cutmix/copy_paste are disabled (the mask is built from the central image).
    Plain COCO has no such fields, so batch shapes and the loss path are unchanged.
+   `--no-federated-mask` disables the masks for A/B comparisons or reproducing the old behavior.
