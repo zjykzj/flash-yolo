@@ -58,8 +58,14 @@ class ComputeLoss:
         feats = [torch.zeros(1, 1, imgsz // int(s), imgsz // int(s), device=self.device) for s in self.strides]
         return make_anchors(feats, self.strides, 0.5)
 
-    def _branch_terms(self, boxes, scores, anchors, strides, gt, gt_mask, batch_size, imgsz, one2one):
-        """单分支检测三项 + 分配结果（返回 l_box/l_cls/l_l1 与 assigner dict）"""
+    def _branch_terms(self, boxes, scores, anchors, strides, gt, gt_mask, batch_size, imgsz, one2one,
+                      cls_mask=None):
+        """单分支检测三项 + 分配结果（返回 l_box/l_cls/l_l1 与 assigner dict）
+
+        cls_mask (B, nc) bool：federated 数据集（LVIS）的分类有效类掩码；None 时走原
+        `reduction="sum"` 路径（COCO 逐位不变）。掩码为 False 的类不参与 BCE——未标注类
+        （未知）不能被当成负样本，否则罕见类会被压死。
+        """
         # 标签分配（detach + 内部 no_grad，官方口径）
         a = self.assigner.forward_batch(
             boxes.detach(), scores.detach(), anchors, strides, gt, gt_mask, one2one=one2one
@@ -70,9 +76,17 @@ class ComputeLoss:
         w = t.sum(-1)  # (B, N) 逐 anchor 软权重（非 fg 恒 0）
 
         # 分类：官方 `bce.sum() / target_scores_sum`（×batch 维持 Σ_img 口径）
-        l_cls = F.binary_cross_entropy_with_logits(
-            scores.permute(0, 2, 1), t, reduction="sum"
-        ) / t_sum * batch_size
+        if cls_mask is None:
+            l_cls = F.binary_cross_entropy_with_logits(
+                scores.permute(0, 2, 1), t, reduction="sum"
+            ) / t_sum * batch_size
+        else:
+            if tuple(cls_mask.shape) != (batch_size, scores.shape[1]):
+                raise ValueError(f"cls_mask shape {tuple(cls_mask.shape)} != "
+                                 f"(batch {batch_size}, nc {scores.shape[1]})")
+            bce = F.binary_cross_entropy_with_logits(scores.permute(0, 2, 1), t, reduction="none")
+            bce = bce * cls_mask[:, None, :].to(bce.dtype)  # (B,N,nc) * (B,1,nc)
+            l_cls = bce.sum() / t_sum * batch_size
 
         # 框：软加权 (1-CIoU) 求和 / Σt（官方 box 项同式；无正样本时自然为 0）
         ax, ay = anchors[0], anchors[1]
@@ -91,7 +105,7 @@ class ComputeLoss:
         """分支附加损失（分割子类覆盖）；检测基类无附加项"""
         return None, {}
 
-    def forward(self, preds, targets, batch_size, imgsz, masks=None):
+    def forward(self, preds, targets, batch_size, imgsz, masks=None, cls_mask=None):
         """总损失（fp32 内部计算，兼容 AMP 下的 fp16 输入）
 
         Args:
@@ -99,6 +113,7 @@ class ComputeLoss:
             targets: (N, 6) [batch_idx, cls, x1, y1, x2, y2] 像素坐标
             batch_size: 本 batch 图像数
             masks: 分割 GT（由子类消费；检测路径为 None）
+            cls_mask: (B, nc) bool，federated 数据集的分类有效类掩码（None = 所有类参与）
         Returns:
             (loss_total, items) — total 为 weight*Σ_img L_img（x batch 与 nbs/accum 口径一致），
             items 为 per-image 均值口径的分解字典（日志用，float）
@@ -122,7 +137,7 @@ class ComputeLoss:
 
             l_box, l_cls, l_l1, a = self._branch_terms(
                 boxes, scores, anchors, strides, gt, gt_mask, batch_size, imgsz,
-                one2one=(branch == "one2one"))
+                one2one=(branch == "one2one"), cls_mask=cls_mask)
             extra_loss, extra_items = self._extra_branch_terms(
                 branch, preds[branch], a, masks, targets, strides, batch_size, imgsz)
 

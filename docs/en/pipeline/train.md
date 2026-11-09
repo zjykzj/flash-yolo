@@ -4,7 +4,7 @@
 > Data: [../datasets/README.md](../datasets/README.md), models:
 > [../models/README.md](../models/README.md), formal evaluation: [eval.md](eval.md).
 
-## 1. Four paths
+## 1. Five ways to run
 
 ```bash
 # from scratch (default; the built-in default recipe, 100 epochs)
@@ -22,6 +22,10 @@ python scripts/train.py --data coco --model yolo26-seg --name seg-coco --mask-ra
 python scripts/train.py --data coco --model yolov3-tiny --imgsz 416 --name v3tiny
 python scripts/train.py --data coco --model yolov3-tiny-silu --imgsz 416 \
     --obj-iou-target --name v3tiny-silu
+
+# YOLOE-26 PE linear probing (only the cv3 tails train; full finetune / from scratch not wired)
+python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
+    --weights weights/yoloe-26n-seg.safetensors --name yoloe-pe-coco
 ```
 
 ## 2. Recipes
@@ -59,8 +63,10 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--data` | — (required) | descriptor |
 | `--name` | empty → `runs/train/train` | run-dir suffix; incremented if it exists |
 | `--recipe` | built-in default | recipe name or `.yaml` path |
-| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu` |
+| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu` / `yoloe-26` |
 | `--scale` | `n` | yolo26-family scale; fixed for other architectures |
+| `--pe` | false | YOLOE-26 text-mode PE linear probing (requires a text `--weights`; only the cv3 tails train) |
+| `--text-encoder` | next to weights | MobileCLIP2-B `.safetensors` path used by `--pe` |
 | `--mask-ratio` | 4 | segmentation GT downsample factor (`imgsz/mask_ratio`) |
 | `--overlap-mask` | true | instance index map vs per-instance binary masks |
 | `--cfg` | — | model yaml override |
@@ -189,3 +195,8 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
 6. From-scratch training at a different input size computes the bias prior at the training imgsz;
    v3 needs re-clustered anchors.
 7. Segmentation accepts COCO json and YOLO-seg txt; a full fallback errors out.
+8. **LVIS-style federated datasets**: each image annotates only a subset of classes. Training
+   builds a per-image valid-class mask (`positives ∪ neg_category_ids`); unknown and
+   `not_exhaustive_category_ids` classes are ignored instead of trained as negatives, and
+   mosaic/mixup/cutmix/copy_paste are disabled (the mask is built from the central image).
+   Plain COCO has no such fields, so batch shapes and the loss path are unchanged.

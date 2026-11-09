@@ -30,14 +30,16 @@ def build_param_groups(model, cfg, head):
     - 其余权重组: 带 decay 的非 Muon 参数（罕见 1D 权重）
     - cv3 / one2one_cv3 / proto.semseg（以及 SemanticSegment）参数 lr_mult=3：
       官方 build_optimizer 的 boosted 集合，分类头与分割辅助语义头微调加速
+      （PE 线性探测除外：整网只剩 6 个 cv3 尾卷积可训，3× 学习率会让线性探测步长失控）
 
     `cfg.optimizer == "sgd"` 时 muon 全关：所有参数走纯 SGD 路径（darknet 口径复刻入口；
     与 MuSGD 的差别只在更新规则，分组/衰减/lr_mult 契约不变）。
     """
     head_ids = set()
-    for name, p in head.named_parameters():
-        if name.startswith(("cv3.", "one2one_cv3.", "proto.semseg.")) or "SemanticSegment" in name:
-            head_ids.add(id(p))
+    if not getattr(cfg, "pe", False):  # PE：不做 cv3 3× 提升（boosted 集合只服务全量微调）
+        for name, p in head.named_parameters():
+            if name.startswith(("cv3.", "one2one_cv3.", "proto.semseg.")) or "SemanticSegment" in name:
+                head_ids.add(id(p))
 
     buckets = {}
     for name, p in model.named_parameters():

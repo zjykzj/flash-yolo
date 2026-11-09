@@ -24,8 +24,16 @@ _LOSS_BY_ARCH = {
 
 
 def build_loss(arch, cfg, head, device):
-    """按架构分派损失实现（trainer 的单一入口）"""
+    """按架构分派损失实现（trainer 的单一入口）
+
+    YOLOE-26 按头的状态二选一：PE 线性探测的 fused 头只训练 cv3 尾卷积，mask/proto
+    分支全程冻结——掩码项没有可训练参数，走检测损失；未 fused 的文本布局（全量微调）
+    沿用分割损失（检测 + 掩码 + semseg）。
+    """
+    if arch == "yoloe-26":
+        return ComputeLoss(cfg, head, device) if getattr(head, "is_fused", False) \
+            else ComputeLossSeg(cfg, head, device)
     cls = _LOSS_BY_ARCH.get(arch)
     if cls is None:
-        raise ValueError(f"unknown arch {arch!r}; available: {sorted(_LOSS_BY_ARCH)}")
+        raise ValueError(f"unknown arch {arch!r}; available: {sorted(set(_LOSS_BY_ARCH) | {'yoloe-26'})}")
     return cls(cfg, head, device)

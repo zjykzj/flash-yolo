@@ -4,7 +4,7 @@
 > 数据见 [../datasets/README.md](../datasets/README.md)，模型见
 > [../models/README.md](../models/README.md)，正式评估见 [eval.md](eval.md)。
 
-## 1. 四条路径
+## 1. 五种运行方式
 
 ```bash
 # 从零训练（默认；内置 default 配方 100 轮）
@@ -22,6 +22,10 @@ python scripts/train.py --data coco --model yolo26-seg --name seg-coco --mask-ra
 python scripts/train.py --data coco --model yolov3-tiny --imgsz 416 --name v3tiny
 python scripts/train.py --data coco --model yolov3-tiny-silu --imgsz 416 \
     --obj-iou-target --name v3tiny-silu
+
+# YOLOE-26 PE 线性探测（只训 cv3 尾卷积；全量微调 / 从零训练尚未接入）
+python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
+    --weights weights/yoloe-26n-seg.safetensors --name yoloe-pe-coco
 ```
 
 ## 2. 配方（recipe）
@@ -57,8 +61,10 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--data` | —（必填） | 描述符 |
 | `--name` | 空 → `runs/train/train` | run 目录后缀；已存在自动加序号 |
 | `--recipe` | 内置 default | 配方名或 `.yaml` 路径 |
-| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu` |
+| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu` / `yoloe-26` |
 | `--scale` | `n` | yolo26 系档位；其他架构固定 |
+| `--pe` | false | YOLOE-26 文本模式 PE 线性探测（需 `--weights` 文本权重；只训 cv3 尾卷积） |
+| `--text-encoder` | 权重同目录 | PE 用的 MobileCLIP2-B `.safetensors` 路径 |
 | `--mask-ratio` | 4 | 分割 GT 下采样倍率（`imgsz/mask_ratio`） |
 | `--overlap-mask` | true | 实例索引图 vs 每实例二值掩码 |
 | `--cfg` | — | 模型 yaml 覆盖 |
@@ -172,3 +178,7 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
    分割多 `seg/sem`，v3 为 `box/obj/cls`。
 6. 换输入尺寸从零训练时，先验偏置按训练 imgsz 计算；v3 需重聚类锚点。
 7. 分割接受 COCO json 与 YOLO-seg txt；全量 fallback 会报错。
+8. **LVIS 等 federated 数据集**：每图只标注部分类别。训练自动生成「正类 ∪
+   `neg_category_ids`」的分类掩码，`not_exhaustive_category_ids` 与未标注类被忽略
+   （不再当负样本），并自动关闭 mosaic/mixup/cutmix/copy_paste（掩码按中心图构造）。
+   COCO 没有该字段，批次形状与损失路径逐位不变。

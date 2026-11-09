@@ -406,3 +406,65 @@ def test_flash_yolo_smoke(tmp_path):
     wm = load_meta(run_dir / "weights" / "best.safetensors")
     assert wm["arch"] == "flash-yolo" and wm["nc"] == 2 and wm["imgsz"] == 320, wm
     print(f"  [flash-yolo] 冒烟通过: loss {losses[0]:.3f} -> {losses[-1]:.3f}")
+
+
+def test_train_smoke_yoloe_pe(tmp_path):
+    """YOLOE-26 PE：文本嵌入融合 + 只训 6 个尾卷积 + 类锁定产物 metadata"""
+    root = Path(__file__).resolve().parent.parent
+    weights = root / "weights" / "yoloe-26n-seg.safetensors"
+    encoder = root / "weights" / "mobileclip2_b.safetensors"
+    if not (weights.is_file() and encoder.is_file()):
+        pytest.skip("需要 weights/yoloe-26n-seg.safetensors 与 mobileclip2_b.safetensors")
+    data = _make_mini_coco(tmp_path, n_img=8, size=160, seg=True)
+    cfg = TrainConfig(
+        data=str(data), model="yoloe-26", scale="n", epochs=1, batch=2, nbs=2, imgsz=160,
+        workers=0, val_epochs=1, val_limit=4, limit=0, amp=False, mosaic=0.0, mixup=0.0,
+        copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0, aug_samples=0, plots=False, pe=True,
+    )
+    run_dir = tmp_path / "run-yoloe-pe"
+    trainer = Trainer(cfg, device="cpu", run_dir=run_dir, weights=str(weights))
+    head = trainer.head
+    assert head.is_fused and head.nc == 2
+    assert head.cv3[0][-1].out_channels == 2
+    trainable = [n for n, p in trainer.model.named_parameters() if p.requires_grad]
+    assert len(trainable) == 12, trainable
+    trainer.train()
+    rows = list(csv_reader(run_dir / "results.csv"))
+    assert len(rows) == 1 and "seg" not in rows[0], list(rows[0])  # PE 走检测损失，无 seg 列
+    from model.weights import load_meta
+    wm = load_meta(run_dir / "weights" / "best.safetensors")
+    assert wm["arch"] == "yoloe-26" and wm["nc"] == 2 and wm["struct_nc"] == 80, wm
+    assert wm["pe"] and wm["fused"] and wm["names"] == ["cls0", "cls1"], wm
+
+
+def test_train_smoke_federated_cls_mask(tmp_path):
+    """federated（LVIS 式）训练链路：掩码进入 loss、批次 3 元组可解包、1 epoch 正常"""
+    data = _make_mini_coco(tmp_path, n_img=8, size=160)
+    ann = Path(data).parent / "coco" / "annotations" / "instances_train.json"
+    d = json.loads(ann.read_text())
+    d["annotations"] = [a for a in d["annotations"] if a["category_id"] == 1]  # 只留 cls0 正样本
+    for img in d["images"]:
+        img.update({"neg_category_ids": [], "not_exhaustive_category_ids": [2]})
+    ann.write_text(json.dumps(d))
+    # val 同步（验证集也用同一份 federated 字段不影响流程，但保持结构一致）
+    val = Path(data).parent / "coco" / "annotations" / "instances_val.json"
+    dv = json.loads(val.read_text())
+    dv["annotations"] = [a for a in dv["annotations"] if a["category_id"] == 1]
+    for img in dv["images"]:
+        img.update({"neg_category_ids": [], "not_exhaustive_category_ids": [2]})
+    val.write_text(json.dumps(dv))
+
+    cfg = TrainConfig(
+        data=str(data), epochs=1, batch=4, nbs=4, imgsz=160, workers=0,
+        val_epochs=1, val_limit=4, limit=0, amp=False, mosaic=0.0, mixup=0.0, cutmix=0.0,
+        copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0, aug_samples=0, plots=False,
+    )
+    run_dir = tmp_path / "run-federated"
+    trainer = Trainer(cfg, device="cpu", run_dir=run_dir)
+    assert trainer.dataset.federated
+    assert trainer.dataset.cls_masks[0].tolist() == [True, False]
+    assert trainer.cfg.mosaic == 0.0 and trainer.cfg.mixup == 0.0  # 掩码要求单图增强
+    trainer.train()
+    rows = list(csv_reader(run_dir / "results.csv"))
+    assert len(rows) == 1 and np.isfinite(float(rows[0]["loss"]))
+    print("  federated 训练冒烟通过")

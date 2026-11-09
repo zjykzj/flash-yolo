@@ -86,3 +86,18 @@ def test_loss_parity_vs_ultralytics():
     ref_combined = ref_totals["o2m"] * 0.8 + ref_totals["o2o"] * 0.2
     assert _rel(total.item(), ref_combined.item()) < 1e-4, (total.item(), ref_combined.item())
     print(f"  parity OK: o2m={ref_totals['o2m']:.4f} o2o={ref_totals['o2o']:.4f} total={total.item():.4f}")
+
+
+def test_cls_mask_ignores_unknown_classes():
+    """federated 掩码：全 True 与无掩码等价；屏蔽无正样本的类只减少负样本 BCE"""
+    cfg = TrainConfig()
+    model, preds, targets = _case()
+    loss_fn = ComputeLoss(cfg, model.model[-1], torch.device("cpu"))
+    full, _ = loss_fn(preds, targets, BATCH, IMGSZ)
+    ones = torch.ones(BATCH, 80, dtype=torch.bool)
+    masked, items = loss_fn(preds, targets, BATCH, IMGSZ, cls_mask=ones)
+    torch.testing.assert_close(masked, full, rtol=1e-5, atol=1e-6)
+    m = ones.clone()
+    m[:, 10:] = False  # 合成 GT 只用 0..2 类；其余类只贡献负样本
+    reduced, _ = loss_fn(preds, targets, BATCH, IMGSZ, cls_mask=m)
+    assert torch.isfinite(reduced) and reduced < full, (float(reduced), float(full))

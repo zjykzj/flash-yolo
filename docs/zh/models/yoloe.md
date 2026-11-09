@@ -135,8 +135,32 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco \
     --classes "bicycle" --visual-prompt prompt.json
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "bicycle" --visual-prompt prompt.json --out weights/yoloe-26n-mixed.onnx
+
+# ---- PE 线性探测微调（文本模式；需要官方文本权重 + mobileclip2_b.safetensors）----
+# 数据集类别名作文本 prompt：嵌入融合进 cv3 尾卷积后只训练这 6 个卷积；
+# backbone / neck / BN / 掩码分支 / 原型全部冻结。--text-encoder 可覆盖编码器路径。
+python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
+    --weights weights/yoloe-26n-seg.safetensors \
+    --epochs 10 --batch 32 --imgsz 640 --lr0 0.1
+
+# LVIS（federated 掩码自动启用；跨图增强自动关闭；lr0 用 0.01）
+python scripts/train.py --data lvis --model yoloe-26 --scale n --pe \
+    --weights weights/yoloe-26n-seg.safetensors \
+    --epochs 10 --batch 16 --imgsz 640 --lr0 0.01
+
+# 产物是类锁定权重（metadata: pe/fused/struct_nc/names）：eval / export / infer 直接消费
+python scripts/eval.py --weights runs/train/train-yoloe-pe-coco/weights/best.safetensors --data coco
+python scripts/export.py --weights runs/train/train-yoloe-pe-coco/weights/best.safetensors \
+    --out weights/yoloe-26n-coco-pe.onnx
 ```
 
+- PE 训练只接受文本模式权重（prompt-free 拒绝，`--model yoloe-26` 不带 `--pe` 也会报错）；
+  结构 nc 取权重 metadata（官方 80），prompt 数 = 数据集类数，因此 LVIS 1203 类不会改变
+  cv3 主体结构。`--freeze` 不能与 `--pe` 同用；融合后的产物类锁定，eval/infer/export
+  再传 `--classes` / `--visual-prompt` 会被拒绝。PE 的 `--resume` 必须同时带
+  `--weights`（用原始文本权重重建融合结构，再由 resume.pt 覆盖状态）。学习率建议：
+  COCO 80 类 lr0=0.1；LVIS 1203 类 lr0=0.01（federated 分类掩码会自动启用，
+  mosaic 等跨图增强自动关闭）。
 - `--model/--scale` 可从文件名推（`yoloe-26n-seg-pf` → yoloe-26 / n）；`--raw` 不适用
   （直接报错——pf 原始输出列数随提案过滤变化）；`--nms`（o2m + 类感知 NMS）支持 **text 模式**，
   pf 仍只有 E2E。官方文本/视觉 prompt 表的 24.7 就是 Non-E2E 口径。
@@ -205,8 +229,9 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 - 回归闸门 `tests/test_yoloe.py`（结构 / 转换 metadata / strict load / 逐位对齐 / 词汇映射 /
   导出对拍 / 文本模式对拍 / fuse 等价 / 类锁定消费 / Non-E2E / 视觉 prompt 含 mask 与混合）、
   `tests/test_visual_prompt.py`（JSON 契约 / 1/8 光栅化 / refer 聚合）、
-  `tests/test_text_encoder.py`（编码器结构 + ts 逐位对拍、tokenizer 黄金序列）与
-  `tests/test_yoloe_trt.py`（`FLASH_YOLO_TRT=1` 门控的 engine 验收）。
+  `tests/test_text_encoder.py`（编码器结构 + ts 逐位对拍、tokenizer 黄金序列）、
+  `tests/test_yoloe_train.py`（训练前向契约 / fused 前后数值等价 / PE 参数边界 / fused
+  权重重建）与 `tests/test_yoloe_trt.py`（`FLASH_YOLO_TRT=1` 门控的 engine 验收）。
 
 ### 跨实现对齐（LVIS minival / COCO val2017）
 
@@ -238,6 +263,33 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
   24.7 的差是“论文检测配置 vs 发布分割权重”。
 - LVIS maxDets 100/300 在 minival 上结果相同；COCO 用标准 maxDets=100。
 
+### PE 线性探测（COCO val2017）
+
+以官方 `yoloe-26n-seg` 文本权重为起点，`fuse_text` 后只训练 6 个 cv3 尾卷积（全量 COCO
+train2017，10 轮，lr0 0.1 / batch 32 / 640）。正式评估（pycocotools，全量 5000 图）：
+
+| 协议 | Box | Mask | 零样本文本基线 Box / Mask |
+|---|---:|---:|---:|
+| E2E | **0.3089** | **0.2509** | 0.2832 / 0.2337 |
+| Non-E2E | **0.3211** | **0.2570** | 0.2952 / 0.2407 |
+
+- fuse 初始化与未 fuse 文本路径在前 500 图上一致（Box 0.3338 / Mask 0.2790）：PE 的起点
+  就是零样本基线，上述增益全部来自 6 个尾卷积。
+- 10 轮结束时训练中指标仍在上升，10 轮不是饱和点——提升轮数仍有收益空间。
+- 部署链路：同一 fused 权重在 pt 与导出 ONNX 上评估 COCO 前 100 图，Box 0.4031 vs
+  0.4032（E2E）；类锁定图可直接 `--engine onnx` 消费，无需 `--classes`。
+- **LVIS（1203 类，federated）**：每图只标注部分类别。训练自动生成「正类 ∪
+  `neg_category_ids`」分类掩码，`not_exhaustive_category_ids` 与未标注类从 BCE 忽略
+  （不再当负样本）；federated 数据自动关闭 mosaic/mixup/cutmix/copy_paste。PE 10 轮
+  （lr0=0.01）minival 正式评估：E2E Box **0.2346** / Mask **0.1905**，Non-E2E
+  **0.2436** / **0.1955**（零样本 0.2125 / 0.1754 与 0.2218 / 0.1817）。E2E 频率分组：
+  APr 0.1180 / APc 0.2146 / APf 0.2733（零样本 0.1923 / 0.1999 / 0.2272）——总体超过
+  基线，rare 类从 0 恢复但仍低于零样本，增益集中在 common/frequent；负类采样 / 类别平衡
+  是 rare 类的后续改进项。fused 初始化与文本路径一致（E2E 0.2124 / 0.1753、APr 0.1922）。
+- 复现：`python scripts/train.py --data coco --model yoloe-26 --scale n --pe
+  --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.1`；评估把
+  `scripts/eval.py` 的 `--weights` 换成产物的 `best.safetensors`（E2E / `--nms` 两口径）。
+
 ## 5. 已知边界
 
 - 视觉 prompt 的 mask 必须与 refer 图同尺寸（二值 PNG）；bbox/mask 二选一，同类多示例 OR。
@@ -257,5 +309,11 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
   少数低分检测可能不同；conf>0.25 的有效检测实测一致。
 - 参数量以 strict-load 一致的 `parameters()` 为准，文本布局的 5,615,540 已含 savpe/reprta；
   官方文档表中的较小数字是**检测配置**口径，与本页的分割布局不是同一结构。
-- **训练尚未接入**：本版本只覆盖推理 / 评估 / 导出。`scripts/train.py` 的损失分派没有
-  `yoloe-26` 条目，`--model yoloe-26` 会在构建损失时报错；YOLOE 微调 / 从零训练当前不支持。
+- **训练只接入 PE 线性探测**：`--model yoloe-26 --pe --weights ...` 只训练 cv3 /
+  one2one_cv3 的 6 个尾卷积（backbone、neck、BN、掩码分支、原型全部冻结，损失只算检测三项）。
+  全量微调与从零训练尚未接入；prompt-free 权重仅推理（训练会显式报错）。PE 产物类锁定，
+  prompt 名随权重 metadata 走，评估时必须使用与之匹配的数据集描述符。
+- **LVIS PE 的 federated 掩码**：LVIS 每图只标注部分类别；训练自动把「正类 ∪
+  `neg_category_ids`」作为有效类，`not_exhaustive_category_ids` 与未标注类从 BCE 忽略，
+  并自动关闭 mosaic/mixup/cutmix/copy_paste。总体指标可超过零样本，但 rare 类 AP 可能
+  仍低于零样本（增益集中在 common/frequent）；负类采样 / 类别平衡是后续改进项。详见 §4。

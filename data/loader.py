@@ -53,19 +53,26 @@ class TrainMixin:
 
     use_segments = False
 
+    def cls_valid_mask(self, idx):
+        """federated 训练的分类有效掩码 (nc,) bool；非 federated 数据集返回 None"""
+        return None
+
     def __getitem__(self, idx):
         sample = self.load_image(idx)
         if self.use_segments:
             img, labels, segments = sample
             if self.use_augment:
-                return augment(img, labels, self.load_image, self.cfg, _rng(), idx, len(self),
-                               segments=segments)
-            return letterbox_train(img, labels, self.cfg.imgsz, segments=segments,
-                                   mask_ratio=self.cfg.mask_ratio, overlap_mask=self.cfg.overlap_mask)
-        img, labels = sample
-        if self.use_augment:
-            return augment(img, labels, self.load_image, self.cfg, _rng(), idx, len(self))
-        return letterbox_train(img, labels, self.cfg.imgsz)
+                out = augment(img, labels, self.load_image, self.cfg, _rng(), idx, len(self),
+                              segments=segments)
+            else:
+                out = letterbox_train(img, labels, self.cfg.imgsz, segments=segments,
+                                      mask_ratio=self.cfg.mask_ratio, overlap_mask=self.cfg.overlap_mask)
+        else:
+            img, labels = sample
+            out = (augment(img, labels, self.load_image, self.cfg, _rng(), idx, len(self))
+                   if self.use_augment else letterbox_train(img, labels, self.cfg.imgsz))
+        mask = self.cls_valid_mask(idx)
+        return out if mask is None else (*out, mask)
 
     def close_mosaic(self):
         """最后 N epoch：清零 mosaic/mixup/cutmix/copy_paste 概率（HSV/flip/perspective 保留）"""
@@ -118,18 +125,30 @@ def _rng():
     return _main_rng
 
 
+def _is_cls_mask(x):
+    """federated 分类掩码标记：一维 bool ndarray（区别于二维/三维的分割 GT 掩码）"""
+    return isinstance(x, np.ndarray) and x.ndim == 1 and x.dtype == np.bool_
+
+
 def collate_fn(batch):
     """检测 -> (imgs, targets)；分割 -> (imgs, targets, masks)
 
     imgs: (B,3,H,W) float32；targets: (N,6) [batch_idx, cls, x1, y1, x2, y2]；
     masks: overlap -> (B, H/r, W/r) int32 实例索引图；非 overlap -> (N, H/r, W/r) uint8。
+    federated（LVIS）样本末尾追加一维 bool 掩码 -> 返回元组末尾再追加
+    `cls_mask (B,nc)`；非 federated 数据集的批次形状与历史完全一致。
     """
+    cls_mask = None
+    if _is_cls_mask(batch[0][-1]):
+        cls_mask = torch.from_numpy(np.stack([item[-1] for item in batch]))
+        batch = [item[:-1] for item in batch]
     if len(batch[0]) == 3:
         imgs, labels, masks = zip(*batch)
-        tgts = _stack_targets(labels)
-        return torch.stack(imgs), tgts, torch.from_numpy(np.concatenate(masks, 0))
-    imgs, labels = zip(*batch)
-    return torch.stack(imgs), _stack_targets(labels)
+        out = (torch.stack(imgs), _stack_targets(labels), torch.from_numpy(np.concatenate(masks, 0)))
+    else:
+        imgs, labels = zip(*batch)
+        out = (torch.stack(imgs), _stack_targets(labels))
+    return out if cls_mask is None else (*out, cls_mask)
 
 
 def _stack_targets(labels):

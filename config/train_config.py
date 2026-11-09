@@ -36,6 +36,9 @@ class TrainConfig:
     model: str = "yolo26"  # 架构名（model/build.py 的 ARCHS 注册表；yolo26 | yolo26-seg |
                           # yolov3-tiny | yolov3-tiny-silu（算子替换版）| flash-yolo）
     cfg_path: str = ""  # 自定义模型 yaml 覆盖 ARCHS 注册路径（架构筛选实验用；"" = 用注册表）
+    pe: bool = False  # YOLOE-26 文本模式 PE 线性探测：类名文本嵌入融合进 cv3 尾卷积，
+                      # 只训练 cv3 / one2one_cv3 的 6 个尾卷积（官方 PE 口径）
+    text_encoder: str = ""  # MobileCLIP2-B 文本编码器权重路径（PE 用；"" = 模型权重同目录）
     epochs: int = 100
     batch: int = 16  # 物理 batch（开箱即用值；nbs 累积保证梯度语义不变）
     nbs: int = 64

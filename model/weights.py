@@ -4,7 +4,8 @@ metadata（可选）：随权重 / 部署产物一起走的模型参数——saf
 （纯 JSON 字符串，不碰张量），ONNX 写 `metadata_props`，TRT engine 写旁车 `<engine>.json`。
 训练保存的 best/last/epochN、官方权重转换产物与 scripts/export.py 的导出会带
 `{arch, scale, nc, imgsz[, names, anchors]}` + 出处 `{version, repo[, commit, describe]}`
-（YOLOE 另带 `prompt_mode`，部署图另带 `end2end`）；旧权重 / 无 metadata 的产物安全降级为空 dict。
+（YOLOE 另带 `prompt_mode`，PE 融合产物另带 `pe/fused/struct_nc`，部署图另带 `end2end`）；
+旧权重 / 无 metadata 的产物安全降级为空 dict。
 读取侧三级回退：CLI 显式 > metadata > 文件名/默认值（metadata 永远是可选的）。
 """
 
@@ -43,9 +44,9 @@ _YOLOE_SCALE_RE = re.compile(r"yoloe-26([nsmlx])($|[-_.])", re.I)
 _SCALED_ARCHS = ("yolo26", "yolo26-seg", "yoloe-26")
 
 _META_STR_KEYS = ("arch", "scale", "version", "repo", "commit", "describe", "prompt_mode")  # 直读字符串
-_META_INT_KEYS = ("nc", "imgsz", "pf_channels")  # int() 还原
+_META_INT_KEYS = ("nc", "imgsz", "pf_channels", "struct_nc")  # int() 还原
 _META_JSON_KEYS = ("names", "anchors")  # JSON 解码（写入侧统一 json.dumps）
-_META_BOOL_KEYS = ("end2end",)  # 部署图的前向模式（E2E true / o2m+NMS false）
+_META_BOOL_KEYS = ("end2end", "pe", "fused")  # 前向模式 / PE 线性探测产物 / 文本融合类锁定
 
 
 def provenance_meta():

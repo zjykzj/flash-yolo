@@ -83,7 +83,8 @@ def _fuse_conv_bn(conv, bn):
     scale = bn.weight / (bn.running_var + bn.eps).sqrt()
     w_f = w * scale.view(-1, 1, 1, 1)
     b_f = (b - bn.running_mean) * scale + bn.bias
-    fused = nn.Conv2d(conv.in_channels, conv.out_channels, 1)
+    fused = nn.Conv2d(conv.in_channels, conv.out_channels, 1,
+                      device=conv.weight.device, dtype=conv.weight.dtype)
     fused.weight.data.copy_(w_f)
     fused.bias.data.copy_(b_f)
     return fused
@@ -302,6 +303,8 @@ class YOLOESegment26(nn.Module):
 
     # ---- 前向 ----
     def forward(self, x, tpe=None):
+        if self.training and getattr(self, "one2one_cv2", None) is not None:
+            return self._forward_train(x, tpe)
         if getattr(self, "lrpc", None) is not None:
             y = self.forward_lrpc(x)
         else:
@@ -314,6 +317,77 @@ class YOLOESegment26(nn.Module):
             y = self.forward_text(x, tpe)
         proto = self.proto(x, return_semantic=False)
         return y, proto
+
+    def _resolve_tpe(self, tpe):
+        """训练/验证共用的 prompt 解析：显式 tpe > 缓存 _tpe；fused 后无需 tpe"""
+        if tpe is None:
+            tpe = getattr(self, "_tpe", None)
+        if tpe is None and not getattr(self, "is_fused", False):
+            raise ValueError(
+                "YOLOE text-mode training requires tpe (text prompt embeddings) — "
+                "call set_classes()/set_tpe() before training")
+        return tpe
+
+    def _forward_head_train(self, x, box_head, cls_head, cv4_head, cv5_head, tpe):
+        """训练口径单分支原始输出（scores 为 logits，boxes 为 ltrb 网格单位）
+
+        fused 后 cv3 尾卷积直接输出类别 logits（cv4 恒等）——传 cv4_head=None 跳过；
+        未 fused 时走 BNContrastiveHead(cv3 区域嵌入, tpe)，与 forward_text 同口径但
+        不 sigmoid、不做 E2E 解码（损失/分配器消费原始输出）。
+        """
+        bs = x[0].shape[0]
+        boxes = torch.cat(
+            [box_head[i](x[i]).reshape(bs, self.reg_max * 4, -1) for i in range(self.nl)], dim=-1)
+        if cv4_head is None:
+            scores = torch.cat(
+                [cls_head[i](x[i]).reshape(bs, self.nc, -1) for i in range(self.nl)], dim=-1)
+        else:
+            if tpe.shape[0] != bs:
+                tpe = tpe.expand(bs, -1, -1)
+            scores = torch.cat(
+                [cv4_head[i](cls_head[i](x[i]), tpe).reshape(bs, self.nc, -1)
+                 for i in range(self.nl)], dim=-1)
+        coeff = torch.cat(
+            [cv5_head[i](x[i]).reshape(bs, self.nm, -1) for i in range(self.nl)], dim=-1)
+        return {"boxes": boxes, "scores": scores, "mask_coefficient": coeff}
+
+    def _forward_train(self, x, tpe=None):
+        """训练模式：双分支原始输出 + 原型（契约同 Segment26._forward_train）
+
+        o2o 分支吃 detached 特征（梯度只经 o2m 回 o2m 头/backbone）；o2o 的 proto 同样
+        detach。pf 布局的训练尚未接入（词汇烘焙在 lrpc 中，无文本/PE 路径）——显式报错，
+        不静默走错分支。fused 文本布局（PE 线性探测的产物）cv4 已折叠进 cv3，tpe 可省。
+        """
+        if getattr(self, "lrpc", None) is not None:
+            raise NotImplementedError(
+                "YOLOE prompt-free layout does not support training; "
+                "train the text layout (prompt_free=false) instead")
+        tpe = self._resolve_tpe(tpe)
+        fused = getattr(self, "is_fused", False)
+        if not fused:
+            self.nc = tpe.shape[1]
+        cv4_o2m = None if fused else self.cv4
+        cv4_o2o = None if fused else self.one2one_cv4
+        o2m = self._forward_head_train(x, self.cv2, self.cv3, cv4_o2m, self.cv5, tpe)
+        x_detached = [feat.detach() for feat in x]
+        o2o = self._forward_head_train(
+            x_detached, self.one2one_cv2, self.one2one_cv3, cv4_o2o, self.one2one_cv5, tpe)
+        proto = self.proto(x, return_semantic=False)
+        o2m["proto"], o2o["proto"] = proto, proto.detach()
+        return {"one2many": o2m, "one2one": o2o}
+
+    def _e2e_postprocess(self, y, feats):
+        """E2E 解码（训练验证与 postprocess_val 共用）：ltrb -> xyxy -> 两阶段 top-k"""
+        anchors, strides = make_anchors(feats, self.stride, 0.5)
+        boxes = dist2bbox(y["boxes"], anchors.unsqueeze(0)) * strides
+        boxes = boxes.permute(0, 2, 1)
+        scores = y["scores"].permute(0, 2, 1).sigmoid()
+        extra = y["mask_coefficient"].permute(0, 2, 1) if "mask_coefficient" in y else None
+        return e2e_topk(boxes, scores, self.max_det, extra)
+
+    def postprocess_val(self, preds, feats):
+        """验证输出契约：每图 (M, 6+nm) [x1,y1,x2,y2,conf,cls,系数...] numpy"""
+        return list(self._e2e_postprocess(preds["one2one"], feats).detach().cpu().numpy())
 
     def set_tpe(self, tpe):
         """缓存文本提示嵌入（引擎 set_classes 调用）；前向未显式传 tpe 时使用"""
@@ -340,7 +414,8 @@ class YOLOESegment26(nn.Module):
                 fused = _fuse_conv_bn(conv, bn)
                 w = fused.weight.squeeze(-1).squeeze(-1)  # (embed, c3)
                 b = fused.bias  # (embed,)
-                new = nn.Conv2d(w.shape[1], t.shape[0], 1).requires_grad_(False)
+                new = nn.Conv2d(w.shape[1], t.shape[0], 1,
+                                device=w.device, dtype=w.dtype).requires_grad_(False)
                 new.weight.data.copy_((t @ w).unsqueeze(-1).unsqueeze(-1))
                 new.bias.data.copy_(t @ b + cv4h[i].bias)
                 cv3h[i][-1] = new

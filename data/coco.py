@@ -51,7 +51,8 @@ def parse_coco(ann_file, status_line=None):
 
 
 def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels=False,
-               build_segments=False, progress=False, progress_file=None, single_cls=False):
+               build_segments=False, progress=False, progress_file=None, single_cls=False,
+               build_cls_mask=False):
     """解析 ann json + 单趟扫描 -> ScanResult
 
     exists 检查 / crowd 剔除 / 逐图标签构造合并进同一个循环：本机 118k 图实测扫描段 ≈2.6s，
@@ -64,6 +65,9 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
     RLE segmentation 解码为轮廓多边形（计入 n_seg_rle）；RLE 损坏/缺失/非法多边形才退回
     bbox 矩形并计入 n_seg_fallback（全部 fallback 直接报错）。
     缺图（官方 train2017 图片集比标注少 1 张的兜底）从 images 中剔除并计数。
+    build_cls_mask=True 且 json 带 federated 字段（LVIS 的 `neg_category_ids`）时，为每图
+    生成 bool[nc] 分类有效掩码：正类（含 crowd）∪ `neg_category_ids` 为 True；
+    `not_exhaustive_category_ids` 及其他未标注类为 False（不参与分类 BCE 负样本）。
     """
     prefix = f"{label}:".ljust(7)  # `train: ` / `val:   ` 对齐
     mb = ann_file.stat().st_size / 2**20  # MiB（与预览口径一致，非 SI 十进制 MB）
@@ -73,6 +77,10 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
     parse_time = time.monotonic() - t0
 
     images = all_images[:limit] if limit else all_images
+    # federated 标注（LVIS）：每图带 neg_category_ids；COCO 的 instances json 没有该键
+    federated = build_cls_mask and bool(images) and "neg_category_ids" in images[0]
+    nc = len(names)
+    cls_masks = [] if federated else None
     # 时钟起点 = 解析开始：最终帧 elapsed 含解析，与 `└ ... parse Xs + scan Ys` 对得上
     bar = (ProgressBar(len(images), width=12, file=progress_file, pct=True, min_interval=0.25, start=t0)
            if progress else None)
@@ -84,7 +92,8 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
     cls_of = (lambda a: 0) if single_cls else (lambda a: cat_id_to_idx[a["category_id"]])
     first_missing = None
     for i, img in enumerate(images, 1):
-        anns = by_image.get(img["id"], [])
+        raw_anns = by_image.get(img["id"], [])
+        anns = raw_anns
         if not (img_dir / img["file_name"]).exists():
             n_missing += 1
             first_missing = first_missing or img["file_name"]
@@ -119,6 +128,22 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
                     labels.append(np.array(lbs, np.float32).reshape(-1, 5) if lbs else np.zeros((0, 5), np.float32))
                 n_instances += len(anns)
                 n_bg += not anns
+            if cls_masks is not None:
+                # 正类（含 crowd：对象存在，不能当负类）∪ 已验证负类 = 可参与 BCE 的类别；
+                # not_exhaustive 与未标注类保持 False（未知类，忽略而非当负样本）。
+                pos = {cls_of(a) for a in raw_anns}
+                valid = np.zeros(nc, bool)
+                for c in pos:
+                    valid[c] = True
+                for cid in img.get("neg_category_ids") or []:
+                    idx = cat_id_to_idx.get(cid)
+                    if idx is not None:
+                        valid[idx] = True
+                for cid in img.get("not_exhaustive_category_ids") or []:
+                    idx = cat_id_to_idx.get(cid)
+                    if idx is not None and idx not in pos:
+                        valid[idx] = False
+                cls_masks.append(valid)
             kept.append(img)
         if bar is not None and (i % stride == 0 or i == len(images)):
             speed = i / max(time.monotonic() - t_scan, 1e-6)
@@ -134,7 +159,7 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
             f"check the dataset descriptor / annotation format")
     stats = ScanStats(n_missing, n_bg, n_crowd, n_instances,
                       parse_time, time.monotonic() - t_scan, first_missing, n_seg_fallback, n_seg_rle)
-    return ScanResult(kept, labels, by_image, cat_id_to_idx, names, stats, segments)
+    return ScanResult(kept, labels, by_image, cat_id_to_idx, names, stats, segments, cls_masks)
 
 
 class CocoDataset:
@@ -297,9 +322,12 @@ class CocoTrainDataset(TrainMixin):
         # 解析 + 单趟扫描（存在的图 / 剔 crowd / 建标签 / 计数在同一个循环里，见 data/coco.py::scan_split）
         res = scan_split(self.ann_file, self.img_dir, label, limit=limit, drop_crowd=True,
                          build_labels=True, build_segments=segment,
-                         progress=progress, progress_file=progress_file, single_cls=self.single_cls)
+                         progress=progress, progress_file=progress_file, single_cls=self.single_cls,
+                         build_cls_mask=not self.single_cls)
         self.images, self.labels, self.cat_id_to_idx = res.images, res.labels, res.cat_id_to_idx
         self.segments = res.segments if segment else None
+        self.cls_masks = res.cls_masks  # federated 数据集（LVIS）的训练分类掩码；COCO 为 None
+        self.federated = self.cls_masks is not None
         self.names = {0: "item"} if self.single_cls else res.names
 
         self.n_instances = res.stats.n_instances
@@ -322,6 +350,14 @@ class CocoTrainDataset(TrainMixin):
     def image_id(self, idx):
         """COCO image_id（调试/可视化用）"""
         return self.images[idx]["id"]
+
+    def cls_valid_mask(self, idx):
+        """federated 训练掩码 (nc,) bool；COCO 等非 federated 数据集返回 None（行为不变）
+
+        federated 训练由 Trainer 自动关闭 mosaic/copy_paste/mixup/cutmix——掩码按单图构造，
+        跨图增强会把邻图正样本引入，而邻图类别对中心图通常是「未知」→ 会被错误屏蔽。
+        """
+        return None if self.cls_masks is None else self.cls_masks[idx]
 
     def load_image(self, idx):
         """(BGR img, labels 副本[, segments 副本])——mosaic/copy_paste/mixup 的邻图加载入口

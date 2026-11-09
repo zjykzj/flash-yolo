@@ -41,39 +41,56 @@ class PtEngine(BaseEngine):
             if prompt_free and not end2end:
                 raise ValueError("YOLOE prompt-free (lrpc) supports E2E only; use end2end=True "
                                  "(o2m+NMS is available for text-mode weights)")
-        self.model = build_model(model, scale, imgsz=self.imgsz,
-                                 nc=nc if nc is not None else meta.get("nc"), prompt_free=prompt_free)
+        # PE 融合产物（fused）：cv3 尾卷积已是 (c3 -> N) 的类锁定卷积，state_dict 里没有
+        # cv4/reprta；必须按 struct_nc 重建后再 fuse 出同构架构，strict load 才对得上。
+        fused = bool(meta.get("fused"))
+        # YOLOE 的结构 nc 以权重 metadata 为准（struct_nc > nc > 显式 nc）：文本布局的 c3
+        # 由 checkpoint 结构决定，数据集类数（nc 参数）不能参与建图。其余架构保持原回退。
+        if model == "yoloe-26":
+            build_nc = meta.get("struct_nc") or meta.get("nc") or nc
+        else:
+            build_nc = nc if nc is not None else meta.get("nc")
+        if model == "yoloe-26" and fused and not meta.get("nc"):
+            raise ValueError("fused YOLOE checkpoint metadata lacks `nc`; cannot rebuild the class-locked head")
+        self.model = build_model(model, scale, imgsz=self.imgsz, nc=build_nc, prompt_free=prompt_free)
         for key in apply_meta(self.model, meta):  # v3 anchors 随权重（yaml 为原版也能还原训练值）
             logger.info(f"weights metadata applied: {key}")
         head = self.model.model[-1]
         if hasattr(head, "end2end"):  # V3Detect 无此开关（前向即解码）
             head.end2end = end2end
+        if fused:
+            if getattr(head, "lrpc", None) is not None:
+                raise ValueError("fused metadata on a prompt-free (lrpc) checkpoint is invalid")
+            self.model.eval()
+            head.fuse_text(torch.zeros(1, int(meta["nc"]), head.embed))  # 只重建结构，值由 strict load 覆盖
         load_weights(self.model, weights, strict=True)
         self.model.to(self.device).eval()
         # yoloe 文本布局无 lrpc（pf 布局有）；其余架构恒 False
         self.text_mode = model == "yoloe-26" and getattr(head, "lrpc", None) is None
+        self.fused = fused  # PE 融合产物：类锁定，set_classes 会被拒绝
         self.weights_dir = str(Path(weights).resolve().parent)
         self._text_encoder = None  # 惰性构建（set_classes 时）
         self.visual_mode = False  # 当前缓存的是 visual prompt 嵌入（set_visual_*）
         self.visual_names = None
         self.mixed_mode = False  # 文本 + 视觉拼接（官方 get_cls_pe 顺序：文本在前）
-        self.prompt_names = None
+        self.prompt_names = meta.get("names") if fused else None  # 类锁定权重自带 prompt 名
         self._warmup()
 
     def _warmup(self):
         """预热：首次前向触发 CUDA kernel 编译，跑 3 次后计时才反映稳态性能（dummy 用实际输入尺寸）
 
         文本模式用 dummy tpe（(1,1,512) 零向量）预热前向，之后清空——predict 前
-        必须先 set_classes（head 无 tpe 时报错，语义清晰）。
+        必须先 set_classes（head 无 tpe 时报错，语义清晰）。fused（PE/类锁定）权重
+        不需要也不接受 tpe：它的 cv3 尾卷积直接出 logits，nc 已锁死。
         """
         dummy = torch.zeros(1, 3, self.imgsz, self.imgsz, device=self.device)
         head = self.model.model[-1]
         with torch.no_grad():
-            if self.text_mode:
+            if self.text_mode and not self.fused:
                 head.set_tpe(torch.zeros(1, 1, 512, device=self.device))
             for _ in range(3):
                 self.model(dummy)
-            if self.text_mode:
+            if self.text_mode and not self.fused:
                 head.set_tpe(None)
 
     def text_embeddings(self, texts, batch=80):
@@ -90,24 +107,12 @@ class PtEngine(BaseEngine):
         if getattr(head, "is_fused", False):
             raise ValueError("the model is class-locked (text embeddings fused); "
                              "it rejects new prompts — export a new one for different classes")
-        from model.text_encoder import load_mobileclip_text
-        from model.tokenizer import tokenize
+        from model.text_prompt import TEXT_ENCODER_FILENAME, encode_text_prompts, load_text_encoder, resolve_text_encoder
 
         if self._text_encoder is None:
-            enc_path = f"{self.weights_dir}/mobileclip2_b.safetensors"
-            if not Path(enc_path).is_file():
-                raise RuntimeError(
-                    f"text mode requires the MobileCLIP text encoder weights at {enc_path}")
-            self._text_encoder = load_mobileclip_text(enc_path).to(self.device).eval()
-        tokens = tokenize(list(texts)).to(self.device)
-        emb = []
-        for chunk in tokens.split(batch):  # 官方分块口径（默认 80）
-            # 逐 chunk detach：只切断 autograd 引用、不改数值；否则 16 个 chunk 的编码图
-            # 会同时保留（1203 prompt 实测峰值 ~22G）。
-            emb.append(self._text_encoder(chunk).detach())
-        emb = torch.cat(emb, dim=0).unsqueeze(0)  # (1, N, 512)
-        # 推理件：detach 只切断 autograd 引用、不改数值；避免缓存 _tpe 时长期持有编码图。
-        return head.get_tpe(emb).detach()
+            enc_path = resolve_text_encoder(explicit=Path(self.weights_dir) / TEXT_ENCODER_FILENAME)
+            self._text_encoder = load_text_encoder(enc_path, device=self.device)
+        return encode_text_prompts(head, list(texts), self._text_encoder, batch=batch)
 
     def set_classes(self, texts, batch=80):
         """文本模式：类名列表 -> 文本提示嵌入，缓存到 head（纯文本）"""

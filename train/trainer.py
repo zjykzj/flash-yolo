@@ -30,9 +30,10 @@ from data.build import build_eval_dataset, build_train_dataset
 from data.loader import collate_fn, seed_main_rng, worker_init_fn
 from data.scan import scan_summary
 from model.summary import summary_lines
-from model.weights import (arch_has_scale, encode_anchors, load_weights, load_weights_finetune,
+from model.text_prompt import (encode_text_prompts, load_text_encoder, resolve_text_encoder)
+from model.weights import (arch_has_scale, encode_anchors, load_meta, load_weights, load_weights_finetune,
                            provenance_meta)
-from model.build import ARCHS, YOLO26_FAMILY, arch_display_name, arch_task, build_model
+from model.build import ARCHS, YOLO26_FAMILY, YOLOE26_FAMILY, arch_display_name, arch_task, build_model
 from train.checkpoint import load_resume, save_best_last, save_periodic, save_resume
 from train.distributed import DistInfo, ddp_scale_loss, sync_barrier
 from train.ema import ModelEMA
@@ -106,6 +107,31 @@ def set_frozen_bn_eval(model, n):
                 m.eval()
 
 
+def set_all_bn_eval(model):
+    """全模型 BN 置 eval（PE 线性探测：除 6 个尾卷积外全部冻结，running stats 不得漂移）"""
+    for m in model.modules():
+        if isinstance(m, torch.nn.BatchNorm2d):
+            m.eval()
+
+
+def freeze_pe(model):
+    """PE 参数边界：全模型冻结，只解冻 cv3 / one2one_cv3 每级尾卷积
+
+    返回可训练张量数（weight + bias × 3 级 × 2 分支 = 12）。fuse_text 产出的尾卷积
+    默认 requires_grad=False，这里显式打开；其余参数（含 BN、reprta、proto）全部冻结。
+    """
+    for p in model.parameters():
+        p.requires_grad_(False)
+    head = model.model[-1]
+    n = 0
+    for cv3 in (head.cv3, head.one2one_cv3):
+        for i in range(head.nl):
+            for p in cv3[i][-1].parameters():
+                p.requires_grad_(True)
+                n += 1
+    return n
+
+
 class Trainer:
     """检测训练器（架构由 cfg.model 选择；--weights 初始化微调 / --resume 断点续训）"""
 
@@ -150,12 +176,34 @@ class Trainer:
         self._last_val_metrics = None  # 末次验证的 FastMetrics（训练结束画 PR/混淆矩阵）
         self._n_corrupt_seen = 0  # 惰性 corrupt 累计（每 epoch 读一次数据集里的共享计数）
 
+        self.pe = bool(cfg.pe)
+        if self.pe:
+            if cfg.model != "yoloe-26":
+                raise ValueError(f"PE linear probing is only supported for yoloe-26 (got {cfg.model!r})")
+            if not weights:
+                raise ValueError("PE linear probing requires --weights (a text-mode YOLOE checkpoint); "
+                                 "pass it together with --resume as well")
+            if cfg.freeze:
+                raise ValueError("PE freezes the whole model except the cv3 tails — --freeze cannot be combined")
+
         # ① 环境 + 超参快照：在建模型、解析数据集之前打印（启动白屏只剩 import 时间）
         self._print_env()
 
         if not arch_has_scale(cfg.model):  # 固定档位架构（yolov3-tiny = tiny）；--scale 不适用
             cfg.scale = ARCHS[cfg.model]["default_scale"]
-        model = build_model(cfg.model, cfg.scale, cfg.imgsz, nc=self.spec.nc,
+        # YOLOE 文本布局的结构 nc（c3 = max(ch[0], min(nc, 100))）：必须用权重产物的结构值
+        # （官方 = yaml 的 80），不能用数据集类数——否则 LVIS 1203 会把 c3 抬到 100、strict
+        # load 失败，或用 intersect 加载静默留下随机初始化的中间卷积。
+        struct_meta = load_meta(weights) if weights else {}
+        struct_nc = self.spec.nc
+        if cfg.model == "yoloe-26":
+            if struct_meta.get("fused"):
+                raise ValueError(f"{weights} is already class-locked (PE fused); start PE from an "
+                                 "unfused text-mode checkpoint, or continue this run with --resume")
+            meta_nc = struct_meta.get("struct_nc") or struct_meta.get("nc")
+            if meta_nc:
+                struct_nc = int(meta_nc)
+        model = build_model(cfg.model, cfg.scale, cfg.imgsz, nc=struct_nc,
                             cfg_path=cfg.cfg_path or None)
         if cfg.cfg_path:
             logger.info(f"model cfg: {cfg.cfg_path} (custom structure, not from the ARCHS registry)")
@@ -164,11 +212,21 @@ class Trainer:
             if skipped:
                 logger.info(f"weight init: {len(loaded)} tensors loaded · {len(skipped)} class-head "
                             f"tensors re-initialized ({skipped[0][1]} -> {skipped[0][2]})")
-        model.to(self.device).train()
-        if cfg.channels_last:  # NHWC 训练（在 EMA deepcopy 之前，副本继承布局）
-            model.to(memory_format=torch.channels_last)
+        model.to(self.device)
         self.model = model
         self.head = model.model[-1]
+        if cfg.model == "yoloe-26":
+            if getattr(self.head, "lrpc", None) is not None:
+                raise ValueError("YOLOE-26 prompt-free weights are inference-only; "
+                                 "train the text-mode checkpoint (prompt_mode=text)")
+            self.head.nc = self.spec.nc  # 活 nc = 数据集类数（PE 的 fuse_text 也会覆写为 prompt 数）
+        if self.pe:
+            self._setup_pe(model, weights, struct_nc)
+        if cfg.channels_last:  # NHWC 训练（在 EMA deepcopy 之前，副本继承布局）
+            model.to(memory_format=torch.channels_last)
+        model.train()
+        if self.pe:
+            set_all_bn_eval(model)  # 冻结 BN：running stats 不随训练漂移
         self._freeze_n = freeze_layers(model, cfg.freeze) if cfg.freeze else 0
         if self._freeze_n:
             logger.info(f"freeze: first {self._freeze_n} layer(s) frozen (BN stays in eval)")
@@ -182,6 +240,11 @@ class Trainer:
         }
         if hasattr(self.head, "anchors"):  # v3：固化模型实际使用的锚点（自定义重聚类后换 yaml 也能复现）
             self.weights_meta["anchors"] = encode_anchors(self.head.anchors)
+        if self.cfg.model == "yoloe-26":  # 结构 nc 与活 nc 解耦：前者用于重建，后者 = 数据集类数
+            self.weights_meta["struct_nc"] = struct_nc
+            self.weights_meta["prompt_mode"] = "text"
+        if self.pe:  # 融合训练产物：cv3 尾卷积已类锁定（读取侧需按 struct_nc 重建后再 fuse）
+            self.weights_meta.update({"pe": True, "fused": True})
 
         # ② 模型信息（逐层表 + 汇总；--weights 提示跟在模型段里）
         self._print_model_info(weights)
@@ -275,6 +338,36 @@ class Trainer:
 
         # DDP 包装放最后：模型/权重/resume/EMA/优化器/数据都已就绪，且 raw module 不被替换
         self._wrap_ddp()
+
+    def _setup_pe(self, model, weights, struct_nc):
+        """PE 线性探测：文本嵌入融合进 cv3 尾卷积 + 全模型冻结（仅 6 个尾卷积可训练）
+
+        官方 PE 口径：model.eval() -> get_text_pe(names) -> head.fuse(pe) -> 只解冻
+        cv3/one2one_cv3 的尾卷积。结构 nc 取权重的 struct_nc（官方 = 80），文本 prompt 数 =
+        数据集类数——LVIS 1203 类时 cv3 主体仍是官方 80 通道结构，只有尾卷积换成 1203 输出；
+        若按数据集类数建模型（官方做法 min(nc,80)），1203 会把 c3 抬到 100、中间卷积只能
+        随机初始化，LVIS 这类多类数据集上会凭空丢掉预训练权重。
+        """
+        head = model.model[-1]
+        if getattr(head, "is_fused", False):
+            raise ValueError("checkpoint is already fused (class-locked); PE expects an unfused "
+                             "text-mode checkpoint to fuse from")
+        texts = [self.spec.names[i] for i in range(self.spec.nc)]
+        enc_path = resolve_text_encoder(weights, self.cfg.text_encoder or None)
+        encoder = load_text_encoder(enc_path, device=self.device)
+        try:
+            tpe = encode_text_prompts(head, texts, encoder)
+        finally:  # 文本编码器只在融合前用一次：显存/内存不驻留
+            del encoder
+            if self.device.type == "cuda":
+                torch.cuda.empty_cache()
+        model.eval()  # fuse_text 断言 + BN 折叠用 running stats
+        head.fuse_text(tpe)
+        n = freeze_pe(model)
+        n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logger.info(f"PE: fused {len(texts)} class prompts into cv3 tails (struct nc {struct_nc}) · "
+                    f"trainable {n} tensors / {n_params:,} params · all other weights frozen")
+        model.train()
 
     def _wrap_ddp(self):
         """world_size>1 时包 DDP（构造是集合操作：各 rank 在这里对齐并广播初值）
@@ -468,7 +561,16 @@ class Trainer:
         self.dataset = build_train_dataset(self.cfg, self.data_spec, "train", augment=True,
                                            limit=self.cfg.limit, progress=self.is_main, task=self.task,
                                            single_cls=self.cfg.single_cls)
-        self._log_split("train", self.dataset)
+        federated = getattr(self.dataset, "federated", False)
+        self._log_split("train", self.dataset, extra=" · federated cls masks" if federated else "")
+        if federated:
+            # 掩码按中心图构造；mosaic/copy_paste 会把邻图正样本引入，而邻图类别对中心图
+            # 通常是「未知」→ 被掩码屏蔽，等于白丢正样本。federated 训练改为单图增强。
+            for key in ("mosaic", "mixup", "cutmix", "copy_paste"):
+                setattr(self.cfg, key, 0.0)
+            logger.info(f"federated: per-image valid-class masks enabled ({len(self.dataset.names)} classes) "
+                        f"— unlabeled / not-exhaustive classes are ignored by the cls loss; "
+                        f"mosaic/mixup/cutmix/copy_paste disabled to keep neighbor labels in-mask")
         if self.val_enabled and self.is_main:  # DDP：val 只在 rank0 构建（指标不因卡数改变）
             self.val_dataset = build_eval_dataset(self.data_spec, "val", progress=True, task=self.task,
                                                   single_cls=self.cfg.single_cls)
@@ -519,9 +621,12 @@ class Trainer:
         logger.info(f"lr: warmup {self.cfg.warmup_epochs}ep -> {sched} "
                     f"{self.cfg.lr0} -> {lr_end:.6f} · "
                     f"close_mosaic last {self.close_mosaic} epochs (from epoch {close_epoch}{scale_note})")
-        if self.cfg.model in YOLO26_FAMILY:
-            seg = (f" · seg BCE (gain {self.cfg.box_gain}) · sem BCE-Dice (gain {self.cfg.box_gain})"
-                   if self.task == "segment" else "")
+        if self.cfg.model in YOLO26_FAMILY | YOLOE26_FAMILY:
+            if self.pe:  # PE 只训 cv3 尾卷积：mask/proto 分支冻结，损失只有检测三项
+                seg = " · PE linear probe (mask/proto frozen, detection loss only)"
+            else:
+                seg = (f" · seg BCE (gain {self.cfg.box_gain}) · sem BCE-Dice (gain {self.cfg.box_gain})"
+                       if self.task == "segment" else "")
             logger.info(f"loss: box {self.cfg.box_gain} CIoU · cls {self.cfg.cls_gain} BCE · "
                         f"l1 {self.cfg.dfl_gain}{seg} · "
                         f"EMA {self.cfg.ema_decay} (tau {self.cfg.ema_tau})")
@@ -604,6 +709,8 @@ class Trainer:
             self.model.train()
             if self._freeze_n:  # model.train() 会把冻结层 BN 重新置为 train，逐轮重放
                 set_frozen_bn_eval(self.model, self._freeze_n)
+            if self.pe:  # PE：全模型冻结，BN 不得更新 running stats / 用批统计
+                set_all_bn_eval(self.model)
             self._opt_step = 0  # 诊断行按优化步计数（accum 边界对齐）
 
             dl = self._dataloader(epoch)
@@ -618,10 +725,19 @@ class Trainer:
             lr_last = 0.0
 
             for bi, batch in enumerate(dl):
+                # 批次形状：检测 (imgs, targets)、分割 (+masks)；federated（LVIS）末尾多一项
+                # cls_mask (B,nc) bool（collate 见 data/loader.py）。
+                cls_mask = None
                 if self.task == "segment":
-                    imgs, targets, masks = batch
+                    if len(batch) == 4:
+                        imgs, targets, masks, cls_mask = batch
+                    else:
+                        imgs, targets, masks = batch
                 else:
-                    imgs, targets = batch
+                    if len(batch) == 3:
+                        imgs, targets, cls_mask = batch
+                    else:
+                        imgs, targets = batch
                     masks = None
                 t = epoch + bi / max(n_batch - 1, 1)
                 # warmup 由 set_epoch_lr 按组施加：非 bias 0 爬升；bias 从 warmup_bias_lr 下降
@@ -643,6 +759,8 @@ class Trainer:
                 targets = targets.to(self.device)
                 if masks is not None:
                     masks = masks.to(self.device)  # 掩码保持整数 dtype（不做多尺度缩放）
+                if cls_mask is not None:
+                    cls_mask = cls_mask.to(self.device)
                 # 多尺度：每 batch 在 imgsz×(1±r) 内换输入尺寸；targets 是 letterbox 像素坐标
                 # （loader 口径，两家 loss 共用），画布为正方形 → 坐标随尺寸等比缩放。
                 # 分割 GT 掩码固定在 base imgsz/mask_ratio 网格；loss 侧把 proto 插值到该网格。
@@ -665,9 +783,11 @@ class Trainer:
                                         enabled=self.cfg.amp and self.device.type == "cuda"):
                         preds = forward_model(imgs)
                         if self.task == "segment":
-                            loss, items = self.loss_fn(preds, targets, imgs.shape[0], imgsz, masks=masks)
+                            loss, items = self.loss_fn(preds, targets, imgs.shape[0], imgsz,
+                                                       masks=masks, cls_mask=cls_mask)
                         else:
-                            loss, items = self.loss_fn(preds, targets, imgs.shape[0], imgsz)
+                            loss, items = self.loss_fn(preds, targets, imgs.shape[0], imgsz,
+                                                       cls_mask=cls_mask)
                     # preds 诊断按 10 步窗口取样：每次 8 个 isfinite+bool 转换（同步）≈ 1.2ms，
                     # NaN 检出延迟 ≤10 步（loss 本身的有限性检查仍每步执行）；两种 head 输出形态走同一枚举
                     preds_bad = ((bi + 1) % 10 == 0 or bi == n_batch - 1) and any(

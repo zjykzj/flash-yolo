@@ -296,13 +296,21 @@ def main():
         parser.error("--visual-prompt requires yoloe-26 text-mode weights")
     visual_prompt_data = None
     text_prompt_names = None
+    if meta.get("fused") and (args.classes or args.visual_prompt):
+        parser.error("this checkpoint is class-locked (PE fused) — run infer without "
+                     "--classes/--visual-prompt; its prompt names travel in metadata")
     if arch in YOLOE26_FAMILY:
         pm = prompt_mode
         if pm == "text":
             locked_names = meta.get("names")
             text_prompt_names = ([c.strip() for c in args.classes.split(",")]
                                  if args.classes else None)
-            if args.visual_prompt:
+            if meta.get("fused"):
+                if not locked_names:
+                    parser.error("class-locked (PE fused) checkpoint has no 'names' metadata — "
+                                 "re-save it with the training metadata")
+                names = {i: n for i, n in enumerate(locked_names)}
+            elif args.visual_prompt:
                 if args.engine != "pt":
                     parser.error("--visual-prompt requires --engine pt (visual prompts run through SAVPE)")
                 from utils.visual_prompt import load_visual_prompt
@@ -343,7 +351,8 @@ def main():
                 names = {i: n for i, n in enumerate(locked_names)}
             if args.data:
                 source = ("visual/mixed prompts" if args.visual_prompt
-                          else ("--classes" if args.engine == "pt" else "the class-locked export metadata"))
+                          else ("the class-locked checkpoint metadata" if meta.get("fused")
+                                else ("--classes" if args.engine == "pt" else "the class-locked export metadata")))
                 logger.warning(f"--data is ignored for yoloe-26 text mode: class names come from {source}")
             nc = None
         else:  # pf：词汇即权重，名字必须来自烘焙词汇，--data/COCO 名不适用
@@ -415,7 +424,12 @@ def main():
     engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
     if arch in YOLOE26_FAMILY and prompt_mode == "text":
-        if args.visual_prompt and text_prompt_names:
+        if getattr(engine, "fused", False):  # PE 融合产物：类别已锁定，不再接受新 prompt
+            if args.classes or args.visual_prompt:
+                parser.error("this checkpoint is class-locked (PE fused) — run infer without "
+                             "--classes/--visual-prompt; its prompt names travel in metadata")
+            mode = ("E2E " if end2end else "o2m+NMS ") + "fused text prompts (class-locked)"
+        elif args.visual_prompt and text_prompt_names:
             engine.set_mixed_prompts(text_prompt_names, *visual_prompt_data)
             mode = "E2E (text + visual prompts)" if end2end else "o2m+NMS (text + visual prompts)"
         elif args.visual_prompt:

@@ -17,8 +17,10 @@ ScanStats = namedtuple("ScanStats", "n_missing n_backgrounds n_crowd_excluded "
                        defaults=(0,))
 
 # 扫描结果：labels 仅训练侧非 None（build_labels=True / YOLO 训练集恒建）；
-# segments 仅分割训练侧非 None（build_segments=True）
-ScanResult = namedtuple("ScanResult", "images labels annotations cat_id_to_idx names stats segments",
+# segments 仅分割训练侧非 None（build_segments=True）；
+# cls_masks 仅 federated 数据集（LVIS：每图带 neg_category_ids）训练侧非 None，
+# 布尔 (nc,) 掩码标记「可参与分类损失」的类别（正类 ∪ 已验证负类）
+ScanResult = namedtuple("ScanResult", "images labels annotations cat_id_to_idx names stats segments cls_masks",
                         defaults=(None,))
 
 

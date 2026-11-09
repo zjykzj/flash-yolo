@@ -137,42 +137,65 @@ def main():
         prompt_free = True if pm == "pf" else (False if pm == "text" else None)
         if pm == "text":
             text_mode = True
-            if args.classes:
-                text_classes = [c.strip() for c in args.classes.split(",")]
-            if args.visual_prompt:
-                from utils.visual_prompt import load_visual_prompt
-
-                try:
-                    refer_image, visual_names, visual_prompts = load_visual_prompt(args.visual_prompt)
-                except ValueError as e:
-                    parser.error(str(e))
-                if text_classes:
-                    dup = sorted(set(text_classes) & set(visual_names))
-                    if dup:
-                        parser.error(f"text and visual prompts share class names: {dup[:5]} — "
-                                     "rename one side or use a single prompt mode")
-                    locked_classes = text_classes + visual_names
-                else:
-                    locked_classes = visual_names
+            if meta.get("fused"):
+                if args.classes or args.visual_prompt:
+                    parser.error("this checkpoint is already class-locked (PE fused) — export it "
+                                 "without --classes/--visual-prompt; its prompt names travel in metadata")
             else:
-                if not text_classes:
-                    parser.error("yoloe-26 text-mode export requires --classes or --visual-prompt "
-                                 '(e.g. --classes "person, bicycle")')
-                locked_classes = text_classes
+                if args.classes:
+                    text_classes = [c.strip() for c in args.classes.split(",")]
+                if args.visual_prompt:
+                    from utils.visual_prompt import load_visual_prompt
+
+                    try:
+                        refer_image, visual_names, visual_prompts = load_visual_prompt(args.visual_prompt)
+                    except ValueError as e:
+                        parser.error(str(e))
+                    if text_classes:
+                        dup = sorted(set(text_classes) & set(visual_names))
+                        if dup:
+                            parser.error(f"text and visual prompts share class names: {dup[:5]} — "
+                                         "rename one side or use a single prompt mode")
+                        locked_classes = text_classes + visual_names
+                    else:
+                        locked_classes = visual_names
+                else:
+                    if not text_classes:
+                        parser.error("yoloe-26 text-mode export requires --classes or --visual-prompt "
+                                     '(e.g. --classes "person, bicycle")')
+                    locked_classes = text_classes
     if args.visual_prompt and not text_mode:
         parser.error("--visual-prompt requires yoloe-26 text-mode weights")
     if args.nms and not text_mode:
         parser.error("--nms export is only supported for yoloe-26 text mode "
                      "(prompt-free is E2E only; yolo26 uses --raw)")
-    model = build_model(arch, scale, nc=nc, prompt_free=prompt_free)
+    # PE 融合产物：state_dict 是类锁定后的形状（cv3 尾卷积 (c3 -> N)、无 cv4/reprta），
+    # 必须按 struct_nc 重建后再 fuse 出同构架构，strict load 才对得上。
+    fused = bool(meta.get("fused"))
+    struct_nc = meta.get("struct_nc") or nc
+    model = build_model(arch, scale, nc=struct_nc, prompt_free=prompt_free)
+    model.eval()
+    if fused:
+        if not text_mode:
+            parser.error("fused metadata requires yoloe-26 text-mode weights")
+        if args.classes or args.visual_prompt:
+            parser.error("this checkpoint is already class-locked (PE fused) — export it without "
+                         "--classes/--visual-prompt; its prompt names travel in metadata")
+        head = model.model[-1]
+        head.fuse_text(torch.zeros(1, int(meta["nc"]), head.embed))  # 只重建结构，值由 strict load 覆盖
     load_weights(model, args.weights, strict=True)
     head = model.model[-1]
     if hasattr(head, "end2end"):  # V3Detect 无此开关（前向即解码）
         head.end2end = not (args.raw or args.nms)
     if hasattr(head, "export"):  # yoloe：export 标志 -> conf=0 静态路径（提案过滤全锚点通过，官方口径）
         head.export = True
-    model.eval()
-    if text_mode:
+    if text_mode and fused:
+        locked_classes = list(meta.get("names") or [])
+        if len(locked_classes) != int(meta["nc"]):
+            parser.error(f"fused metadata names ({len(locked_classes)}) != nc ({meta['nc']}) — "
+                         "corrupted checkpoint metadata")
+        logger.info(f"prompts already fused: {len(locked_classes)} classes (class-locked checkpoint)")
+    elif text_mode:
         vpe = tpe = None
         if args.visual_prompt:
             # 官方视觉 prompt 口径：refer 图三尺度特征 + 1/8 掩码（bbox/mask）-> SAVPE vpe

@@ -213,88 +213,103 @@ def main():
         engine = engine_cls(args.weights, **kwargs)
     imgsz = engine.imgsz  # onnx 以图内固定 shape 为准（pt = 上面的解析结果）
     if text_mode:
-        text_classes = [c.strip() for c in args.classes.split(",")] if args.classes else None
-        if visual_mode:
-            names = list(spec.names.values())
-            idx = {n: i for i, n in enumerate(names)}
-            full = None
-            if args.visual_prompt:
-                from utils.visual_prompt import load_visual_prompt
-
-                try:
-                    refer_path, vis_names, visual_prompts = load_visual_prompt(args.visual_prompt)
-                except ValueError as e:
-                    parser.error(str(e))
-                if text_classes:
-                    dup = sorted(set(text_classes) & set(vis_names))
-                    if dup:
-                        parser.error(f"text and visual prompts share class names: {dup[:5]} — "
-                                     "rename one side or use a single prompt mode")
-                ref = Path(refer_path)
-                if not ref.is_absolute():  # 相对路径按 JSON 所在目录解析
-                    ref = Path(args.visual_prompt).resolve().parent / ref
-                image = cv2.imread(str(ref))
-                if image is None:
-                    parser.error(f"cannot read visual prompt refer image: {ref}")
-                vpe = engine.visual_embeddings(image, vis_names, visual_prompts)
-                full = torch.zeros(1, len(names), vpe.shape[-1], device=engine.device)
-                if text_classes:
-                    tpe = engine.text_embeddings(text_classes)
-                    for q, n in enumerate(text_classes):
-                        if n in idx:
-                            full[0, idx[n]] = tpe[0, q]
-                    missing_text = [n for n in text_classes if n not in idx]
-                    if missing_text:
-                        logger.warning(f"text prompt classes not in the dataset (ignored): {missing_text[:10]}")
-                missing = [n for n in vis_names if n not in idx]
-                for q, n in enumerate(vis_names):
-                    if n in idx:
-                        full[0, idx[n]] = vpe[0, q]
-                engine.set_visual_embeddings(full)
-                if missing:
-                    logger.warning(f"visual prompt classes not in the dataset (ignored): {missing[:10]}")
-                uncovered = [n for i, n in enumerate(names) if not torch.any(full[0, i])]
-                kind = "text + visual prompts" if text_classes else "visual prompts"
-                mode = (("E2E " if end2end else "o2m+NMS ") + kind
-                        + f" (refer: {Path(args.visual_prompt).name})")
-            else:
-                from utils.visual_prompt import collect_visual_embeddings
-
-                refer_spec = load_dataset(args.refer_data)
-                refer_ds = build_eval_dataset(refer_spec, args.refer_split, progress=True,
-                                              task=arch_task(arch))
-                vpe, missing = collect_visual_embeddings(
-                    engine.model, refer_ds, names, engine.imgsz, engine.device, args.refer_limit)
-                engine.set_visual_embeddings(vpe)
-                if missing:
-                    logger.warning(f"refer classes not in the dataset (ignored): {missing[:10]}")
-                uncovered = [n for i, n in enumerate(names) if not torch.any(vpe[0, i])]
-                mode = (("E2E visual prompts" if end2end else "o2m+NMS visual prompts")
-                        + f" (refer: {args.refer_data})")
-            if uncovered:
-                logger.warning(f"dataset classes without visual/text prompts ({len(uncovered)}): "
-                               f"{uncovered[:10]} — they get zero embeddings (AP 0)")
-        elif text_classes:
-            # 纯文本子集：只给指定类别文本嵌入，其余类别零嵌入（AP 0）
-            names = list(spec.names.values())
-            idx = {n: i for i, n in enumerate(names)}
-            tpe = engine.text_embeddings(text_classes)
-            full = torch.zeros(1, len(names), tpe.shape[-1], device=engine.device)
-            for q, n in enumerate(text_classes):
-                if n in idx:
-                    full[0, idx[n]] = tpe[0, q]
-            engine.set_visual_embeddings(full)
-            uncovered = [n for i, n in enumerate(names) if not torch.any(full[0, i])]
-            if uncovered:
-                logger.warning(f"dataset classes without text prompts ({len(uncovered)}): "
-                               f"{uncovered[:10]} — they get zero embeddings (AP 0)")
-            mode = ("E2E (text prompts, subset)" if end2end else "o2m+NMS (text prompts, subset)")
+        locked_ckpt = getattr(engine, "fused", False)  # PE 线性探测产物：类已锁定、不再接受 prompt
+        if locked_ckpt:
+            if args.classes or visual_mode:
+                parser.error("this checkpoint is class-locked (PE fused) — evaluate it without "
+                             "--classes/--visual-prompt/--refer-data; the class names travel in metadata")
+            locked_names = engine.prompt_names or []
+            if not locked_names:
+                parser.error("class-locked (PE fused) checkpoint has no 'names' metadata — "
+                             "re-save it with the training metadata")
+            dataset_names = list(spec.names.values())
+            if locked_names != dataset_names:
+                parser.error(f"locked prompt names ({len(locked_names)}) differ from the dataset names "
+                             f"({len(dataset_names)}) — evaluate on the same descriptor the model was trained on")
+            mode = ("E2E " if end2end else "o2m+NMS ") + "fused text prompts (class-locked)"
         else:
-            locked = args.engine != "pt"
-            if not locked:
-                engine.set_classes(list(spec.names.values()))
-            kind = "class-locked prompts" if locked else "text prompts"
-            mode = ("E2E (" if end2end else "o2m+NMS (") + kind + ")"
+            text_classes = [c.strip() for c in args.classes.split(",")] if args.classes else None
+            if visual_mode:
+                names = list(spec.names.values())
+                idx = {n: i for i, n in enumerate(names)}
+                full = None
+                if args.visual_prompt:
+                    from utils.visual_prompt import load_visual_prompt
+
+                    try:
+                        refer_path, vis_names, visual_prompts = load_visual_prompt(args.visual_prompt)
+                    except ValueError as e:
+                        parser.error(str(e))
+                    if text_classes:
+                        dup = sorted(set(text_classes) & set(vis_names))
+                        if dup:
+                            parser.error(f"text and visual prompts share class names: {dup[:5]} — "
+                                         "rename one side or use a single prompt mode")
+                    ref = Path(refer_path)
+                    if not ref.is_absolute():  # 相对路径按 JSON 所在目录解析
+                        ref = Path(args.visual_prompt).resolve().parent / ref
+                    image = cv2.imread(str(ref))
+                    if image is None:
+                        parser.error(f"cannot read visual prompt refer image: {ref}")
+                    vpe = engine.visual_embeddings(image, vis_names, visual_prompts)
+                    full = torch.zeros(1, len(names), vpe.shape[-1], device=engine.device)
+                    if text_classes:
+                        tpe = engine.text_embeddings(text_classes)
+                        for q, n in enumerate(text_classes):
+                            if n in idx:
+                                full[0, idx[n]] = tpe[0, q]
+                        missing_text = [n for n in text_classes if n not in idx]
+                        if missing_text:
+                            logger.warning(f"text prompt classes not in the dataset (ignored): {missing_text[:10]}")
+                    missing = [n for n in vis_names if n not in idx]
+                    for q, n in enumerate(vis_names):
+                        if n in idx:
+                            full[0, idx[n]] = vpe[0, q]
+                    engine.set_visual_embeddings(full)
+                    if missing:
+                        logger.warning(f"visual prompt classes not in the dataset (ignored): {missing[:10]}")
+                    uncovered = [n for i, n in enumerate(names) if not torch.any(full[0, i])]
+                    kind = "text + visual prompts" if text_classes else "visual prompts"
+                    mode = (("E2E " if end2end else "o2m+NMS ") + kind
+                            + f" (refer: {Path(args.visual_prompt).name})")
+                else:
+                    from utils.visual_prompt import collect_visual_embeddings
+
+                    refer_spec = load_dataset(args.refer_data)
+                    refer_ds = build_eval_dataset(refer_spec, args.refer_split, progress=True,
+                                                  task=arch_task(arch))
+                    vpe, missing = collect_visual_embeddings(
+                        engine.model, refer_ds, names, engine.imgsz, engine.device, args.refer_limit)
+                    engine.set_visual_embeddings(vpe)
+                    if missing:
+                        logger.warning(f"refer classes not in the dataset (ignored): {missing[:10]}")
+                    uncovered = [n for i, n in enumerate(names) if not torch.any(vpe[0, i])]
+                    mode = (("E2E visual prompts" if end2end else "o2m+NMS visual prompts")
+                            + f" (refer: {args.refer_data})")
+                if uncovered:
+                    logger.warning(f"dataset classes without visual/text prompts ({len(uncovered)}): "
+                                   f"{uncovered[:10]} — they get zero embeddings (AP 0)")
+            elif text_classes:
+                # 纯文本子集：只给指定类别文本嵌入，其余类别零嵌入（AP 0）
+                names = list(spec.names.values())
+                idx = {n: i for i, n in enumerate(names)}
+                tpe = engine.text_embeddings(text_classes)
+                full = torch.zeros(1, len(names), tpe.shape[-1], device=engine.device)
+                for q, n in enumerate(text_classes):
+                    if n in idx:
+                        full[0, idx[n]] = tpe[0, q]
+                engine.set_visual_embeddings(full)
+                uncovered = [n for i, n in enumerate(names) if not torch.any(full[0, i])]
+                if uncovered:
+                    logger.warning(f"dataset classes without text prompts ({len(uncovered)}): "
+                                   f"{uncovered[:10]} — they get zero embeddings (AP 0)")
+                mode = ("E2E (text prompts, subset)" if end2end else "o2m+NMS (text prompts, subset)")
+            else:
+                locked = args.engine != "pt"
+                if not locked:
+                    engine.set_classes(list(spec.names.values()))
+                kind = "class-locked prompts" if locked else "text prompts"
+                mode = ("E2E (" if end2end else "o2m+NMS (") + kind + ")"
     elif arch in YOLOE26_FAMILY:
         mode = "E2E (prompt-free)"
     elif arch in YOLO26_FAMILY:

@@ -31,8 +31,9 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
   `--nms` is text-mode only (o2m + NMS; pf stays E2E, see yoloe.md). Text mode additionally
   needs `mobileclip2_b.safetensors` (the converted Apple MobileCLIP2-B text encoder) next to
   the model weights.
-- `yoloe-26` currently covers inference / evaluation / export only; training is not wired in
-  (the training loss dispatch has no entry for this architecture).
+- `yoloe-26` training covers PE linear probing (`--pe --weights <text checkpoint>`: only the
+  cv3 tails train, backbone/BN/mask branch stay frozen); full finetuning and from-scratch
+  training are not wired. The class-locked output can be evaluated/exported directly.
 - Structures live in `config/models/<model>.yaml`; `--cfg` can point at a custom yaml (custom
   variants).
 - From-scratch weight download links point to the **latest release** assets (the v1.0.0

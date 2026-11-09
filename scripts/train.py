@@ -8,6 +8,8 @@
     python scripts/train.py --resume runs/train/trainN/resume.pt                  # 断点续训
     python scripts/train.py --data coco --device 0,1 --batch 64                   # 2 卡 DDP（batch 为全局值）
     torchrun --standalone --nproc_per_node=2 scripts/train.py --data coco ...     # torchrun 入口
+    python scripts/train.py --data coco --model yoloe-26 --pe --weights yoloe-26n-seg.safetensors
+                                                                                  # YOLOE PE 线性探测
 """
 
 import argparse
@@ -96,6 +98,12 @@ def _build_parser():
     parser.add_argument("--obj-iou-target", dest="obj_iou_target", action=argparse.BooleanOptionalAction, default=None,
                         help="v3 IoU-aware objectness: positive obj target = IoU(pred, matched GT) with 5x "
                              "positive weight (default: yaml `obj_iou_target`, false = darknet hard 0/1)")
+    parser.add_argument("--pe", action=argparse.BooleanOptionalAction, default=None,
+                        help="YOLOE-26 text-mode PE linear probing: fuse class-name text embeddings into the "
+                             "cv3 tails and train only those 6 convolutions (requires --weights; default: false)")
+    parser.add_argument("--text-encoder", dest="text_encoder", default=None,
+                        help="MobileCLIP2-B text encoder .safetensors for --pe "
+                             "(default: mobileclip2_b.safetensors next to --weights)")
     parser.add_argument("--overlap-mask", dest="overlap_mask", action=argparse.BooleanOptionalAction, default=None,
                         help="segmentation GT masks: one per-image instance index map (default: yaml `overlap_mask`, "
                              "true; --no-overlap-mask = one binary mask per instance)")
@@ -220,6 +228,15 @@ def _train(args, parser, info):
     except (ValueError, FileNotFoundError) as e:
         parser.error(str(e))
     apply_cli(cfg, args)
+    if cfg.model == "yoloe-26" and not cfg.pe:
+        parser.error("--model yoloe-26 training requires --pe (PE linear probing); "
+                     "full YOLOE fine-tuning is not wired yet")
+    if cfg.pe:
+        if not args.weights:
+            parser.error("--pe requires --weights (a text-mode YOLOE checkpoint); "
+                         "pass it together with --resume as well")
+        if cfg.freeze:
+            parser.error("--pe freezes every layer except the cv3 tails — --freeze cannot be combined")
     if arch_task(cfg.model) == "segment":
         if cfg.mask_ratio < 1 or cfg.imgsz % cfg.mask_ratio:
             parser.error(f"--mask-ratio must be >=1 and divide --imgsz (got {cfg.mask_ratio} / {cfg.imgsz})")
@@ -256,6 +273,7 @@ def _train(args, parser, info):
                workers=cfg.workers, seed=cfg.seed,
                **(dict(mask_ratio=cfg.mask_ratio, overlap_mask=cfg.overlap_mask)
                   if arch_task(cfg.model) == "segment" else {}),
+               **(dict(pe=True, text_encoder=cfg.text_encoder or "next to weights") if cfg.pe else {}),
                # 单卡首行保持逐字符不变：DDP 才追加设备/规模
                **(dict(device=args.device, world_size=info.world_size) if info.enabled else {}))
     # 启动信息块由 Trainer 按构建时机分段打印（环境 -> 模型 -> 数据集 -> 组件 -> 起跑），见 train/trainer.py

@@ -357,3 +357,29 @@ def test_worker_init_survives_fork_after_parent_cv2_use():
                     "cv2.setNumThreads（OpenCV pthreads 池非 fork 安全，见 data/loader.py 顶部注释）")
     finally:
         cv2.setNumThreads(prev_cv)
+
+
+def test_federated_cls_mask(tmp_path):
+    """federated（LVIS）分类掩码：正类 ∪ 已验证负类参与 BCE；未知/not-exhaustive 类忽略
+
+    crowd 标注也算“对象存在”（类别有效），不会被当成负类；COCO 数据集无该字段时返回 None，
+    批次形状保持历史契约（见 test_collate）。
+    """
+    data_dir = _make_fixture(tmp_path)
+    p = data_dir / "annotations" / "instances_train2017.json"
+    d = json.loads(p.read_text())
+    # images: a(1) b(2) c(3)；categories: 1 cat / 3 dog
+    d["images"][0].update({"neg_category_ids": [3], "not_exhaustive_category_ids": []})
+    d["images"][1].update({"neg_category_ids": [], "not_exhaustive_category_ids": [1]})
+    d["images"][2].update({"neg_category_ids": [1], "not_exhaustive_category_ids": [3]})
+    p.write_text(json.dumps(d))
+
+    ds = build_train_dataset(TrainConfig(), _descriptor(data_dir, tmp_path), "train", augment=False)
+    assert ds.federated and ds.cls_masks is not None
+    assert ds.cls_masks[0].tolist() == [True, True]    # cat 正类 + dog crowd/已验证负类
+    assert ds.cls_masks[1].tolist() == [False, True]   # dog 正类；cat not-exhaustive
+    assert ds.cls_masks[2].tolist() == [True, False]   # cat 已验证负类；dog not-exhaustive
+    imgs, targets, cls_mask = collate_fn([ds[0], ds[1], ds[2]])
+    assert imgs.shape[0] == 3 and cls_mask.dtype == torch.bool and cls_mask.shape == (3, 2)
+    assert cls_mask.tolist() == [m.tolist() for m in ds.cls_masks]
+    print("  federated 掩码与 collate 正确")

@@ -150,7 +150,35 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco \
     --classes "bicycle" --visual-prompt prompt.json
 python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
     --classes "bicycle" --visual-prompt prompt.json --out weights/yoloe-26n-mixed.onnx
+
+# ---- PE linear probing (text mode; needs the official text checkpoint + mobileclip2_b) ----
+# Dataset class names are the text prompts: the embeddings are fused into the cv3 tails and
+# only those six convolutions train; backbone / neck / BN / mask branch / proto stay frozen.
+# --text-encoder overrides the MobileCLIP2-B path.
+python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
+    --weights weights/yoloe-26n-seg.safetensors \
+    --epochs 10 --batch 32 --imgsz 640 --lr0 0.1
+
+# LVIS (federated masks turn on automatically; cross-image augmentation is disabled; lr0=0.01)
+python scripts/train.py --data lvis --model yoloe-26 --scale n --pe \
+    --weights weights/yoloe-26n-seg.safetensors \
+    --epochs 10 --batch 16 --imgsz 640 --lr0 0.01
+
+# The output is class-locked (metadata: pe/fused/struct_nc/names); eval/export/infer consume it directly
+python scripts/eval.py --weights runs/train/train-yoloe-pe-coco/weights/best.safetensors --data coco
+python scripts/export.py --weights runs/train/train-yoloe-pe-coco/weights/best.safetensors \
+    --out weights/yoloe-26n-coco-pe.onnx
 ```
+
+- PE training accepts text-mode weights only (prompt-free is rejected, and `--model yoloe-26`
+  without `--pe` errors out); the structural nc comes from the weight metadata (80 for the
+  official checkpoints), while the prompt count is the dataset class count, so LVIS's 1,203
+  classes do not change the cv3 body. `--freeze` cannot be combined with `--pe`, and the fused
+  output is class-locked: passing `--classes` / `--visual-prompt` to eval/infer/export errors.
+  PE `--resume` must also pass `--weights` (the original text checkpoint rebuilds the fused
+  structure; `resume.pt` then restores the state). Suggested lr0: 0.1 for COCO's 80 classes,
+  0.01 for LVIS's 1,203 classes (federated class masks turn on automatically; mosaic and the
+  other cross-image augmentations are disabled for federated data).
 
 - `--model/--scale` are inferred from the filename (`yoloe-26n-seg-pf` → yoloe-26 / n);
   `--raw` errors out (the pf raw output's column count varies with the proposal filter);
@@ -239,8 +267,10 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
   bit-parity / vocabulary mapping / export parity / text-mode parity / fuse equivalence /
   class-locked consumption / Non-E2E / visual prompts incl. masks and mixed),
   `tests/test_visual_prompt.py` (JSON contract / 1/8 rasterization / refer aggregation),
-  `tests/test_text_encoder.py` (encoder structure + ts bit-parity, tokenizer goldens) and
-  `tests/test_yoloe_trt.py` (engine acceptance, gated by `FLASH_YOLO_TRT=1`).
+  `tests/test_text_encoder.py` (encoder structure + ts bit-parity, tokenizer goldens),
+  `tests/test_yoloe_train.py` (training forward contract / fused-vs-unfused numerics / PE
+  parameter boundary / fused checkpoint rebuild) and `tests/test_yoloe_trt.py` (engine
+  acceptance, gated by `FLASH_YOLO_TRT=1`).
 
 ### Cross-implementation check (LVIS minival / COCO val2017)
 
@@ -274,6 +304,39 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
   gap to 24.7 is the paper's detection configuration vs the released segmentation checkpoint.
 - LVIS maxDets 100 and 300 give identical results on minival; COCO uses the standard maxDets=100.
 
+### PE linear probing (COCO val2017)
+
+Starting from the official `yoloe-26n-seg` text checkpoint, `fuse_text` + only the six cv3
+tail convolutions train (full COCO train2017, 10 epochs, lr0 0.1 / batch 32 / 640). Formal
+evaluation (pycocotools, all 5,000 images):
+
+| Protocol | Box | Mask | Zero-shot text baseline Box / Mask |
+|---|---:|---:|---:|
+| E2E | **0.3089** | **0.2509** | 0.2832 / 0.2337 |
+| Non-E2E | **0.3211** | **0.2570** | 0.2952 / 0.2407 |
+
+- The fused initialization matches the unfused text path on the first 500 images
+  (Box 0.3338 / Mask 0.2790): PE starts at the zero-shot baseline, so the gains above come
+  entirely from the six tail convolutions.
+- Training metrics were still rising at epoch 10; 10 epochs is not a saturation point.
+- Deployment: the same fused weights score Box 0.4031 (pt) vs 0.4032 (exported ONNX) on the
+  first 100 COCO images (E2E); the class-locked graph runs with `--engine onnx` and no
+  `--classes`.
+- **LVIS (1,203 classes, federated)**: each image annotates only a subset of classes.
+  Training builds a valid-class mask (`positives ∪ neg_category_ids`); unknown and
+  `not_exhaustive_category_ids` classes are ignored by the BCE instead of trained as
+  negatives, and mosaic/mixup/cutmix/copy_paste are disabled for federated data. PE for
+  10 epochs (lr0=0.01) on minival: E2E Box **0.2346** / Mask **0.1905**, Non-E2E
+  **0.2436** / **0.1955** (zero-shot 0.2125 / 0.1754 and 0.2218 / 0.1817). E2E frequency
+  buckets: APr 0.1180 / APc 0.2146 / APf 0.2733 (zero-shot 0.1923 / 0.1999 / 0.2272) —
+  overall above the baseline, rare classes recovered from 0 but still below zero-shot, with
+  gains concentrated in common/frequent. Negative sampling / class balancing is the
+  follow-up for rare classes. The fused initialization matches the text path
+  (E2E 0.2124 / 0.1753, APr 0.1922).
+- Reproduce: `python scripts/train.py --data coco --model yoloe-26 --scale n --pe
+  --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.1`; evaluate the
+  produced `best.safetensors` with `scripts/eval.py` (E2E / `--nms`).
+
 ## 5. Known limits
 
 - Visual-prompt masks must match the refer image size (binary PNG); each prompt uses exactly
@@ -298,6 +361,15 @@ python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco [
 - Parameter counts follow the strict-load-consistent `parameters()`; the text layout's 5,615,540
   already includes savpe/reprta, while the smaller figure in the official docs is the
   **detection-configuration** count and describes a different structure.
-- **Training is not wired in**: this version covers inference / evaluation / export only.
-  The training loss dispatch has no `yoloe-26` entry, so `--model yoloe-26` fails while
-  building the loss; YOLOE finetuning / from-scratch training is not supported yet.
+- **Training covers PE linear probing only**: `--model yoloe-26 --pe --weights ...` trains
+  the six cv3 / one2one_cv3 tail convolutions (backbone, neck, BN, mask branch and proto stay
+  frozen; the loss is the detection trio). Full finetuning and from-scratch training are not
+  wired; prompt-free weights are inference-only (training errors out explicitly). The PE output
+  is class-locked and carries its prompt names in metadata, so evaluation must use the matching
+  dataset descriptor.
+- **LVIS PE uses federated class masks**: LVIS annotates only part of the categories per image;
+  training treats `positives ∪ neg_category_ids` as valid classes, ignores
+  `not_exhaustive_category_ids` and unlabeled classes in the BCE, and disables
+  mosaic/mixup/cutmix/copy_paste. Overall metrics can exceed zero-shot, but rare-class AP may
+  still trail it (gains concentrate in common/frequent). Negative sampling / class balancing
+  is the follow-up for rare classes; see §4.

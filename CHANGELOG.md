@@ -7,9 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **YOLOE-26 PE linear probing training**: `--pe` fuses dataset class-name text embeddings into the cv3 tails and trains only the six tail convolutions; backbone, mask/proto branch and every BN stay frozen. Class-locked outputs carry `pe`/`fused`/`struct_nc` metadata and load directly in infer/eval/export.
+- **YOLOE training forward**: the head returns the `one2many`/`one2one` raw-output dict in training mode (text logits, ltrb boxes, mask coefficients, proto) and implements `postprocess_val`; `yoloe-26` dispatches detection loss for fused PE heads and segmentation loss otherwise.
+- **Federated-aware training masks**: COCO-format annotations carrying LVIS `neg_category_ids` / `not_exhaustive_category_ids` produce a per-image valid-class mask for the detection BCE; unknown classes are ignored instead of trained as negatives. Mosaic/mixup/cutmix/copy_paste are disabled for federated data; plain COCO batches and losses are unchanged.
+
 ### Changed
 
-- **YOLOE docs match the code**: the model matrix no longer claims `--nms` is unsupported (text-mode YOLOE supports it), documents that YOLOE training is not wired in, and describes the `mobileclip2_b.safetensors` text-encoder conversion as a release asset kept next to the model weights.
+- **YOLOE docs match the code**: the model matrix no longer claims `--nms` is unsupported (text-mode YOLOE supports it) and describes the `mobileclip2_b.safetensors` text-encoder conversion as a release asset kept next to the model weights.
+- **YOLOE text-mode training boundary**: only PE linear probing is wired; full fine-tuning and from-scratch YOLOE training are rejected by the CLI, and prompt-free weights remain inference-only.
+
+### Fixed
+
+- **YOLOE `fuse_text` on CUDA/half**: the fused convolution and BN fold now inherit the source convolution's device and dtype, so class-locked fusion works on GPU and fp16 export instead of emitting CPU float32 modules.
 
 ## [1.4.0] - 2026-11-08
 
