@@ -382,6 +382,33 @@ evaluation (pycocotools, all 5,000 images):
   --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.1`; evaluate the
   produced `best.safetensors` with `scripts/eval.py` (E2E / `--nms`).
 
+### Full fine-tuning (COCO val2017)
+
+Starting from the official `yoloe-26n-seg` text checkpoint, every weight trains (full COCO
+train2017, 10 epochs, lr0 0.001 / batch 32 / 640; 4 h 40 min on one RTX 3090). Formal
+evaluation (pycocotools, all 5,000 images):
+
+| Protocol | Box | Mask | PE 10 epochs Box / Mask | Zero-shot Box / Mask |
+|---|---:|---:|---:|---:|
+| E2E | **0.3597** | **0.2980** | 0.3089 / 0.2509 | 0.2832 / 0.2337 |
+| Non-E2E | **0.3710** | **0.3044** | 0.3211 / 0.2570 | 0.2952 / 0.2407 |
+
+- Versus PE: +0.0508 Box / +0.0471 Mask (E2E), +0.0499 / +0.0474 (Non-E2E).
+- FastMetrics curve: ep1 0.3196/0.2599 → ep5 0.3398/0.2844 → ep10 0.3559/0.2988, still
+  rising at the last epoch; val_box 0.3251→0.3210 and val_seg 0.7364→0.6790, so no
+  overfitting. 10 epochs is the current budget; extend when the validation curve is not flat.
+- lr probes (2,000 images / 1 epoch, 500-image FastMetrics): 0.0002 / 0.0005 / 0.001 / 0.005 /
+  0.01 = 0.5916 / 0.6100 / 0.6098 / 0.5541 / 0.4935 (zero-shot on the same subset 0.6128) —
+  0.0005–0.001 holds the baseline while ≥0.005 drifts, which is why the run uses 0.001. AMP
+  (0.001) scores 0.6030 at 5.6G peak vs fp32 8.4G, with the same epoch time, so the formal
+  run uses fp32.
+- Consumption: run-dir checkpoints need `--text-encoder`; infer/export reuse the metadata
+  training names when `--classes` is omitted, and eval uses the same dataset descriptor.
+- Reproduce: `python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune
+  --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
+  --warmup-epochs 3`; evaluate with `--text-encoder weights/mobileclip2_b.safetensors`
+  (E2E / `--nms`).
+
 ## 5. Known limits
 
 - Visual-prompt masks must match the refer image size (binary PNG); each prompt uses exactly

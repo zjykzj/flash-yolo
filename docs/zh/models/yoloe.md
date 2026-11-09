@@ -329,6 +329,31 @@ train2017，10 轮，lr0 0.1 / batch 32 / 640）。正式评估（pycocotools，
   --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.1`；评估把
   `scripts/eval.py` 的 `--weights` 换成产物的 `best.safetensors`（E2E / `--nms` 两口径）。
 
+### 全量微调（COCO val2017）
+
+从官方 `yoloe-26n-seg` 文本权重出发，全部参数训练（全量 COCO train2017，10 轮，
+lr0 0.001 / batch 32 / 640；单卡 3090 4 h 40 min）。正式评估（pycocotools，全量 5000 图）：
+
+| 协议 | Box | Mask | PE 10 轮 Box / Mask | 零样本 Box / Mask |
+|---|---:|---:|---:|---:|
+| E2E | **0.3597** | **0.2980** | 0.3089 / 0.2509 | 0.2832 / 0.2337 |
+| Non-E2E | **0.3710** | **0.3044** | 0.3211 / 0.2570 | 0.2952 / 0.2407 |
+
+- 比 PE：E2E +0.0508 Box / +0.0471 Mask；Non-E2E +0.0499 / +0.0474。
+- FastMetrics 曲线 ep1 0.3196/0.2599 → ep5 0.3398/0.2844 → ep10 0.3559/0.2988，
+  末轮仍在上升；val_box 0.3251→0.3210、val_seg 0.7364→0.6790，未过拟合。10 轮是
+  当前预算；验证曲线未平台时可续训。
+- lr 探针（2000 图 / 1 epoch，500 图 FastMetrics）：0.0002 / 0.0005 / 0.001 / 0.005 /
+  0.01 = 0.5916 / 0.6100 / 0.6098 / 0.5541 / 0.4935（零样本同子集 0.6128）——0.0005–0.001
+  保持基线、≥0.005 明显漂移，是选 0.001 的依据。AMP（0.001）fitness 0.6030、峰值 5.6G vs
+  fp32 8.4G，epoch 耗时相同，故正式 run 用 fp32。
+- 消费：run 目录产物用 `--text-encoder` 指向 MobileCLIP2-B；`infer/export` 未给
+  `--classes` 时自动用 metadata 的训练 names，`eval` 用同一数据集描述符。
+- 复现：`python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune
+  --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
+  --warmup-epochs 3`；评估加 `--text-encoder weights/mobileclip2_b.safetensors`
+  （E2E / `--nms` 两口径）。
+
 ## 5. 已知边界
 
 - 视觉 prompt 的 mask 必须与 refer 图同尺寸（二值 PNG）；bbox/mask 二选一，同类多示例 OR。
