@@ -23,8 +23,10 @@ class PtEngine(BaseEngine):
     """
 
     def __init__(self, weights, scale="n", end2end=True, device=None, nc=None, model="yolo26", imgsz=None,
-                 agnostic_nms=False):
+                 agnostic_nms=False, text_encoder=None):
         self.device = resolve_device(device)
+        # 文本编码器路径：显式 --text-encoder > 模型权重同目录（全量微调产物通常在 run 目录）
+        self._text_encoder_path = text_encoder
         self.mask_device = self.device  # 掩码解码跟随模型设备（CUDA 下 300 检出 48ms -> 2.6ms）
         self.agnostic_nms = bool(agnostic_nms)  # 仅 NMS 路径生效（E2E 图内无 NMS）
         self.scale = scale
@@ -110,7 +112,8 @@ class PtEngine(BaseEngine):
         from model.text_prompt import TEXT_ENCODER_FILENAME, encode_text_prompts, load_text_encoder, resolve_text_encoder
 
         if self._text_encoder is None:
-            enc_path = resolve_text_encoder(explicit=Path(self.weights_dir) / TEXT_ENCODER_FILENAME)
+            enc_path = resolve_text_encoder(
+                explicit=self._text_encoder_path or Path(self.weights_dir) / TEXT_ENCODER_FILENAME)
             self._text_encoder = load_text_encoder(enc_path, device=self.device)
         return encode_text_prompts(head, list(texts), self._text_encoder, batch=batch)
 

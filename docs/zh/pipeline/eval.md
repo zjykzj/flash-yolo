@@ -37,6 +37,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--eval-max-dets` | LVIS 300 | 评估器 maxDets；`100` 用于对齐 ultralytics 当前 val 行为 |
 | `--visual-prompt` | — | yoloe-26 视觉模式：单 refer 图 JSON（bbox/mask；仅 pt；可与 `--classes` 混合） |
 | `--classes` | — | yoloe-26 pt 文本 prompt 子集；与 `--visual-prompt` 组合成混合 prompt |
+| `--text-encoder` | 权重同目录 | MobileCLIP2-B `.safetensors`；run 目录的微调产物用它指定 |
 | `--refer-data` | — | yoloe-26 视觉模式：参考集描述符，逐类 GT 框提取 vpe |
 | `--refer-split` / `--refer-limit` | train / 0 | 参考集角色 / 只取前 N 张（0=全量） |
 | `--summary-only` | off | 只打印 all 行 |
@@ -121,8 +122,9 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - **文本 prompt（`-seg` 权重）**：数据集自身的类别名即 prompt（`set_classes`）；`--data lvis`
   对 1,203 个 LVIS 类别评估（`config/datasets/lvis.yaml`，取每类名第一个同义词——官方
   LVIS prompt 口径）。官方 LVIS minival 对比用 `--data lvis-minival`，走 faster_coco_eval
-  `lvis_style`（见 §2.1）。pt 路径需要 `mobileclip2_b.safetensors` 与模型权重同目录；
-  `onnx` / `trt` 消费类锁定图（类别名来自部署 metadata，按名字映射到数据集类别；锁定类别
+  `lvis_style`（见 §2.1）。pt 路径默认取模型权重同目录的 `mobileclip2_b.safetensors`
+  （run 目录的微调产物用 `--text-encoder` 指定）；`onnx` / `trt` 消费类锁定图
+  （类别名来自部署 metadata，按名字映射到数据集类别；锁定类别
   必须覆盖数据集类别，子集导出请用对应子集的描述符）。
 - **视觉 prompt（`-seg` 权重）**：`--visual-prompt`（单 refer 图 JSON，bbox/mask）或
   `--refer-data`（参考集逐类 exemplar；`--refer-split` 默认 train，`--refer-limit` 限流）。

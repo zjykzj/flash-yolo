@@ -54,7 +54,8 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--conf` | **0.25** | 置信度阈值（eval 默认 0.001，两者用途不同） |
 | `--nms` | off | o2m + NMS（yolo26 系 + yoloe-26 文本模式；v3 报错，pf 仅 E2E；onnx/trt 需导出时加 `--nms`，metadata 会校验） |
 | `--agnostic-nms` | off | 跨类 NMS（需同时给 `--nms`） |
-| `--classes` | — | yoloe-26 文本模式：逗号分隔的类别名（pt 必填；onnx/trt 可省略，需与锁定列表一致） |
+| `--classes` | — | yoloe-26 文本模式：逗号分隔的类别名（pt 必填；onnx/trt 可省略，需与锁定列表一致；全量微调产物未给时自动用 metadata names） |
+| `--text-encoder` | 权重同目录 | MobileCLIP2-B `.safetensors`；run 目录的微调产物用它指定 |
 | `--visual-prompt` | — | yoloe-26 视觉模式：refer 图 + bbox/mask 的 JSON（仅 pt；可与 `--classes` 组合成混合 prompt） |
 | `--model` / `--scale` | 从文件名/metadata 推断 | 推不出时报错 |
 | `--output` | `runs/predict/predictN/` | 图片：文件或目录；视频：输出视频文件 |
@@ -96,8 +97,8 @@ Labels        -> runs/predict/predict21/labels
   `--data` / `--classes`；三种引擎都可跑。
 - **文本 prompt（`-seg` 权重）**：
   - `--engine pt`：`--classes "a, b, c"` 把每个名字经 MobileCLIP2-B 文本编码器编码
-    （`mobileclip2_b.safetensors` 需与模型权重同目录——只在 `set_classes` 时加载一次，
-    不在模型图里）。
+    （默认取模型权重同目录的 `mobileclip2_b.safetensors`，run 目录产物用 `--text-encoder`
+    指定——只在 `set_classes` 时加载一次，不在模型图里）。
   - `--engine onnx|trt`：消费 `export --classes` 产出的类锁定图，类别名随部署 metadata
     走，无需文本编码器；`--classes` 可省略，给出时必须与锁定列表逐项一致。
 - **视觉 prompt（`-seg` 权重）**：`--visual-prompt prompt.json`（refer 图 + 每类 bbox/mask；

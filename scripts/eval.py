@@ -103,6 +103,9 @@ def main():
                         help="yoloe-26 text mode only: JSON refer image + bbox/mask prompts (pt engine)")
     parser.add_argument("--classes", default=None,
                         help="yoloe-26 pt text prompt subset; combine with --visual-prompt for mixed prompts")
+    parser.add_argument("--text-encoder", dest="text_encoder", default=None,
+                        help="MobileCLIP2-B text encoder .safetensors for YOLOE text prompts "
+                             "(default: mobileclip2_b.safetensors next to the weights)")
     parser.add_argument("--refer-data", dest="refer_data", default=None,
                         help="yoloe-26 text mode only: refer dataset descriptor for per-class visual prompts")
     parser.add_argument("--refer-split", dest="refer_split", default="train",
@@ -207,6 +210,7 @@ def main():
               "agnostic_nms": args.agnostic_nms}
     if args.engine == "pt":
         kwargs["device"] = args.device
+        kwargs["text_encoder"] = args.text_encoder
     else:
         kwargs["text_mode"] = text_mode  # 类锁定 YOLOE text：o2m 输出不做 decode_raw
     with redirect_prints(logger):

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **YOLOE-26 full fine-tuning**: `--full-finetune --weights <text checkpoint>` caches the dataset class-name CLIP embeddings, runs reprta in-graph and trains every weight (mask/proto included) with the segmentation loss; outputs carry `full_finetune`/`struct_nc`/`names` metadata, and infer/export reuse those names without `--classes`.
+- **YOLOE text-encoder override**: eval/infer/export accept `--text-encoder` so run-dir fine-tune checkpoints work without copying the MobileCLIP encoder next to the weights; the pt engine wires the path through `PtEngine`.
 
 ### Changed
 

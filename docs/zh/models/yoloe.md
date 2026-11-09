@@ -165,10 +165,12 @@ python scripts/train.py --data lvis --model yoloe-26 --scale n --full-finetune \
     --weights weights/yoloe-26n-seg.safetensors \
     --epochs 10 --batch 16 --imgsz 640 --lr0 0.001
 
-# eval 用同一数据集描述符；infer/export 未给 --classes 时自动用训练 names
-python scripts/eval.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors --data coco
+# eval 用同一数据集描述符；infer/export 未给 --classes 时自动用训练 names。
+# run 目录的产物旁边没有编码器：显式 --text-encoder（或把它拷到权重同目录）。
+python scripts/eval.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors \
+    --text-encoder weights/mobileclip2_b.safetensors --data coco
 python scripts/infer.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors \
-    --image assets/traffic.jpg
+    --text-encoder weights/mobileclip2_b.safetensors --image assets/traffic.jpg
 python scripts/export.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors \
     --text-encoder weights/mobileclip2_b.safetensors \
     --out weights/yoloe-26n-coco-ft.onnx

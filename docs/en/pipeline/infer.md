@@ -55,7 +55,8 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--conf` | **0.25** | confidence threshold (eval defaults to 0.001 — different purposes) |
 | `--nms` | off | o2m + NMS (yolo26 family + yoloe-26 text; errors for v3, prompt-free is E2E only; onnx/trt must be exported with `--nms`, checked via metadata) |
 | `--agnostic-nms` | off | cross-class NMS (requires `--nms`) |
-| `--classes` | — | yoloe-26 text mode: comma-separated class names (pt required; onnx/trt optional, must match the locked list) |
+| `--classes` | — | yoloe-26 text mode: comma-separated class names (pt required; onnx/trt optional, must match the locked list; full-fine-tune checkpoints default to their metadata names) |
+| `--text-encoder` | next to weights | MobileCLIP2-B `.safetensors`; use it for run-dir fine-tune checkpoints |
 | `--visual-prompt` | — | yoloe-26 visual mode: JSON with a refer image + bboxes/masks (pt only; combine with `--classes` for mixed prompts) |
 | `--model` / `--scale` | inferred from filename/metadata | errors when nothing can be inferred |
 | `--output` | `runs/predict/predictN/` | image: file or directory; video: output video file |
@@ -101,8 +102,8 @@ Labels        -> runs/predict/predict21/labels
   weights metadata — no `--data` / `--classes` needed; all three engines work.
 - **text prompts (`-seg` weights)**:
   - `--engine pt`: `--classes "a, b, c"` encodes each name with the MobileCLIP2-B text encoder
-    (`mobileclip2_b.safetensors` must sit next to the model weights — loaded once at
-    `set_classes`, not part of the model graph).
+    (defaults to `mobileclip2_b.safetensors` next to the model weights; run-dir checkpoints use
+    `--text-encoder` — loaded once at `set_classes`, not part of the model graph).
   - `--engine onnx|trt`: consumes the class-locked graph produced by `export --classes`;
     class names travel in the deploy metadata, so no text encoder is needed. `--classes` is
     optional and must match the locked list when given.

@@ -239,6 +239,9 @@ def main():
                         help="yoloe-26 text mode only: comma-separated class names / text prompts "
                              "(pt: encoded with the MobileCLIP text encoder; onnx/trt: must match "
                              "the class-locked metadata; e.g. \"person, bicycle\")")
+    parser.add_argument("--text-encoder", dest="text_encoder", default=None,
+                        help="MobileCLIP2-B text encoder .safetensors for YOLOE text prompts "
+                             "(default: mobileclip2_b.safetensors next to the weights)")
     parser.add_argument("--visual-prompt", dest="visual_prompt", default=None,
                         help="yoloe-26 text mode only: JSON with a refer image and bbox/mask "
                              "exemplars (pt engine; combine with --classes for mixed prompts)")
@@ -428,6 +431,7 @@ def main():
     if args.engine == "pt":
         kwargs["device"] = args.device
         kwargs["nc"] = nc  # onnx 图内置类别数，只有 pt 引擎需要重建头
+        kwargs["text_encoder"] = args.text_encoder
     else:
         kwargs["text_mode"] = prompt_mode == "text"  # 类锁定 YOLOE text：o2m 输出不做 decode_raw
     engine = engine_cls(args.weights, **kwargs)

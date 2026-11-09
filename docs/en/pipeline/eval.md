@@ -38,6 +38,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--eval-max-dets` | LVIS 300 | evaluator maxDets; `100` mirrors ultralytics' current val behavior |
 | `--visual-prompt` | — | yoloe-26 visual mode: single refer-image JSON (bbox/mask; pt only; mix with `--classes`) |
 | `--classes` | — | yoloe-26 pt text-prompt subset; combine with `--visual-prompt` for mixed prompts |
+| `--text-encoder` | next to weights | MobileCLIP2-B `.safetensors`; use it for run-dir fine-tune checkpoints |
 | `--refer-data` | — | yoloe-26 visual mode: refer dataset descriptor, one vpe per class from GT boxes |
 | `--refer-split` / `--refer-limit` | train / 0 | refer-dataset role / first N images (0 = all) |
 | `--summary-only` | off | print only the all row |
@@ -136,8 +137,9 @@ is metric-implementation noise.
   (`set_classes`); `--data lvis` evaluates against the 1,203 LVIS categories
   (`config/datasets/lvis.yaml`, first-synonym names — the official LVIS prompt convention).
   Compare with the official LVIS minival numbers via `--data lvis-minival` (faster_coco_eval
-  `lvis_style`, see §2.1). The pt path needs `mobileclip2_b.safetensors` next to the model
-  weights; `onnx` / `trt` consume the class-locked graph (the locked classes must cover every
+  `lvis_style`, see §2.1). The pt path defaults to `mobileclip2_b.safetensors` next to the
+  model weights (run-dir fine-tune checkpoints use `--text-encoder`); `onnx` / `trt` consume
+  the class-locked graph (the locked classes must cover every
   dataset class — use a subset descriptor for a subset export) and map the deploy-metadata class
   names onto the dataset classes.
 - **visual prompts (`-seg` weights)**: `--visual-prompt` (one refer-image JSON, bbox/mask) or

@@ -182,10 +182,12 @@ python scripts/train.py --data lvis --model yoloe-26 --scale n --full-finetune \
     --weights weights/yoloe-26n-seg.safetensors \
     --epochs 10 --batch 16 --imgsz 640 --lr0 0.001
 
-# eval on the same descriptor; infer/export reuse the training names unless --classes is given
-python scripts/eval.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors --data coco
+# eval on the same descriptor; infer/export reuse the training names unless --classes is given.
+# Run-dir checkpoints have no encoder next to them: pass --text-encoder (or copy it there).
+python scripts/eval.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors \
+    --text-encoder weights/mobileclip2_b.safetensors --data coco
 python scripts/infer.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors \
-    --image assets/traffic.jpg
+    --text-encoder weights/mobileclip2_b.safetensors --image assets/traffic.jpg
 python scripts/export.py --weights runs/train/train-yoloe-ft-coco/weights/best.safetensors \
     --text-encoder weights/mobileclip2_b.safetensors \
     --out weights/yoloe-26n-coco-ft.onnx

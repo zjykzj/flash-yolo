@@ -294,3 +294,23 @@ def test_full_finetune_checkpoint_pt_engine_roundtrip(tmp_path):
         got = engine.model.model[-1]._forward_train(feats)
     for branch in ("one2many", "one2one"):
         assert torch.equal(got[branch]["scores"], want[branch]["scores"]), branch
+
+
+def test_pt_engine_text_encoder_override(tmp_path):
+    """run 目录的全量微调产物旁边没有编码器：PtEngine 的 text_encoder 参数可显式指定"""
+    from model.weights import save_weights
+    from utils.engines.pt import PtEngine
+
+    enc = Path(__file__).resolve().parent.parent / "weights" / "mobileclip2_b.safetensors"
+    if not enc.is_file():
+        pytest.skip("需要 weights/mobileclip2_b.safetensors")
+    model = _build().eval()
+    model.model[-1].set_tpe(_tpe(k=3))
+    path = tmp_path / "yoloe-ft.safetensors"
+    save_weights(model, path, metadata={
+        "arch": "yoloe-26", "scale": "n", "nc": 3, "struct_nc": 80, "imgsz": 640,
+        "names": ["a", "b", "c"], "prompt_mode": "text", "full_finetune": True,
+    })
+    engine = PtEngine(str(path), model="yoloe-26", scale="n", device="cpu",
+                      text_encoder=str(enc))
+    assert engine.set_classes(["a", "b", "c"]) == 3
