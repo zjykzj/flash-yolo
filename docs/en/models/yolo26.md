@@ -2,7 +2,8 @@
 
 > Reproduction target: official YOLO26n weights through this repo's pipeline reach **40.27**
 > mAP50-95 E2E / **40.89** NMS.
-> Structure: `config/models/yolo26.yaml`; segmentation variant: [yolo26-seg.md](yolo26-seg.md).
+> Structure: `config/models/yolo26.yaml`; segmentation variant:
+> [yolo26-seg.md](yolo26-seg.md), pose variant: [yolo26-pose.md](yolo26-pose.md).
 
 ## 1. Conventions
 

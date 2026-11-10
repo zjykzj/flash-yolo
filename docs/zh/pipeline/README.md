@@ -18,7 +18,8 @@ python scripts/<train|eval|export|infer>.py [--weights ...] [--data ...] [选项
 
 - 权重格式：`.safetensors`（主）、`.onnx`、`.engine`（TensorRT）。
 - 训练产物与转换器在 safetensors header 写可选 metadata：`arch` / `scale` / `nc` / `imgsz` /
-  `names`（含锚模型另有 `anchors`）+ 出处 `version/repo/commit/describe`。
+  `names`（含锚模型另有 `anchors`，pose 另有 `kpt_shape`）+ 出处
+  `version/repo/commit/describe`。
 - 解析顺序：**CLI 显式 > metadata > 文件名/默认**；推不出时显式给 `--model/--scale`。
 - onnx 输入尺寸以图内 shape 为准；显式 `--imgsz` 冲突会报错，不静默。
 
@@ -30,7 +31,7 @@ python scripts/<train|eval|export|infer>.py [--weights ...] [--data ...] [选项
 | `onnx` | CPU（ORT） | 输入尺寸以图内 shape 为准 |
 | `trt` | GPU | 需已构建引擎；绑定构建机 GPU + TRT 版本 |
 
-三个运行时共用同一套前后处理与 `Detections` 契约（含可选 masks）。
+三个运行时共用同一套前后处理与 `Detections` 契约（含可选 masks / keypoints）。
 
 ## 4. 阈值口径
 

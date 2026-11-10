@@ -49,7 +49,25 @@ val:   {images: images/val2017,   ann: annotations/instances_val2017.json}
 - `overlap_mask=True`（默认）生成面积降序的实例索引图；labels 同步重排，**索引图 ID 与
   targets 行序必须一致**。
 
-## 4. 小数据集
+## 4. 关键点标注（`--model yolo26-pose`）
+
+COCO-pose 使用 `person_keypoints_{train,val}2017.json`（不是 `instances_*.json`）：
+
+- 每个实例带 `keypoints`（17×3 绝对像素 `x,y,v`，v=0/1/2）与 `num_keypoints`；`bbox`/`area`
+  仍用于框损失与 OKS 的面积归一化。
+- 描述符额外写 `kpt_shape` / `flip_idx` / `kpt_names` / `skeleton`（模板：
+  `config/datasets/coco-pose.yaml`）；`kpt_shape` 必须与权重 metadata 一致。
+- `require_keypoints` 按 `num_keypoints > 0` 过滤：COCO-pose train **56,599** 图、
+  val **2,346** 图。**pose 的 val 不是检测的 5,000 张**，报告数字时不要混用。
+- 没有 `keypoints` 字段的标注在 pose 训练/评估时直接报错（不会安静地当背景）。
+
+```bash
+python scripts/train.py --data coco-pose --model yolo26-pose \
+    --weights weights/yolo26n-pose.safetensors --recipe yolo26-pose-coco --epochs 10
+python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
+```
+
+## 5. 小数据集
 
 ```bash
 python scripts/make_coco_subset.py --src /path/to/coco --dst /path/to/coco-tiny \
@@ -59,7 +77,7 @@ python scripts/make_coco_subset.py --src /path/to/coco --dst /path/to/coco-tiny 
 脚本按种子抽样、硬链接图片、生成 coco/yolo 描述符并拷进 `config/datasets/local/`。
 之后 `--data coco-tiny` 直接可用。
 
-## 5. 坑
+## 6. 坑
 
 - `--limit N` 按 json 顺序取前 N，与 YOLO 的文件名排序不是同一批图；跨格式比较用全量。
 - COCO 与 YOLO 的 val 数字差异只来自 crowd（coco-tiny 全量 mAP50-95 0.4080 vs 0.4024）；

@@ -13,6 +13,8 @@ python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data coco 
 python scripts/eval.py --weights w.safetensors --data coco --imgsz 416                  # 指定输入
 python scripts/eval.py --weights w.safetensors --data coco --split val --limit 100      # 子集
 python scripts/eval.py --weights weights/yolo26n-seg.safetensors --data coco            # Box + Mask
+python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose      # Pose (OKS)
+python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose --nms  # Pose o2m+NMS
 python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco       # pf 词汇映射
 python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis          # 文本 prompt（1203 类）
 python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival  # LVIS minival（5k）
@@ -29,7 +31,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--split` | `val` | 角色键（train/val/test） |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--model` / `--scale` | 从权重推断 | 推不出时显式给 |
-| `--nms` | off | o2m + NMS（yolo26 系 + yoloe-26 文本模式；v3 会报错，pf 仅 E2E；onnx/trt 需导出时加 `--nms`，metadata 会校验） |
+| `--nms` | off | o2m + NMS（yolo26 系含 pose + yoloe-26 文本模式；v3 会报错，pf 仅 E2E；onnx/trt 需导出时加 `--nms`，metadata 会校验） |
 | `--conf` / `--iou` / `--max-det` | 0.001 / 0.7 / 300 | 与官方 val 口径一致 |
 | `--imgsz` | metadata > 640 | onnx 以图内 shape 为准（冲突报错） |
 | `--limit` | 0（全量） | 只评前 N 张（GT 同步限制到该子集） |
@@ -41,6 +43,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--refer-data` | — | yoloe-26 视觉模式：参考集描述符，逐类 GT 框提取 vpe |
 | `--refer-split` / `--refer-limit` | train / 0 | 参考集角色 / 只取前 N 张（0=全量） |
 | `--summary-only` | off | 只打印 all 行 |
+| `--single-cls` | off | 单类评估：GT 类别映射到 0（pose 不适用，CLI 会报错） |
 | `--device` | auto | pt 引擎设备 |
 
 ## 2. 指标口径与评估协议
@@ -49,7 +52,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 |---|---|---|---|
 | **正式 · COCO 协议**（默认） | pycocotools | COCO 对外数字、验收 | — |
 | **正式 · LVIS 协议** | faster_coco_eval（`lvis_style=True`） | LVIS / YOLOE 开放词汇对比 | — |
-| 训练中 | 纯 numpy FastMetrics | 每轮趋势 + 选 `best.safetensors` | 忽略 crowd、maxDets=100、无面积分组；贪婪匹配 + 101 点插值 |
+| 训练中 | 纯 numpy FastMetrics / FastPoseMetrics | 每轮趋势 + 选 `best.safetensors` | 忽略 crowd、maxDets=100（pose 20）、无面积分组；贪婪匹配 + 101 点插值 |
 
 FastMetrics 与正式口径贴合良好，但**跨 run 比较/对外引用一律用正式口径**。
 
@@ -108,6 +111,18 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - `runs/val/valN/results.json` 写 Mask 组（含 RLE），可直接当 COCO 结果提交。
 - 掩码解码与官方 val 管线逐像素一致（`tests/test_seg_inference.py` 对拍）。
 - 数据集支持 COCO json 与 YOLO-seg txt；YOLO 无 crowd，GT 会少 crowd 实例。
+
+### 5.1 Pose（yolo26-pose）
+
+- `--data coco-pose`：COCO `person_keypoints_*.json`；评估器 `iou_type="keypoints"`，
+  pycocotools OKS，`maxDets=20`。**val 只评估 2,346 张有有效关键点的图**（不是 5,000 张）；
+  `scripts/eval.py` 自动按 `num_keypoints > 0` 过滤。
+- 表头是 `Class Images Instances AP AP50 AP75 AP(M) AP(L) AR`；没有 bbox 表的 P/R 与 small
+  bucket。`results.json` 写 COCO keypoints 结果（`keypoints` + `score`）。
+- `--nms` 走 pose 的 o2m 分支；`--single-cls` 对 pose 不适用。
+- 官方 `yolo26n-pose` 参考（同一 2,346 图）：本仓库 E2E **0.5687 / 0.8250**，
+  NMS 0.5670 / 0.8280；ultralytics E2E 0.572 / 0.833、NMS 0.570 / 0.831。完整口径见
+  [../models/yolo26-pose.md](../models/yolo26-pose.md)。
 - 训练中验证同时算 Box + Mask（低分辨率近似），best fitness = box + mask mAP50-95；
   正式数字仍以本脚本为准。
 

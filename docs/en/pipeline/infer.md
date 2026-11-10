@@ -25,6 +25,10 @@ python scripts/infer.py --weights <own weights>.safetensors --data mydataset --i
 # segmentation weights: arch auto-detected, instance masks overlaid
 python scripts/infer.py --weights weights/yolo26n-seg.safetensors --image assets/traffic.jpg
 
+# pose weights: draw keypoints/skeleton; labels use the YOLO-pose format
+python scripts/infer.py --weights weights/yolo26n-pose.safetensors \
+    --image assets/traffic.jpg --data coco-pose
+
 # yoloe prompt-free: labels come from the baked 4,585-name vocabulary in the weights metadata
 python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors --image assets/traffic.jpg
 # yoloe text prompts: class names encoded with the MobileCLIP2-B text encoder (pt engine only)
@@ -53,14 +57,14 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--show` | off | live video preview (needs GUI) |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--conf` | **0.25** | confidence threshold (eval defaults to 0.001 — different purposes) |
-| `--nms` | off | o2m + NMS (yolo26 family + yoloe-26 text; errors for v3, prompt-free is E2E only; onnx/trt must be exported with `--nms`, checked via metadata) |
+| `--nms` | off | o2m + NMS (yolo26 family incl. pose + yoloe-26 text; errors for v3, prompt-free is E2E only; onnx/trt must be exported with `--nms`, checked via metadata) |
 | `--agnostic-nms` | off | cross-class NMS (requires `--nms`) |
 | `--classes` | — | yoloe-26 text mode: comma-separated class names (pt required; onnx/trt optional, must match the locked list; full-fine-tune checkpoints default to their metadata names) |
 | `--text-encoder` | next to weights | MobileCLIP2-B `.safetensors`; use it for run-dir fine-tune checkpoints |
 | `--visual-prompt` | — | yoloe-26 visual mode: JSON with a refer image + bboxes/masks (pt only; combine with `--classes` for mixed prompts) |
 | `--model` / `--scale` | inferred from filename/metadata | errors when nothing can be inferred |
 | `--output` | `runs/predict/predictN/` | image: file or directory; video: output video file |
-| `--data` | COCO labels | only `names` + `nc`; no images read (ignored for yoloe) |
+| `--data` | COCO labels | only `names` + `nc` (pose also uses `skeleton` for drawing); no images read (ignored for yoloe) |
 | `--imgsz` | metadata > 640 | override the input size |
 | `--device` | auto | pt engine device |
 
@@ -82,6 +86,10 @@ Labels        -> runs/predict/predict21/labels
 - Segmentation weights: semi-transparent instance masks overlaid; `labels/*.txt` writes
   **normalized polygon rows** `cls x1 y1 x2 y2 ...` (outer contour, connected components merged
   by nearest point, skipped under 3 points — the same convention as the official `save_txt`).
+- Pose weights: keypoints and skeleton are drawn (points with visibility <0.5 are skipped);
+  `labels/*.txt` writes YOLO-pose rows `cls xc yc w h px1 py1 v1 ... pxK pyK vK` (x/y normalized
+  to the original image, v is the visibility score). `--data coco-pose` supplies the skeleton;
+  without a descriptor the COCO 17-point skeleton is used.
 - Video mode **does not write `labels/`** (per-frame txt has no stable naming semantics); the
   codec follows the suffix: `.avi`/`.mjpg` use MJPG, everything else mp4v; when writing fails it
   errors and suggests switching to `.avi`.

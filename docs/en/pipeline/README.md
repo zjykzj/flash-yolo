@@ -20,8 +20,8 @@ python scripts/<train|eval|export|infer>.py [--weights ...] [--data ...] [option
 
 - Weight formats: `.safetensors` (primary), `.onnx`, `.engine` (TensorRT).
 - Training artifacts and converters write optional metadata into the safetensors header:
-  `arch` / `scale` / `nc` / `imgsz` / `names` (anchor models also `anchors`) + provenance
-  `version/repo/commit/describe`.
+  `arch` / `scale` / `nc` / `imgsz` / `names` (anchor models also `anchors`, pose also
+  `kpt_shape`) + provenance `version/repo/commit/describe`.
 - Resolution order: **CLI explicit > metadata > filename/default**; when nothing can be
   inferred, pass `--model/--scale` explicitly.
 - The onnx input size is decided by the graph shape; an explicit conflicting `--imgsz` errors out
@@ -36,7 +36,7 @@ python scripts/<train|eval|export|infer>.py [--weights ...] [--data ...] [option
 | `trt` | GPU | needs a prebuilt engine; bound to the build machine's GPU + TRT version |
 
 The three runtimes share one set of pre/postprocessing and the `Detections` contract (with
-optional masks).
+optional masks / keypoints).
 
 ## 4. Threshold conventions
 

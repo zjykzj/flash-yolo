@@ -1,7 +1,8 @@
 # YOLO26（检测）
 
 > 复现对象：YOLO26n 官方权重经本仓库管线 **40.27** mAP50-95 E2E / **40.89** NMS。
-> 结构定义：`config/models/yolo26.yaml`；分割版见 [yolo26-seg.md](yolo26-seg.md)。
+> 结构定义：`config/models/yolo26.yaml`；分割版见 [yolo26-seg.md](yolo26-seg.md)，
+> 姿态版见 [yolo26-pose.md](yolo26-pose.md)。
 
 ## 1. 口径声明
 

@@ -29,6 +29,11 @@ python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
     --weights weights/yoloe-26n-seg.safetensors --name yoloe-pe-coco
 python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
     --weights weights/yoloe-26n-seg.safetensors --name yoloe-ft-coco --lr0 0.001
+
+# YOLO26-pose: COCO-pose keypoints; official 400-epoch recipe, finetune from official pose weights
+python scripts/train.py --data coco-pose --model yolo26-pose \
+    --weights weights/yolo26n-pose.safetensors \
+    --recipe yolo26-pose-coco --epochs 10 --batch 32 --name pose-ft
 ```
 
 ## 2. Recipes
@@ -40,6 +45,7 @@ Priority: `config/train.yaml` base values → recipe file overrides → CLI over
 | *(none)* | from scratch / finetune on own data | — | 100 |
 | `yolo26-coco-ft` | official COCO stage (finetune) | **needs O365-pretrained weight init** | 245/70/80/60/40 |
 | `yolo26-seg-coco-ft` | official seg COCO stage | needs `yolo26*-objv1-seg` (365 classes) + COCO polygons | 245/50/80/60/40 |
+| `yolo26-pose-coco` | official pose COCO stage | needs the `coco-pose` descriptor; the official run initializes from O365 detection weights | 400 (all scales) |
 | `yolo26-o365-pt` | official Objects365 pretraining (detection) | needs Objects365 (unverified) | 150 |
 | `yolo26-seg-o365-pt` | official Objects365 pretraining (segmentation) | needs Objects365v1 seg (unverified) | 150 |
 
@@ -58,6 +64,11 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
   `copy_paste_mode: flip`; the semseg auxiliary loss is always enabled.
 - The segmentation init is 365-class O365 weights; `--weights` loads by key+shape intersection
   (class-dependent heads rebuilt).
+- `yolo26-pose-coco` records the official pose `train_args`: 400 epochs, batch 128, nbs 64,
+  lr0 0.005, lrf 0.1, `pose_gain=24` / `kobj_gain=4` / `rle_gain=1`, `cls_w=2`,
+  `prog_alpha_init=1.0`, `muon_w/sgd_w=0.5`, mosaic 1.0, fliplr 0.5. The official checkpoint
+  initializes from O365 **detection** weights; from-scratch runs with the same recipe should
+  use `--no-amp` and are not like-for-like with the official numbers.
 
 ## 3. Common arguments
 
@@ -66,7 +77,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--data` | — (required) | descriptor |
 | `--name` | empty → `runs/train/train` | run-dir suffix; incremented if it exists |
 | `--recipe` | built-in default | recipe name or `.yaml` path |
-| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu` / `yoloe-26` |
+| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `yolo26-pose` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu` / `yoloe-26` |
 | `--scale` | `n` | yolo26-family scale; fixed for other architectures |
 | `--pe` | false | YOLOE-26 text-mode PE linear probing (requires a text `--weights`; only the cv3 tails train) |
 | `--full-finetune` | false | YOLOE-26 full fine-tuning (requires a text `--weights`; all weights train, reprta in-graph) |
@@ -88,6 +99,9 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--amp` | false | fp16+GradScaler; **NaNs in from-scratch training, finetune only** |
 | `--optimizer` | `musgd` | `musgd` (Muon+SGD) or `sgd` (darknet convention) |
 | `--obj-iou-target` | false | v3 IoU-aware objectness |
+| `--pose-gain` | 24.0 | pose keypoint-location loss gain (`yolo26-pose` only) |
+| `--kobj-gain` | 4.0 | pose keypoint-visibility BCE gain (`yolo26-pose` only) |
+| `--rle-gain` | 1.0 | pose RLE loss gain (`yolo26-pose` only) |
 | `--close-mosaic` | 10 | last N epochs without mosaic/mixup/cutmix/copy_paste (auto `min(N, epochs//5)`) |
 | `--multi-scale` | 0.0 | input-size jitter ±r |
 | `--copy-paste-mode` | `off` | `off` / `box` / `flip` (official segmentation CopyPaste) |
@@ -193,6 +207,10 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
 2. **`--close-mosaic` means "last N epochs"**, not "starting at epoch N"; short runs get it
    scaled down by `min(N, epochs//5)`.
 3. `best.safetensors` is picked by FastMetrics; external numbers go through `scripts/eval.py`.
+4. **Pose**: COCO-pose val only evaluates the 2,346 images with valid keypoints; `val_rle` is
+   always 0 (the val forward does not return sigma; training still computes it); `copy_paste > 0`
+   errors out; `--single-cls` is not applicable. `fliplr` needs the descriptor's `flip_idx`,
+   otherwise left/right keypoint semantics break after flipping.
 4. Val losses cannot be compared directly with training losses (augmentation distribution / EMA
    vs raw / BN mode).
 5. Training-log loss column names derive from `item_keys`: yolo26 → `box/cls/l1/o2m/o2o`,

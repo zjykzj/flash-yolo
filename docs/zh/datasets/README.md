@@ -15,6 +15,8 @@
 | `format` | ✔ | `coco`（json 标注）或 `yolo`（`labels/*.txt`） |
 | `path` | – | 数据集根；相对路径以描述符 yaml 所在目录为基准；空 = 只用绝对路径 |
 | `names` | ✔ | 类别名列表（或 `{0: name}` 映射，等价）；**index = 类别 id = nc** |
+| `kpt_shape` | pose ✔ | `[K, D]`（COCO `[17, 3]`）；D=2 只有 x/y，D=3 带可见性 |
+| `flip_idx` / `kpt_names` / `skeleton` | pose 可选 | 水平翻转重排 / 每类关键点名 / 骨架点对（0-based，仅可视化） |
 | `train` / `val` / `test` | train、val ✔ | 角色键（`test` 接受但当前不消费） |
 | ├ `images` | ✔ | coco：图片目录；yolo：图片目录或 `.txt` 图片清单 |
 | ├ `ann` | coco ✔ | 标注 json 路径；**yolo 禁止**（写了会报错） |
@@ -38,6 +40,17 @@ train: {images: images/train}
 val:   {images: images/val}
 ```
 
+```yaml
+# COCO-pose（关键点；模板见 config/datasets/coco-pose.yaml）
+format: coco
+path: /path/to/coco
+names: [person]
+kpt_shape: [17, 3]
+flip_idx: [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]
+train: {images: train2017, ann: annotations/person_keypoints_train2017.json}
+val:   {images: val2017,   ann: annotations/person_keypoints_val2017.json}
+```
+
 ## 2. 名字寻址与 local/ 覆盖
 
 - `--data coco`：先查 `config/datasets/local/coco.yaml`（gitignored，**机器路径只写这里**），
@@ -54,6 +67,9 @@ val:   {images: images/val}
   （train 返回空白画布 + 空标签，val 保留 GT 记漏检）。
 - 两种格式的 `--limit N` 取样集不同：COCO 走 json 顺序、YOLO 走文件名排序；跨格式比较
   要用全量或对齐集合。
+- pose 目前只支持 **COCO keypoints json**（YOLO-pose txt 未接入）；`kpt_shape` 是结构参数，
+  必须与权重 metadata 一致。`require_keypoints` 会剔除没有有效关键点的图（COCO-pose
+  train 56,599 / val 2,346）。
 
 ## 4. 各命令里 `--data` 的用途
 

@@ -58,7 +58,37 @@ onnx(CPU) raw outputs differ by ~1e-6 relative, cross-device (CUDA vs CPU oneDNN
 with mask-boundary pixel flips (worst instance IoU 0.993) — cross-device alignment should
 compare within one runtime or go through TensorRT.
 
-## 3. Training-internal alignment
+## 3. Official weight alignment (YOLO26n-pose)
+
+Convention: the **2,346 COCO-pose val2017 images with valid keypoints**, `scripts/eval.py`
+(pycocotools keypoints, OKS, maxDets=20); the `ultralytics` row uses the same images and the
+same pre/postprocessing, only the forward differs.
+
+| Model | Implementation | E2E AP | E2E AP50 | NMS AP | NMS AP50 |
+|---|---|---|---:|---:|---:|---:|
+| YOLO26n-pose official weights | this repo | **0.5687** | 0.8250 | **0.5670** | 0.8280 |
+| YOLO26n-pose official weights | Ultralytics (same 2,346 images) | 0.572 | 0.833 | 0.570 | 0.831 |
+
+- **Bit-exact reproduction**: the official `yolo26n-pose` (363 layers, **3,679,464 params**)
+  loads with `strict=True` on every key (including `cv4_kpts` / `cv4_sigma` / `flow_model`);
+  on the same input the E2E `(1,300,57)` and raw `(1,56,8400)` outputs match the official
+  forward with **max diff 0.0**.
+- The ~0.003 AP gap to Ultralytics comes from square letterbox (the official val uses auto/rect)
+  and metric-implementation noise; the official training-time validator records pose 0.5717 /
+  AP50 0.8332, the same order.
+- Export/runtime: ONNX E2E/raw metrics differ from pt by ≤0.001 on the 50-image subset; raw
+  output differs element-wise by ≤1e-2 px (mean ~3e-5); TRT fp32/fp16 E2E AP on the same subset
+  is 0.6442 / 0.6448 vs 0.6451 for pt (no detection flips above conf=0.25).
+- **Training internals**: `ComputeLossPose` matches the official `PoseLoss26` on a real
+  COCO-pose batch with total loss **40.0884819 vs 40.0884819 (rel 0)**; the o2o pose/kobj/rle
+  terms match item by item (`tests/test_loss_pose.py`).
+- Tests: `tests/test_pose.py` (strict load / forward parity / export-branch regression),
+  `tests/test_dataset_pose.py` (keypoint alignment / flip_idx / mosaic),
+  `tests/test_metrics_pose.py` (OKS AP), `tests/test_train_smoke.py -k pose` (gated).
+- **No full 400-epoch / from-scratch pose result yet**; the table above only covers official
+  weight reproduction.
+
+## 4. Training-internal alignment
 
 Item-by-item cross-checks against the official implementation at the same weights and the same
 real batch:
@@ -78,7 +108,7 @@ real batch:
 Related rules: [../pipeline/train.md](../pipeline/train.md),
 [../pipeline/eval.md](../pipeline/eval.md) and the model pages.
 
-## 4. Runtime consistency
+## 5. Runtime consistency
 
 - **pt ↔ onnx**: raw output relative diff <5e-4, E2E detections <1e-3.
 - **TensorRT**: the fp32 engine differs from PyTorch by <2e-3; the fp16 engine's raw output is
@@ -88,7 +118,7 @@ Related rules: [../pipeline/train.md](../pipeline/train.md),
   keep one contract across the pt / onnx / TRT backends; mask postprocessing is pixel-identical
   with the official val.
 
-## 5. Reproducibility
+## 6. Reproducibility
 
 - `--deterministic` by default: cuDNN autotune off, deterministic kernels, augmentation RNG
   replays every epoch; two runs with the same seed produce **bit-identical** weights, and resume
@@ -98,7 +128,7 @@ Related rules: [../pipeline/train.md](../pipeline/train.md),
 - Training artifacts record arch/scale/nc/imgsz/names/anchors and the provenance commit in
   metadata — weights are self-contained and auditable.
 
-## 6. Tests
+## 7. Tests
 
 ```bash
 pytest tests/ -q          # core suite; env-gated suites skip by default
@@ -110,6 +140,7 @@ pytest tests/test_weight_alignment.py -v   # needs dev deps + converted official
 - **Coverage**: bit-identical weight alignment, export parity, evaluator and metric correctness,
   training components (assigner / loss parity / MuSGD / EMA / checkpoint / augment / dataset /
   config / smoke / head-train), v3 (model / loss / darknet converter / engine / export
-  cross-checks), segmentation (model / loss / dataset / metrics / validator / smoke / repro).
+  cross-checks), segmentation (model / loss / dataset / metrics / validator / smoke / repro),
+  pose (model / loss / dataset / metrics / smoke / export-branch regression).
 - CI: `.github/workflows/tests.yml` runs the ungated CPU core suite on push/PR (no ultralytics
   installed).

@@ -28,6 +28,11 @@ python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
     --weights weights/yoloe-26n-seg.safetensors --name yoloe-pe-coco
 python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
     --weights weights/yoloe-26n-seg.safetensors --name yoloe-ft-coco --lr0 0.001
+
+# YOLO26-pose：COCO-pose 关键点；官方 400 轮配方，微调从官方 pose 权重开始
+python scripts/train.py --data coco-pose --model yolo26-pose \
+    --weights weights/yolo26n-pose.safetensors \
+    --recipe yolo26-pose-coco --epochs 10 --batch 32 --name pose-ft
 ```
 
 ## 2. 配方（recipe）
@@ -39,6 +44,7 @@ python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
 | *（不传）* | 从零 / 自有数据微调 | — | 100 |
 | `yolo26-coco-ft` | 官方 COCO 阶段（微调） | **需 O365 预训练权重初始化** | 245/70/80/60/40 |
 | `yolo26-seg-coco-ft` | 官方 seg COCO 阶段 | 需 `yolo26*-objv1-seg`（365 类）+ COCO 多边形 | 245/50/80/60/40 |
+| `yolo26-pose-coco` | 官方 pose COCO 阶段 | 需 `coco-pose` 描述符；官方从 O365 检测权重初始化 | 400（各档） |
 | `yolo26-o365-pt` | 官方 Objects365 预训练（检测） | 需 Objects365（未验证） | 150 |
 | `yolo26-seg-o365-pt` | 官方 Objects365 预训练（分割） | 需 Objects365v1 seg（未验证） | 150 |
 
@@ -55,6 +61,10 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 - `yolo26-seg-coco-ft` 显式写 `mask_ratio: 1`、`overlap_mask: true`、
   `copy_paste_mode: flip`；semseg 辅助损失始终启用。
 - 分割初始化是 365 类 O365 权重，`--weights` 走 key+shape 交集加载（类别头重建）。
+- `yolo26-pose-coco` 记录官方 pose train_args：400 轮、batch 128、nbs 64、lr0 0.005、
+  lrf 0.1、`pose_gain=24` / `kobj_gain=4` / `rle_gain=1`、`cls_w=2`、`prog_alpha_init=1.0`、
+  `muon_w/sgd_w=0.5`、mosaic 1.0、fliplr 0.5。官方 checkpoint 从 O365 **检测**权重初始化；
+  从零训练用同一配方时建议 `--no-amp`，且结果不与官方 like-for-like。
 
 ## 3. 常用参数
 
@@ -63,7 +73,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--data` | —（必填） | 描述符 |
 | `--name` | 空 → `runs/train/train` | run 目录后缀；已存在自动加序号 |
 | `--recipe` | 内置 default | 配方名或 `.yaml` 路径 |
-| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu` / `yoloe-26` |
+| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `yolo26-pose` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu` / `yoloe-26` |
 | `--scale` | `n` | yolo26 系档位；其他架构固定 |
 | `--pe` | false | YOLOE-26 文本模式 PE 线性探测（需 `--weights` 文本权重；只训 cv3 尾卷积） |
 | `--full-finetune` | false | YOLOE-26 全量微调（需 `--weights` 文本权重；全部参数训练，reprta 在图内） |
@@ -85,6 +95,9 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--amp` | false | fp16+GradScaler；**从零训练会 NaN，仅微调可试** |
 | `--optimizer` | `musgd` | `musgd`（Muon+SGD）或 `sgd`（darknet 口径） |
 | `--obj-iou-target` | false | v3 IoU-aware objectness |
+| `--pose-gain` | 24.0 | pose 关键点位置损失权重（仅 `yolo26-pose`） |
+| `--kobj-gain` | 4.0 | pose 关键点可见性 BCE 权重（仅 `yolo26-pose`） |
+| `--rle-gain` | 1.0 | pose RLE 损失权重（仅 `yolo26-pose`） |
 | `--close-mosaic` | 10 | 最后 N 轮关 mosaic/mixup/cutmix/copy_paste（自动 `min(N, epochs//5)`） |
 | `--multi-scale` | 0.0 | 输入尺寸抖动 ±r |
 | `--copy-paste-mode` | `off` | `off` / `box` / `flip`（官方分割 CopyPaste） |
@@ -178,6 +191,9 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
 2. **`--close-mosaic` 是“最后 N 轮”**，不是“从第 N 轮开始”；短跑会被 `min(N, epochs//5)` 缩小。
 3. `best.safetensors` 由 FastMetrics 选取；对外数字走 `scripts/eval.py`。
 4. val 损失不可与训练损失直接比（增强分布 / EMA vs raw / BN 模式）。
+5. **pose**：COCO-pose val 只评估 2,346 张有有效关键点的图；`val_rle` 恒 0（验证前向不返回
+   sigma，训练仍在算）；`copy_paste > 0` 直接报错；`--single-cls` 不适用。
+   `fliplr` 需要描述符里的 `flip_idx`，否则翻转后的关键点左右语义会错。
 5. 训练日志的损失列名由 `item_keys` 派生：yolo26 为 `box/cls/l1/o2m/o2o`，
    分割多 `seg/sem`，v3 为 `box/obj/cls`。
 6. 换输入尺寸从零训练时，先验偏置按训练 imgsz 计算；v3 需重聚类锚点。

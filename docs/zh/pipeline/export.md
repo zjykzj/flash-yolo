@@ -10,6 +10,9 @@ python scripts/export.py --weights weights/yolo26n.safetensors              # �
 python scripts/export.py --weights weights/yolo26n.safetensors --raw        # 原始头输出
 python scripts/export.py --weights weights/yolo26n.safetensors --dynamic    # 动态 batch
 python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov3-tiny
+# pose：默认 E2E 单输出 (B,300,6+nk)；--raw 出已解码的 (B,4+nc+nk,N)
+python scripts/export.py --weights weights/yolo26n-pose.safetensors
+python scripts/export.py --weights weights/yolo26n-pose.safetensors --raw
 
 # yoloe prompt-free：E2E 图，conf=0 静态提案口径（官方同款）
 python scripts/export.py --weights weights/yoloe-26n-seg-pf.safetensors
@@ -28,7 +31,7 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 |---|---|---|
 | `--weights` | — | `.safetensors` |
 | `--out` | `runs/export/<stem>.onnx` | 输出路径 |
-| `--raw` | off | 导出原始头 `(B, 4+nc, N)`（yolo26 专属；v3 报错） |
+| `--raw` | off | 导出 o2m/NMS 图：yolo26 为原始 `(B,4+nc,N)`；pose 为**已解码** `(B,4+nc+nk,N)`（v3 报错） |
 | `--nms` | off | 导出 o2m 密集输出（yoloe-26 文本专属；推理/评估需配 `--nms`） |
 | `--dynamic` | off | 动态 batch 轴；默认固定 batch 1 |
 | `--classes` | — | yoloe-26 文本模式：锁定进导出模型的类别名（可与 `--visual-prompt` 组合） |
@@ -47,6 +50,8 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 |---|---|---|
 | yolo26 默认（E2E） | `(B, 300, 6)` = [x1,y1,x2,y2,conf,cls] | 解码 + 两阶段 top-k 在图内 |
 | yolo26 `--raw` | `(B, 4+nc, N)` | 解码/后处理在外 |
+| yolo26-pose 默认（E2E） | `(B, 300, 6+nk)` | 关键点与框共享图内两阶段 top-k；nk = K·D（COCO 51） |
+| yolo26-pose `--raw` | `(B, 4+nc+nk, N)` | **已解码**像素 xywh + sigmoid 分数 + 关键点（官方 pose 口径）；NMS 在外 |
 | yolo26-seg / flash-yolo-seg | `output0 (B, 300, 6+nm)` + `output1 (B, nm, H/4, W/4)` | 系数接末维；原型单独一路 |
 | seg `--raw` | `output0 (B, 4+nc+nm, N)` + `output1` | 掩码由 `process_mask` 解码 |
 | yolov3-tiny | `(B, NA, 5+nc)` | NA = 3·ΣH·W；obj×cls 与 NMS 在外 |
@@ -55,9 +60,12 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 | yoloe 类锁定 `--nms` | `output0 (B, 4+V+nm, N)` + `output1` | 密集输出已是像素 xyxy + sigmoid；NMS 在外（`nms_per_image`） |
 
 - 训练产物自带 metadata，`--scale` / `--nc` 可省略。导出产物也带部署 metadata：ONNX 写入
-  `metadata_props`（arch/scale/nc/imgsz/names/prompt_mode/end2end），TRT 写旁车
-  `<engine>.json`——类锁定的 yoloe 图因此无需原 `.safetensors` 即可
-  `infer/eval --engine onnx|trt`；旧的无 metadata 产物仍需 `--model` / `--scale`。
+  `metadata_props`（arch/scale/nc/imgsz/names/prompt_mode/end2end，pose 另带
+  `kpt_shape`），TRT 写旁车 `<engine>.json`——类锁定的 yoloe 图与 pose 图因此无需原
+  `.safetensors` 即可 `infer/eval --engine onnx|trt`；旧的无 metadata 产物仍需
+  `--model` / `--scale`。
+- pose 的 `cv4_sigma` / `flow_model` 是训练专用，**不进导出图**；ONNX/TRT 只有
+  boxes/scores/keypoints 一路（分割的两输出契约不适用于 pose）。
 - yoloe 视觉模式导出：refer 图前向 + 1/8 bbox/mask 掩码 → SAVPE vpe → `fuse_text` 同一融合路径；
   导出图即类锁定，部署侧不需要 refer 图（metadata `prompt_mode: text`，names 为 prompt 类名）。
 - yoloe 文本模式导出会先跑完整 prompt 链（tokenize → MobileCLIP2-B → reprta+L2——

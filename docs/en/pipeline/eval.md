@@ -14,6 +14,8 @@ python scripts/eval.py --weights weights/yolo26n.onnx --engine onnx --data coco 
 python scripts/eval.py --weights w.safetensors --data coco --imgsz 416                  # input size
 python scripts/eval.py --weights w.safetensors --data coco --split val --limit 100      # subset
 python scripts/eval.py --weights weights/yolo26n-seg.safetensors --data coco            # Box + Mask
+python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose      # Pose (OKS)
+python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose --nms  # Pose o2m+NMS
 python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco       # pf vocab mapping
 python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis          # text prompts (1203 classes)
 python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data lvis-minival  # LVIS minival (5k)
@@ -30,7 +32,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--split` | `val` | role key (train/val/test) |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--model` / `--scale` | inferred from weights | pass explicitly when nothing can be inferred |
-| `--nms` | off | o2m + NMS (yolo26 family + yoloe-26 text; errors for v3, prompt-free is E2E only; onnx/trt must be exported with `--nms`, checked via metadata) |
+| `--nms` | off | o2m + NMS (yolo26 family incl. pose + yoloe-26 text; errors for v3, prompt-free is E2E only; onnx/trt must be exported with `--nms`, checked via metadata) |
 | `--conf` / `--iou` / `--max-det` | 0.001 / 0.7 / 300 | matches the official val convention |
 | `--imgsz` | metadata > 640 | onnx follows the graph shape (conflicts error out) |
 | `--limit` | 0 (full) | evaluate the first N images only (GT restricted to the same subset) |
@@ -42,6 +44,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--refer-data` | — | yoloe-26 visual mode: refer dataset descriptor, one vpe per class from GT boxes |
 | `--refer-split` / `--refer-limit` | train / 0 | refer-dataset role / first N images (0 = all) |
 | `--summary-only` | off | print only the all row |
+| `--single-cls` | off | single-class evaluation: map GT classes to 0 (not applicable to pose; the CLI errors out) |
 | `--device` | auto | pt engine device |
 
 ## 2. Metric conventions and evaluation protocols
@@ -50,7 +53,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 |---|---|---|---|
 | **Formal · COCO protocol** (default) | pycocotools | COCO external numbers, acceptance | — |
 | **Formal · LVIS protocol** | faster_coco_eval (`lvis_style=True`) | LVIS / YOLOE open-vocabulary comparisons | — |
-| In-training | pure-numpy FastMetrics | per-epoch trends + picking `best.safetensors` | ignores crowd, maxDets=100, no area grouping; greedy matching + 101-point interpolation |
+| In-training | pure-numpy FastMetrics / FastPoseMetrics | per-epoch trends + picking `best.safetensors` | ignores crowd, maxDets=100 (pose 20), no area grouping; greedy matching + 101-point interpolation |
 
 FastMetrics tracks the formal convention well, but **cross-run comparisons and external
 references always use the formal convention**.
@@ -122,6 +125,18 @@ Segmentation weights automatically produce two tables: the same results evaluate
 - Datasets accept COCO json and YOLO-seg txt; YOLO has no crowd, so its GT lacks crowd instances.
 - In-training validation computes Box + Mask simultaneously (low-resolution approximation), best
   fitness = box + mask mAP50-95; formal numbers still come from this script.
+
+### 5.1 Pose (yolo26-pose)
+
+- `--data coco-pose`: COCO `person_keypoints_*.json`; the evaluator uses
+  `iou_type="keypoints"` (pycocotools OKS, `maxDets=20`). **Val only evaluates the 2,346 images
+  with valid keypoints** (not 5,000); `scripts/eval.py` filters by `num_keypoints > 0`.
+- The table is `Class Images Instances AP AP50 AP75 AP(M) AP(L) AR`; there is no bbox-style P/R
+  and no small bucket. `results.json` writes COCO keypoints results (`keypoints` + `score`).
+- `--nms` uses the pose o2m branch; `--single-cls` is not applicable to pose.
+- Official `yolo26n-pose` reference (same 2,346 images): this repo E2E **0.5687 / 0.8250**,
+  NMS 0.5670 / 0.8280; Ultralytics E2E 0.572 / 0.833, NMS 0.570 / 0.831. Full conventions:
+  [../models/yolo26-pose.md](../models/yolo26-pose.md).
 
 **Official yolo26n-seg @640 acceptance**: Box 0.3967 / 0.5548, Mask 0.3367 / 0.5276 (mAP50-95 /
 mAP50). The official training-time validator records box 0.3975 / mask 0.3386 — the ~0.002 gap

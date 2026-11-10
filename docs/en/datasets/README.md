@@ -16,6 +16,8 @@ Template: `config/datasets/coco.yaml`.
 | `format` | ✔ | `coco` (json annotations) or `yolo` (`labels/*.txt`) |
 | `path` | – | dataset root; relative paths are resolved against the descriptor's directory; empty = absolute paths only |
 | `names` | ✔ | class name list (or a `{0: name}` mapping, equivalent); **index = class id = nc** |
+| `kpt_shape` | pose ✔ | `[K, D]` (COCO `[17, 3]`); D=2 is x/y only, D=3 adds visibility |
+| `flip_idx` / `kpt_names` / `skeleton` | pose optional | horizontal-flip permutation / per-class keypoint names / skeleton pairs (0-based, visualization only) |
 | `train` / `val` / `test` | train, val ✔ | role keys (`test` accepted but not consumed yet) |
 | ├ `images` | ✔ | coco: image directory; yolo: image directory or a `.txt` image list |
 | ├ `ann` | coco ✔ | annotation json path; **forbidden for yolo** (errors out) |
@@ -37,6 +39,17 @@ path: /path/to/mydata
 names: [cat, dog]
 train: {images: images/train}
 val:   {images: images/val}
+```
+
+```yaml
+# COCO-pose (keypoints; template: config/datasets/coco-pose.yaml)
+format: coco
+path: /path/to/coco
+names: [person]
+kpt_shape: [17, 3]
+flip_idx: [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]
+train: {images: train2017, ann: annotations/person_keypoints_train2017.json}
+val:   {images: val2017,   ann: annotations/person_keypoints_val2017.json}
 ```
 
 ## 2. Name resolution and local/ overrides
@@ -61,6 +74,9 @@ val:   {images: images/val}
   val keeps the GT and honestly records a miss).
 - `--limit N` samples differently per format: COCO follows json order, YOLO follows filename
   order; cross-format comparisons need the full set or aligned subsets.
+- Pose currently supports **COCO keypoints JSON only** (YOLO-pose txt is not wired);
+  `kpt_shape` is structural and must match the weights metadata. `require_keypoints` drops
+  images without valid keypoints (COCO-pose: 56,599 train / 2,346 val).
 
 ## 4. What `--data` means in each command
 

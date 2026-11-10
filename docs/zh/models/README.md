@@ -8,6 +8,7 @@
 |---|---|---|---:|---:|---|
 | YOLO26 | 检测 | n / s / m / l / x | 2.57M (n) | 5.48 (n) | [yolo26.md](yolo26.md) |
 | YOLO26-seg | 实例分割 | n / s / m / l / x | 3.13M (n) | 9.3 (n) | [yolo26-seg.md](yolo26-seg.md) |
+| YOLO26-pose | 姿态估计（COCO 17 关键点） | n / s / m / l / x | 3.68M (n) | 7.6 (n) | [yolo26-pose.md](yolo26-pose.md) |
 | Flash-YOLO | 检测 | flash（单档） | 1.97M | 3.80 | [flash-yolo.md](flash-yolo.md) |
 | Flash-YOLO-seg | 实例分割 | flash（单档） | 2.53M | 7.6 | [flash-yolo-seg.md](flash-yolo-seg.md) |
 | YOLOv3-tiny / -SiLU | 检测 | tiny（单档） | 8.85M | 5.56 @416 | [yolov3-tiny.md](yolov3-tiny.md) |
@@ -18,13 +19,18 @@
 ```bash
 python scripts/train.py --data coco --model yolo26 --scale n
 python scripts/train.py --data coco --model yolo26-seg --scale n
+python scripts/train.py --data coco-pose --model yolo26-pose --scale n
 python scripts/train.py --data coco --model flash-yolo
 python scripts/train.py --data coco --model flash-yolo-seg
 python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 ```
 
-- `yolo26` / `yolo26-seg` / `yoloe-26` 有 `n/s/m/l/x` 档位；`flash-yolo` / `flash-yolo-seg` 只有
-  `flash`，`yolov3-tiny` 只有 `tiny`——对这些架构传 `--scale` 会告警且不生效。
+- `yolo26` / `yolo26-seg` / `yolo26-pose` / `yoloe-26` 有 `n/s/m/l/x` 档位；
+  `flash-yolo` / `flash-yolo-seg` 只有 `flash`，`yolov3-tiny` 只有 `tiny`——对这些架构传
+  `--scale` 会告警且不生效。
+- `yolo26-pose` 使用 `--data coco-pose`（COCO keypoints json，17 点、`nc=1`）；
+  官方 400 轮配方是 O365 检测预训练 + COCO-pose 微调，从零训练不与官方 like-for-like。
+  训练/评估/导出/推理均已接入，细节见 [yolo26-pose.md](yolo26-pose.md)。
 - `yoloe-26` 支持 prompt-free（-pf）与文本 prompt 权重；`--raw` 不适用，`--nms` 仅支持
   文本模式（o2m + NMS；pf 仅 E2E，见 yoloe.md）。文本模式另需 `mobileclip2_b.safetensors`
   （Apple MobileCLIP2-B 文本编码器的转换产物）与模型权重同目录。
@@ -69,7 +75,8 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 
 训练保存与转换器都会往 safetensors header 写可选 JSON：
 
-- 模型参数：`arch` / `scale` / `nc` / `imgsz` / `names`，含锚模型另有 `anchors`；
+- 模型参数：`arch` / `scale` / `nc` / `imgsz` / `names`，含锚模型另有 `anchors`，
+  pose 另有 `kpt_shape`；
 - 出处：`version` / `repo` / `commit` / `describe`（best-effort，读不到不写该键）。
 
 读取顺序：**CLI 显式 > metadata > 文件名/默认**。所以 `best.safetensors` 这类文件名推不出
@@ -79,7 +86,10 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 ### E2E 与 NMS
 
 - **E2E（默认）**：o2o 头、无 NMS，输出 `(B, 300, 6)`；官方 40.1 走这条路径。
+  pose 在末维追加 `nk` 个关键点通道：`(B, 300, 6+nk)`。
 - **NMS**：o2m 头 + 类感知 NMS，通常高 ~0.9 点、略慢；`--nms` 启用。
+  pose 的 raw/NMS 输出是**已解码**的 `(B, 4+nc+nk, N)`（xywh + sigmoid + 关键点），
+  与检测头的 raw ltrb+logits 不同，见 [yolo26-pose.md](yolo26-pose.md)。
 - YOLOv3-tiny 只有一条“解码 + obj×cls + NMS”路径，`--nms` / `--raw` 对它直接报错。
 
 ### anchors（仅 YOLOv3-tiny）
@@ -91,7 +101,9 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 
 ## 3. 官方 vs 从零
 
-- 官方 YOLO26 / YOLO26-seg 权重是 **Objects365v1 预训练 + COCO 微调**，不是从零训练；
-  把从零数字和官方数字放在一起比较不是 like-for-like。
-- 各模型页给出最终结果（300 轮从零）、权重下载与延迟；跨模型的同预算对照见根 README 的 Results。
+- 官方 YOLO26 / YOLO26-seg / YOLO26-pose 权重是 **Objects365v1 预训练 + COCO(-pose) 微调**，
+  不是从零训练；把从零数字和官方数字放在一起比较不是 like-for-like。
+  pose 的 COCO 阶段是 400 轮，且从 O365 **检测**权重初始化。
+- 各模型页给出可用的最终结果（多数为 300 轮从零；pose 目前只有官方权重复现，尚无完整
+  从零全长结果）、权重下载与延迟；跨模型的同预算对照见根 README 的 Results。
 - 正式指标一律以 `scripts/eval.py`（pycocotools）为准；训练中的 FastMetrics 只用于趋势与选 best。

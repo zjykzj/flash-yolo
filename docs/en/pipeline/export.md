@@ -11,6 +11,9 @@ python scripts/export.py --weights weights/yolo26n.safetensors              # de
 python scripts/export.py --weights weights/yolo26n.safetensors --raw        # raw head output
 python scripts/export.py --weights weights/yolo26n.safetensors --dynamic    # dynamic batch
 python scripts/export.py --weights weights/yolov3-tiny.safetensors --model yolov3-tiny
+# pose: default E2E single output (B,300,6+nk); --raw emits the decoded (B,4+nc+nk,N) graph
+python scripts/export.py --weights weights/yolo26n-pose.safetensors
+python scripts/export.py --weights weights/yolo26n-pose.safetensors --raw
 
 # yoloe prompt-free: E2E graph with the conf=0 static proposal path (official convention)
 python scripts/export.py --weights weights/yoloe-26n-seg-pf.safetensors
@@ -29,7 +32,7 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 |---|---|---|
 | `--weights` | — | `.safetensors` |
 | `--out` | `runs/export/<stem>.onnx` | output path |
-| `--raw` | off | export the raw head `(B, 4+nc, N)` (yolo26 only; errors for v3) |
+| `--raw` | off | export the o2m/NMS graph: yolo26 is the raw `(B,4+nc,N)`; pose is the **decoded** `(B,4+nc+nk,N)` (errors for v3) |
 | `--nms` | off | export the dense o2m output (yoloe-26 text only; pass `--nms` at infer/eval) |
 | `--dynamic` | off | dynamic batch axis; default fixed batch 1 |
 | `--classes` | — | yoloe-26 text mode: class names to lock into the exported model (combine with `--visual-prompt`) |
@@ -48,6 +51,8 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 |---|---|---|
 | yolo26 default (E2E) | `(B, 300, 6)` = [x1,y1,x2,y2,conf,cls] | decode + two-stage top-k in-graph |
 | yolo26 `--raw` | `(B, 4+nc, N)` | decode/postprocess outside |
+| yolo26-pose default (E2E) | `(B, 300, 6+nk)` | keypoints share the in-graph two-stage top-k; nk = K·D (COCO 51) |
+| yolo26-pose `--raw` | `(B, 4+nc+nk, N)` | **decoded** pixel xywh + sigmoid scores + keypoints (official pose convention); NMS outside |
 | yolo26-seg / flash-yolo-seg | `output0 (B, 300, 6+nm)` + `output1 (B, nm, H/4, W/4)` | coefficients appended; prototypes a separate branch |
 | seg `--raw` | `output0 (B, 4+nc+nm, N)` + `output1` | masks decoded by `process_mask` |
 | yolov3-tiny | `(B, NA, 5+nc)` | NA = 3·ΣH·W; obj×cls and NMS outside |
@@ -57,9 +62,12 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 
 - Training artifacts carry metadata, so `--scale` / `--nc` can be omitted. Exported artifacts
   also carry deploy metadata: ONNX writes `metadata_props` (arch/scale/nc/imgsz/names/
-  prompt_mode/end2end) and TRT writes a `<engine>.json` sidecar — so a class-locked yoloe
-  graph can run `infer/eval --engine onnx|trt` without the original `.safetensors`. Older
-  exports without metadata still need `--model` / `--scale`.
+  prompt_mode/end2end; pose adds `kpt_shape`) and TRT writes a `<engine>.json` sidecar — so a
+  class-locked yoloe graph or a pose graph can run `infer/eval --engine onnx|trt` without the
+  original `.safetensors`. Older exports without metadata still need `--model` / `--scale`.
+- Pose's `cv4_sigma` / `flow_model` are training-only and **not in the exported graph**; the
+  ONNX/TRT graph has a single boxes/scores/keypoints output (the segmentation two-output
+  contract does not apply to pose).
 - yoloe visual-mode export runs the refer image through the backbone, rasterizes bboxes/masks
   at 1/8, computes SAVPE vpe and feeds the same `fuse_text` path; the exported graph is
   class-locked, so deployment needs no refer image (metadata `prompt_mode: text`, names = the

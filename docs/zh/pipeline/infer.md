@@ -24,6 +24,10 @@ python scripts/infer.py --weights <自训权重>.safetensors --data mydataset --
 # 分割权重：自动识别 arch，可视化叠加实例掩码
 python scripts/infer.py --weights weights/yolo26n-seg.safetensors --image assets/traffic.jpg
 
+# pose 权重：画关键点/骨架；标签写 YOLO-pose 格式
+python scripts/infer.py --weights weights/yolo26n-pose.safetensors \
+    --image assets/traffic.jpg --data coco-pose
+
 # yoloe prompt-free：标签名 = 权重 metadata 里烘焙的 4,585 名词汇
 python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors --image assets/traffic.jpg
 # yoloe 文本 prompt：pt 经 MobileCLIP2-B 编码；onnx/trt 消费类锁定图
@@ -52,14 +56,14 @@ python scripts/infer.py --weights weights/yolo26n.safetensors --video /path/to/v
 | `--show` | off | 视频实时预览（需要 GUI） |
 | `--engine` | `pt` | `pt` / `onnx` / `trt` |
 | `--conf` | **0.25** | 置信度阈值（eval 默认 0.001，两者用途不同） |
-| `--nms` | off | o2m + NMS（yolo26 系 + yoloe-26 文本模式；v3 报错，pf 仅 E2E；onnx/trt 需导出时加 `--nms`，metadata 会校验） |
+| `--nms` | off | o2m + NMS（yolo26 系含 pose + yoloe-26 文本模式；v3 报错，pf 仅 E2E；onnx/trt 需导出时加 `--nms`，metadata 会校验） |
 | `--agnostic-nms` | off | 跨类 NMS（需同时给 `--nms`） |
 | `--classes` | — | yoloe-26 文本模式：逗号分隔的类别名（pt 必填；onnx/trt 可省略，需与锁定列表一致；全量微调产物未给时自动用 metadata names） |
 | `--text-encoder` | 权重同目录 | MobileCLIP2-B `.safetensors`；run 目录的微调产物用它指定 |
 | `--visual-prompt` | — | yoloe-26 视觉模式：refer 图 + bbox/mask 的 JSON（仅 pt；可与 `--classes` 组合成混合 prompt） |
 | `--model` / `--scale` | 从文件名/metadata 推断 | 推不出时报错 |
 | `--output` | `runs/predict/predictN/` | 图片：文件或目录；视频：输出视频文件 |
-| `--data` | COCO 标签 | 只用 `names` + `nc`；不读图片（yoloe 忽略） |
+| `--data` | COCO 标签 | 只用 `names` + `nc`（pose 另用 `skeleton` 画骨架）；不读图片（yoloe 忽略） |
 | `--imgsz` | metadata > 640 | 覆盖输入尺寸 |
 | `--device` | auto | pt 引擎设备 |
 
@@ -79,6 +83,9 @@ Labels        -> runs/predict/predict21/labels
 - 分割权重：可视化叠加半透明实例掩码；`labels/*.txt` 写**归一化多边形行**
   `cls x1 y1 x2 y2 ...`（外轮廓、多连通域按最近点合并、少于 3 点跳过，与官方 `save_txt`
   同口径）。
+- pose 权重：可视化画关键点与骨架（可见性 <0.5 的点不画）；`labels/*.txt` 写 YOLO-pose
+  行 `cls xc yc w h px1 py1 v1 ... pxK pyK vK`（x/y 按原图归一化，v 为可见性分数）。
+  `--data coco-pose` 会带出骨架定义；不给描述符时按 COCO 17 点骨架。
 - 视频模式**不写 `labels/`**（逐帧 txt 没有稳定命名语义）；编码按后缀选：`.avi`/`.mjpg`
   用 MJPG，其余用 mp4v；写不了时报错并提示换 `.avi`。
 - 相机/流的输出尺寸在**首帧**确定；`--show` 在无显示服务器上会告警并自动关闭，不影响写入。

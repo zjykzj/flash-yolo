@@ -53,6 +53,19 @@ variants: `yolov3-tiny` (darknet line-by-line isomorphic) only matches the offic
 `yolov3-tiny-silu` (only difference LeakyReLU→SiLU) is part of the recommended training config
 (with `--obj-iou-target`). Key sets / param counts / GFLOPs are fully identical.
 
+### Why does pose val have only 2,346 images?
+
+The COCO-pose protocol only evaluates images with **valid keypoints** (`num_keypoints > 0`);
+`person_keypoints_val2017.json` contains 5,000 images, but 2,654 of them have no pose GT.
+`scripts/eval.py` filters automatically; do not mix this number with the 5,000-image detection
+split.
+
+### Why can't the official pose numbers be compared with from-scratch training?
+
+The official `yolo26n-pose` is **Objects365 detection pretraining + 400 COCO-pose epochs**;
+from-scratch training works but is not like-for-like. Also, the official recipe's `amp=true`
+relies on the O365 initialization; from-scratch runs should use `--no-amp`.
+
 ## 2. Training
 
 ### Can from-scratch training use AMP?
@@ -72,6 +85,12 @@ then NaN. Debugging this class of issue: **watch the |W|max of non-bias weights,
 
 Yes. The cls initial bias makes sigmoid ≈ 1e-5, below the conf threshold, so all predictions are
 filtered; it recovers after a training step or two. Don't mistake it for a pipeline failure.
+
+### Why is `val_rle` always 0 in pose training logs?
+
+The validation forward does not return `kpts_sigma` (the sigma branch only runs in training
+mode), so the validation RLE term short-circuits to zero; the training `rle_loss` keeps updating.
+This matches the official training-time validator's `val/rle_loss=0`.
 
 ### Training hangs: the process is alive, GPU at 0%, no error?
 

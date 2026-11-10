@@ -57,7 +57,26 @@ Each instance additionally reads `segmentation`:
 - `overlap_mask=True` (default) produces an area-descending instance index map; labels are
   reordered accordingly — **the index-map IDs must match the targets row order**.
 
-## 4. Small datasets
+## 4. Keypoint annotations (`--model yolo26-pose`)
+
+COCO-pose uses `person_keypoints_{train,val}2017.json` (not `instances_*.json`):
+
+- Each instance carries `keypoints` (17×3 absolute pixels `x,y,v`, v=0/1/2) and
+  `num_keypoints`; `bbox`/`area` are still used by the box loss and the OKS area normalization.
+- The descriptor additionally writes `kpt_shape` / `flip_idx` / `kpt_names` / `skeleton`
+  (template: `config/datasets/coco-pose.yaml`); `kpt_shape` must match the weights metadata.
+- `require_keypoints` filters by `num_keypoints > 0`: COCO-pose has **56,599 train** and
+  **2,346 val** images. **Pose val is not the 5,000-image detection split** — do not mix them.
+- An annotation without a `keypoints` field errors out in pose training/evaluation (it is never
+  silently treated as background).
+
+```bash
+python scripts/train.py --data coco-pose --model yolo26-pose \
+    --weights weights/yolo26n-pose.safetensors --recipe yolo26-pose-coco --epochs 10
+python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
+```
+
+## 5. Small datasets
 
 ```bash
 python scripts/make_coco_subset.py --src /path/to/coco --dst /path/to/coco-tiny \
@@ -67,7 +86,7 @@ python scripts/make_coco_subset.py --src /path/to/coco --dst /path/to/coco-tiny 
 The script samples by seed, hard-links images, generates coco/yolo descriptors and copies them
 into `config/datasets/local/`. `--data coco-tiny` works directly afterwards.
 
-## 5. Gotchas
+## 6. Gotchas
 
 - `--limit N` takes the first N in json order — not the same image set as YOLO's filename order;
   cross-format comparisons need the full set.

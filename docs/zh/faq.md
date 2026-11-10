@@ -46,6 +46,18 @@ pycocotools 得 35.90 AP50 / 17.16 mAP50-95。v3 两变体：`yolov3-tiny`（dar
 只配官方 `.weights`；`yolov3-tiny-silu`（唯一差异 LeakyReLU→SiLU）是推荐训练配置的一部分
 （配合 `--obj-iou-target`），两者键集/参数量/GFLOPs 完全一致。
 
+### pose 的 val 为什么只有 2,346 张图？
+
+COCO-pose 官方协议只评估**有有效关键点**的图（`num_keypoints > 0`）；
+`person_keypoints_val2017.json` 里有 5,000 张图，但其中 2,654 张没有 pose GT。
+`scripts/eval.py` 会自动过滤，报告数字时不要与检测的 5,000 张混用。
+
+### pose 官方数字为什么不能和从零训练比？
+
+官方 `yolo26n-pose` 是 **Objects365 检测预训练 + COCO-pose 400 轮微调**；从零训练
+可以跑通，但不是 like-for-like。另：官方配方 `amp=true` 依赖 O365 初始化，从零建议
+`--no-amp`。
+
 ## 2. 训练
 
 ### 从零训练能开 AMP 吗？
@@ -63,6 +75,12 @@ pycocotools 得 35.90 AP50 / 17.16 mAP50-95。v3 两变体：`yolov3-tiny`（dar
 
 正常。cls 初始偏置让 sigmoid ≈ 1e-5，低于 conf 阈值，全部预测被过滤；训练一两步后恢复。
 不要误判为管线故障。
+
+### pose 训练日志里的 `val_rle` 为什么恒为 0？
+
+验证前向不返回 `kpts_sigma`（sigma 分支只在训练模式计算），所以 val 的 RLE 项有零项
+短路；训练损失里的 `rle_loss` 仍在正常更新。这与官方训练期 validator 的 `val/rle_loss=0`
+同口径。
 
 ### 训练卡死：进程活着、GPU 0%、没有任何报错？
 
