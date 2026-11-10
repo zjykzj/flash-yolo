@@ -357,10 +357,8 @@ evaluation (pycocotools, all 5,000 images):
 - The fused initialization matches the unfused text path on the first 500 images
   (Box 0.3338 / Mask 0.2790): PE starts at the zero-shot baseline, so the gains above come
   entirely from the six tail convolutions.
-- **10 epochs is the recommended budget**: the COCO 20-epoch control (lr0=0.05) reaches
-  E2E 0.3091 / 0.2510 and Non-E2E 0.3223 / 0.2582, only +0.0002 / +0.0012 over 10 epochs
-  at roughly twice the time; LVIS 5 vs 10 epochs differ by ~0.002 (5 has slightly higher
-  APr, 10 slightly higher overall). Extend only if the validation curve is clearly not flat.
+- **10 epochs is the recommended budget** for both COCO and LVIS; extend only when the
+  validation curve is clearly not flat (longer budgets add little).
 - Deployment: the same fused weights score Box 0.4031 (pt) vs 0.4032 (exported ONNX) on the
   first 100 COCO images (E2E); the class-locked graph runs with `--engine onnx` and no
   `--classes`.
@@ -394,29 +392,24 @@ evaluation (pycocotools, all 5,000 images):
 | Non-E2E | **0.3710** | **0.3044** | 0.3211 / 0.2570 | 0.2952 / 0.2407 |
 
 - Versus PE: +0.0508 Box / +0.0471 Mask (E2E), +0.0499 / +0.0474 (Non-E2E).
-- FastMetrics curve: ep1 0.3196/0.2599 → ep5 0.3398/0.2844 → ep10 0.3559/0.2988, still
-  rising at the last epoch; val_box 0.3251→0.3210 and val_seg 0.7364→0.6790, so no
-  overfitting. 10 epochs is the current budget; extend when the validation curve is not flat.
-- lr probes (2,000 images / 1 epoch, 500-image FastMetrics): 0.0002 / 0.0005 / 0.001 / 0.005 /
-  0.01 = 0.5916 / 0.6100 / 0.6098 / 0.5541 / 0.4935 (zero-shot on the same subset 0.6128) —
-  0.0005–0.001 holds the baseline while ≥0.005 drifts, which is why the run uses 0.001. AMP
-  (0.001) scores 0.6030 at 5.6G peak vs fp32 8.4G, with the same epoch time, so the formal
-  run uses fp32.
+- **10 epochs is the recommended starting budget**: extend only when the validation curve
+  is clearly not flat (longer budgets have diminishing returns).
+- **Use lr0 0.001** (COCO and LVIS); do not reuse PE's 0.1 / 0.01 — full-parameter training
+  drifts the pretrained features. Default fp32; AMP has no speed benefit on this model.
 - Consumption: run-dir checkpoints need `--text-encoder`; infer/export reuse the metadata
   training names when `--classes` is omitted, and eval uses the same dataset descriptor.
 - Reproduce: `python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune
   --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
   --warmup-epochs 3`; evaluate with `--text-encoder weights/mobileclip2_b.safetensors`
   (E2E / `--nms`).
-- **LVIS (1,203 classes, federated)**: 10 epochs (5-epoch checkpoint resumed to 10), batch 16,
-  lr0 0.001; minival with the LVIS protocol (maxDets=100): E2E Box **0.2578** / Mask
+- **LVIS (1,203 classes, federated)**: 10 epochs, batch 16, lr0 0.001; minival with the
+  LVIS protocol (maxDets=100): E2E Box **0.2578** / Mask
   **0.2124** (Box APr / APc / APf 0.1453 / 0.2373 / 0.2962), Non-E2E Box **0.2712** / Mask
   **0.2230** (0.1362 / 0.2539 / 0.3109). PE for 10 epochs scores 0.2346 / 0.1905
   (APr 0.1180) and 0.2436 / 0.1955 (APr 0.1215) — full fine-tuning is +0.0232 / +0.0219
   (E2E) and +0.0276 / +0.0275 (Non-E2E); rare APr rises from 0.1180 to 0.1453 but stays
-  below zero-shot 0.1923 / 0.1962, with gains still concentrated in common/frequent. The
-  5-epoch checkpoint (E2E 0.2444 / 0.1978) already beats PE 10 epochs; 10 epochs is the
-  current budget.
+  below zero-shot 0.1923 / 0.1962, with gains still concentrated in common/frequent.
+  10 epochs is the current budget.
 - LVIS reproduce: `python scripts/train.py --data lvis --model yoloe-26 --scale n
   --full-finetune --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 16
   --lr0 0.001 --warmup-epochs 3 --val-limit 5000`; evaluate with `--data lvis-minival

@@ -309,9 +309,8 @@ train2017，10 轮，lr0 0.1 / batch 32 / 640）。正式评估（pycocotools，
 
 - fuse 初始化与未 fuse 文本路径在前 500 图上一致（Box 0.3338 / Mask 0.2790）：PE 的起点
   就是零样本基线，上述增益全部来自 6 个尾卷积。
-- **10 轮是推荐轮数**：COCO 20 轮对照（lr0=0.05）E2E 0.3091 / 0.2510、Non-E2E
-  0.3223 / 0.2582，相对 10 轮仅 +0.0002 / +0.0012，耗时约翻倍；LVIS 5 vs 10 轮总体
-  差 ~0.002（5 轮 APr 略高、10 轮总体略优）。除非验证曲线明显未平台，不必加到 20 轮。
+- **10 轮是推荐预算**：COCO 与 LVIS 都按 10 轮训练；只有验证曲线明显未平台时才增加
+  预算（更长的轮数收益很小）。
 - 部署链路：同一 fused 权重在 pt 与导出 ONNX 上评估 COCO 前 100 图，Box 0.4031 vs
   0.4032（E2E）；类锁定图可直接 `--engine onnx` 消费，无需 `--classes`。
 - 规模与单卡选项：n/s/m/l/x 五档均通过「官方文本权重 strict load → fuse → 只训 6 个尾卷积」
@@ -340,27 +339,22 @@ lr0 0.001 / batch 32 / 640；单卡 3090 4 h 40 min）。正式评估（pycocoto
 | Non-E2E | **0.3710** | **0.3044** | 0.3211 / 0.2570 | 0.2952 / 0.2407 |
 
 - 比 PE：E2E +0.0508 Box / +0.0471 Mask；Non-E2E +0.0499 / +0.0474。
-- FastMetrics 曲线 ep1 0.3196/0.2599 → ep5 0.3398/0.2844 → ep10 0.3559/0.2988，
-  末轮仍在上升；val_box 0.3251→0.3210、val_seg 0.7364→0.6790，未过拟合。10 轮是
-  当前预算；验证曲线未平台时可续训。
-- lr 探针（2000 图 / 1 epoch，500 图 FastMetrics）：0.0002 / 0.0005 / 0.001 / 0.005 /
-  0.01 = 0.5916 / 0.6100 / 0.6098 / 0.5541 / 0.4935（零样本同子集 0.6128）——0.0005–0.001
-  保持基线、≥0.005 明显漂移，是选 0.001 的依据。AMP（0.001）fitness 0.6030、峰值 5.6G vs
-  fp32 8.4G，epoch 耗时相同，故正式 run 用 fp32。
+- **10 轮是推荐起点**：验证曲线明显未平台时可续训（更长预算的收益递减）。
+- **lr0 用 0.001**（COCO / LVIS 一致）；不要沿用 PE 的 0.1 / 0.01——全量参数会让预训练
+  特征漂移。默认 fp32；AMP 在该模型上没有速度收益。
 - 消费：run 目录产物用 `--text-encoder` 指向 MobileCLIP2-B；`infer/export` 未给
   `--classes` 时自动用 metadata 的训练 names，`eval` 用同一数据集描述符。
 - 复现：`python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune
   --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
   --warmup-epochs 3`；评估加 `--text-encoder weights/mobileclip2_b.safetensors`
   （E2E / `--nms` 两口径）。
-- **LVIS（1,203 类，federated）**：10 轮（5 轮检查点续到 10），batch 16、lr0 0.001；
+- **LVIS（1,203 类，federated）**：10 轮，batch 16、lr0 0.001；
   minival 正式评估（LVIS 协议 maxDets=100）：E2E Box **0.2578** / Mask **0.2124**
   （Box APr / APc / APf 0.1453 / 0.2373 / 0.2962）、Non-E2E Box **0.2712** / Mask
   **0.2230**（0.1362 / 0.2539 / 0.3109）。PE 10 轮为 0.2346 / 0.1905（APr 0.1180）与
   0.2436 / 0.1955（APr 0.1215）——全量微调 E2E +0.0232 / +0.0219、Non-E2E +0.0276 /
   +0.0275；rare 类 APr 从 0.1180 升到 0.1453，但仍低于零样本 0.1923 / 0.1962，
-  增益继续集中在 common/frequent。5 轮检查点（E2E 0.2444 / 0.1978）即已超过 PE 10 轮，
-  10 轮是当前推荐预算。
+  增益继续集中在 common/frequent。10 轮是当前推荐预算。
 - LVIS 复现：`python scripts/train.py --data lvis --model yoloe-26 --scale n --full-finetune
   --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 16 --lr0 0.001
   --warmup-epochs 3 --val-limit 5000`；评估用 `--data lvis-minival --eval-max-dets 100
