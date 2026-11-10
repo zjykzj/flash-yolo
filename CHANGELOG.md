@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Pose documentation**: bilingual YOLO26-pose model pages and task-specific train/eval/export/infer/dataset/model-matrix/alignment/FAQ sections document the new pipeline and its 2,346-image COCO-pose protocol.
+- **Pose training parity evidence**: a 10-epoch official-weight finetune matches ultralytics 8.4.173 (E2E AP 0.5476 vs 0.5477, NMS 0.5528 vs 0.5508), and the docs flag that pose training-time metrics sit well below pycocotools (0.4367 / 0.3676 vs 0.5476 / 0.5477).
 
 ## [1.6.0] - 2026-11-10
 

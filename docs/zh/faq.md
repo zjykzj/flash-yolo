@@ -58,6 +58,12 @@ COCO-pose 官方协议只评估**有有效关键点**的图（`num_keypoints > 0
 可以跑通，但不是 like-for-like。另：官方配方 `amp=true` 依赖 O365 初始化，从零建议
 `--no-amp`。
 
+### 训练中 pose mAP 和 `scripts/eval.py` 差很多，正常吗？
+
+正常。FastPoseMetrics 是快速近似（贪婪匹配 / 101 点插值 / 忽略 crowd），10 轮微调实测
+**0.4367 vs 正式 0.5476**；ultralytics 的 PoseMetrics 也同样偏低（0.3676 vs 0.5477）。
+训练日志只用于趋势和 best 选取，跨 run / 跨实现比较只用 `scripts/eval.py`。
+
 ## 2. 训练
 
 ### 从零训练能开 AMP 吗？

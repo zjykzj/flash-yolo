@@ -65,6 +65,10 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
   lrf 0.1、`pose_gain=24` / `kobj_gain=4` / `rle_gain=1`、`cls_w=2`、`prog_alpha_init=1.0`、
   `muon_w/sgd_w=0.5`、mosaic 1.0、fliplr 0.5。官方 checkpoint 从 O365 **检测**权重初始化；
   从零训练用同一配方时建议 `--no-amp`，且结果不与官方 like-for-like。
+- 目标若是跟 **released ultralytics 代码**逐项对齐（而非复现官方 ckpt 的 `train_args`），
+  覆盖 `--cls-w 1.0 --prog-alpha-init 0.8 --muon-w 0.2 --sgd-w 1.0`：该版本不消费
+  `cls_w`，另三项是硬编码默认值。10 轮对齐结果见
+  [../development/alignment.md](../development/alignment.md) §3.1。
 
 ## 3. 常用参数
 

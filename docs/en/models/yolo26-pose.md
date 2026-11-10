@@ -86,8 +86,12 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
   and metric-implementation noise; the forward itself is bit-identical on the same input (see
   [../development/alignment.md](../development/alignment.md)).
 - The official training-time validator records pose 0.5717 / AP50 0.8332, the same order.
+- FastPoseMetrics during training can differ from pycocotools by ~0.1 pose AP (10-epoch
+  finetune: 0.4367 vs 0.5476); training logs are for trends/best-picking only — formal
+  numbers come from `scripts/eval.py`.
 - **No full 400-epoch / from-scratch pose result yet**; short runs are not reported as formal
-  metrics.
+  metrics; the 10-epoch pipeline parity check is in
+  [../development/alignment.md](../development/alignment.md) §3.1.
 
 ## 6. Inference latency (model-only, b1, 640)
 
@@ -121,6 +125,11 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
   (official `PoseMetrics.fitness` convention); formal numbers still come from `scripts/eval.py`.
 - Official recipe: `config/recipes/yolo26-pose-coco.yaml` — 400 epochs, batch 128, nbs 64,
   lr0 0.005, lrf 0.1, cls_w 2, o2m 1.0, muon_w/sgd_w 0.5, mosaic 1.0, fliplr 0.5.
+- To align item-by-item with the released ultralytics code (rather than reproducing the
+  official checkpoint's `train_args`), override `--cls-w 1.0 --prog-alpha-init 0.8
+  --muon-w 0.2 --sgd-w 1.0`: that version does not consume `cls_w`, and the other three are
+  hardcoded. The 10-epoch result is in
+  [../development/alignment.md](../development/alignment.md) §3.1.
 - For from-scratch training use `--no-amp` (the official `amp=true` relies on O365 pretrained
   initialization; the detection from-scratch AMP NaN mechanism applies here too).
 - `copy_paste > 0` errors out for pose (the official pose recipe uses 0 and there are no

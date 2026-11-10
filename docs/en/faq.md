@@ -66,6 +66,13 @@ The official `yolo26n-pose` is **Objects365 detection pretraining + 400 COCO-pos
 from-scratch training works but is not like-for-like. Also, the official recipe's `amp=true`
 relies on the O365 initialization; from-scratch runs should use `--no-amp`.
 
+### Why is the in-training pose mAP far from `scripts/eval.py`?
+
+That is expected. FastPoseMetrics is a fast approximation (greedy matching / 101-point
+interpolation / crowd ignored); on a 10-epoch finetune it read **0.4367 vs the formal 0.5476**.
+Ultralytics' PoseMetrics is also low (0.3676 vs 0.5477). Training logs are for trends and
+best-picking only; cross-run / cross-implementation comparisons use `scripts/eval.py`.
+
 ## 2. Training
 
 ### Can from-scratch training use AMP?

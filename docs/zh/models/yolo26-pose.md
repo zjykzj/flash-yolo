@@ -79,7 +79,10 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
   噪声；同输入 forward 本身逐位一致（见
   [../development/alignment.md](../development/alignment.md)）。
 - 官方训练期 validator 记录 pose 0.5717 / AP50 0.8332；与本管线同量级。
-- **尚无完整 400 轮 / 从零全长 pose 结果**；本页不把短跑数字当正式指标。
+- 训练中 FastPoseMetrics 与 pycocotools 的 pose AP 可差约 0.1（10 轮微调实测 0.4367 vs
+  0.5476）；训练日志只用于趋势与 best 选取，正式数字用 `scripts/eval.py`。
+- **尚无完整 400 轮 / 从零全长 pose 结果**；本页不把短跑数字当正式指标；10 轮训练管线
+  对齐见 [../development/alignment.md](../development/alignment.md) §3.1。
 
 ## 6. 推理延迟（model-only，b1，640）
 
@@ -111,6 +114,9 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
   （官方 `PoseMetrics.fitness` 口径）；正式数字仍以 `scripts/eval.py` 为准。
 - 官方配方：`config/recipes/yolo26-pose-coco.yaml`——400 轮、batch 128、nbs 64、
   lr0 0.005、lrf 0.1、cls_w 2、o2m 1.0、muon_w/sgd_w 0.5、mosaic 1.0、fliplr 0.5。
+- 与 released ultralytics 代码逐项对齐时覆盖 `--cls-w 1.0 --prog-alpha-init 0.8
+  --muon-w 0.2 --sgd-w 1.0`（该版本不消费 cls_w，后三项硬编码）；10 轮结果见
+  [../development/alignment.md](../development/alignment.md) §3.1。
 - 从零训练建议 `--no-amp`（官方 `amp=true` 依赖 O365 预训练初始化；检测从零 AMP 的
   NaN 机制同样适用）。
 - pose 下 `copy_paste > 0` 会直接报错（官方 pose 配方为 0，且没有分割多边形）；

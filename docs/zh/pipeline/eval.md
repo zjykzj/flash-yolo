@@ -120,6 +120,8 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - 表头是 `Class Images Instances AP AP50 AP75 AP(M) AP(L) AR`；没有 bbox 表的 P/R 与 small
   bucket。`results.json` 写 COCO keypoints 结果（`keypoints` + `score`）。
 - `--nms` 走 pose 的 o2m 分支；`--single-cls` 对 pose 不适用。
+- 训练中 FastPoseMetrics 与 pycocotools 的 pose AP 可差约 0.1（10 轮微调实测 0.4367 vs
+  0.5476）；训练日志只用于趋势，正式数字以本脚本为准。
 - 官方 `yolo26n-pose` 参考（同一 2,346 图）：本仓库 E2E **0.5687 / 0.8250**，
   NMS 0.5670 / 0.8280；ultralytics E2E 0.572 / 0.833、NMS 0.570 / 0.831。完整口径见
   [../models/yolo26-pose.md](../models/yolo26-pose.md)。

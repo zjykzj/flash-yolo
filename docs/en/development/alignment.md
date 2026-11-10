@@ -85,8 +85,45 @@ same pre/postprocessing, only the forward differs.
 - Tests: `tests/test_pose.py` (strict load / forward parity / export-branch regression),
   `tests/test_dataset_pose.py` (keypoint alignment / flip_idx / mosaic),
   `tests/test_metrics_pose.py` (OKS AP), `tests/test_train_smoke.py -k pose` (gated).
-- **No full 400-epoch / from-scratch pose result yet**; the table above only covers official
-  weight reproduction.
+
+### 3.1 10-epoch finetune pipeline parity (2026-11)
+
+Protocol: official `yolo26n-pose` weights; this repo and ultralytics 8.4.173 use the same
+**56,599 training images / 2,346 val images**, 10 epochs, batch 64, nbs 64, 640, MuSGD, AMP,
+seed 0. Both disable `close_mosaic` and override the effective values of the released
+ultralytics code (`cls_w=1.0` / `prog_alpha_init=0.8` / `muon_w=0.2` / `sgd_w=1.0`;
+that version does not consume `cls_w`, and the other three are hardcoded — the
+`yolo26-pose-coco` recipe records the official checkpoint's `train_args`). Both checkpoints
+are then re-scored by the same `scripts/eval.py --data coco-pose`.
+
+| Implementation | E2E AP | E2E AP50 | NMS AP | NMS AP50 |
+|---|---:|---:|---:|---:|
+| this repo, 10 epochs | **0.5476** | 0.8089 | **0.5528** | 0.8170 |
+| ultralytics, 10 epochs | **0.5477** | 0.8164 | **0.5508** | 0.8203 |
+
+- E2E AP difference **0.0001**, NMS AP difference **0.0020**; the largest AP75 / AP(M) /
+  AP(L) / AR difference is about **0.004**, inside single-seed, 10-epoch noise — one
+  end-to-end parity check of data / augmentation / loss / optimizer / EMA / validation.
+- This is a **pipeline parity check, not a convergence result**: finetuning the converged
+  official weights for 10 epochs at lr0 0.005 drops both to ~0.548 (official start 0.5687);
+  it is not a model-capability ceiling.
+- Training-time validator pose AP differs strongly from pycocotools (this repo FastPose
+  0.4367, ultralytics PoseMetrics 0.3676 vs formal 0.5476 / 0.5477); training logs are
+  trend/best-picking only and are not comparable across implementations.
+
+```bash
+# this repo; the ultralytics side uses the same data and effective hyperparameters (dev-time)
+python scripts/train.py --data coco-pose --model yolo26-pose \
+    --weights weights/yolo26n-pose.safetensors \
+    --recipe yolo26-pose-coco --epochs 10 --batch 64 \
+    --close-mosaic 0 --cls-w 1.0 --prog-alpha-init 0.8 \
+    --muon-w 0.2 --sgd-w 1.0 --amp
+python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --data coco-pose
+python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --data coco-pose --nms
+```
+
+- **No full 400-epoch / from-scratch pose result yet**; the table covers official-weight
+  reproduction and the 10-epoch finetune parity run.
 
 ## 4. Training-internal alignment
 

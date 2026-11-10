@@ -69,6 +69,11 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
   `prog_alpha_init=1.0`, `muon_w/sgd_w=0.5`, mosaic 1.0, fliplr 0.5. The official checkpoint
   initializes from O365 **detection** weights; from-scratch runs with the same recipe should
   use `--no-amp` and are not like-for-like with the official numbers.
+- To align item-by-item with the **released ultralytics code** (rather than reproducing the
+  official checkpoint's `train_args`), override `--cls-w 1.0 --prog-alpha-init 0.8
+  --muon-w 0.2 --sgd-w 1.0`: that version does not consume `cls_w`, and the other three are
+  hardcoded defaults. The 10-epoch parity result is in
+  [../development/alignment.md](../development/alignment.md) §3.1.
 
 ## 3. Common arguments
 

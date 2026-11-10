@@ -76,7 +76,42 @@ keypoints，OKS，maxDets=20）；`ultralytics` 行使用同一批图、同一�
 - 相关测试：`tests/test_pose.py`（strict load / forward parity / 导出分支回归）、
   `tests/test_dataset_pose.py`（关键点对齐 / flip_idx / mosaic）、
   `tests/test_metrics_pose.py`（OKS AP）、`tests/test_train_smoke.py -k pose`（门控）。
-- **尚无完整 400 轮 / 从零全长 pose 结果**；上表只覆盖官方权重复现。
+
+### 3.1 10 轮微调管线对齐（2026-11）
+
+口径：官方 `yolo26n-pose` 权重初始化；本仓库与 ultralytics 8.4.173 使用同一批
+**56,599 张训练图 / 2,346 张 val 图**，10 轮、batch 64、nbs 64、640、MuSGD、AMP、seed 0。
+两边关闭 `close_mosaic`，并按 released ultralytics 代码的有效值覆盖
+`cls_w=1.0` / `prog_alpha_init=0.8` / `muon_w=0.2` / `sgd_w=1.0`（该版本不消费 `cls_w`，
+后三项硬编码；`yolo26-pose-coco` 配方记录的是官方 ckpt 的 `train_args`）。训练完成后
+两边用同一个 `scripts/eval.py --data coco-pose` 复评。
+
+| 实现 | E2E AP | E2E AP50 | NMS AP | NMS AP50 |
+|---|---:|---:|---:|---:|
+| 本仓库 10 轮 | **0.5476** | 0.8089 | **0.5528** | 0.8170 |
+| ultralytics 10 轮 | **0.5477** | 0.8164 | **0.5508** | 0.8203 |
+
+- E2E AP 差 **0.0001**、NMS AP 差 **0.0020**；AP75 / AP(M) / AP(L) / AR 分项最大差约
+  **0.004**，在单 seed、10 轮预算的噪声内——数据/增强/损失/优化器/EMA/验证链路完成一次
+  端到端对齐验证。
+- 这是**管线 parity 检查，不是收敛精度**：从已收敛的官方权重以 lr0 0.005 再训 10 轮，
+  两边都回落到 ~0.548（官方起点 0.5687）；不作为模型能力上界。
+- 训练中 validator 的 pose AP 与 pycocotools 差距明显（本仓库 FastPose 0.4367、
+  ultralytics PoseMetrics 0.3676 vs 正式 0.5476 / 0.5477）；训练日志只用于趋势与 best，
+  跨实现不可直接比较。
+
+```bash
+# 本仓库侧；ultralytics 侧用同一数据与有效超参（dev-time）
+python scripts/train.py --data coco-pose --model yolo26-pose \
+    --weights weights/yolo26n-pose.safetensors \
+    --recipe yolo26-pose-coco --epochs 10 --batch 64 \
+    --close-mosaic 0 --cls-w 1.0 --prog-alpha-init 0.8 \
+    --muon-w 0.2 --sgd-w 1.0 --amp
+python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --data coco-pose
+python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --data coco-pose --nms
+```
+
+- **尚无完整 400 轮 / 从零全长 pose 结果**；上表覆盖官方权重复现与 10 轮微调对齐。
 
 ## 4. 训练内部对齐
 

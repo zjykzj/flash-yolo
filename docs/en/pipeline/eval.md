@@ -134,6 +134,9 @@ Segmentation weights automatically produce two tables: the same results evaluate
 - The table is `Class Images Instances AP AP50 AP75 AP(M) AP(L) AR`; there is no bbox-style P/R
   and no small bucket. `results.json` writes COCO keypoints results (`keypoints` + `score`).
 - `--nms` uses the pose o2m branch; `--single-cls` is not applicable to pose.
+- FastPoseMetrics during training can differ from pycocotools by ~0.1 pose AP (10-epoch
+  finetune: 0.4367 vs 0.5476); training logs are trend-only — formal numbers come from this
+  script.
 - Official `yolo26n-pose` reference (same 2,346 images): this repo E2E **0.5687 / 0.8250**,
   NMS 0.5670 / 0.8280; Ultralytics E2E 0.572 / 0.833, NMS 0.570 / 0.831. Full conventions:
   [../models/yolo26-pose.md](../models/yolo26-pose.md).
