@@ -21,7 +21,7 @@ from config.inference import CONF_THRES, IMGSZ, IOU_THRES, MAX_DET
 from data.preprocess import preprocess
 from model.build import YOLO26_FAMILY, YOLOE26_FAMILY
 from utils.postprocess import (decode_raw, nms_per_image, non_max_suppression, process_mask, scale_boxes,
-                               v3_detections)
+                               scale_keypoints, v3_detections, xywh2xyxy)
 
 __all__ = ["Detections", "BaseEngine", "resolve_device", "device_label"]
 
@@ -48,16 +48,50 @@ class Detections:
 
     masks 仅分割任务填写：(N, H, W) uint8 二值掩码 @原图分辨率（可视化直用；
     评估侧逐图编码 RLE 后即弃，不跨图累积）。
+    keypoints 仅姿态任务填写：(N, K, D) 原图像素坐标，D=3 时最后一维是可见性（0..1）。
     """
 
     boxes: np.ndarray  # (N, 4) xyxy
     scores: np.ndarray  # (N,)
     class_ids: np.ndarray  # (N,) int
     masks: np.ndarray | None = None  # (N, H, W) uint8（分割）
+    keypoints: np.ndarray | None = None  # (N, K, D) float32（姿态）
+
+
+def _pose_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres, kpt_shape,
+                     agnostic_nms=False):
+    """pose 输出 -> Detections（原图坐标）
+
+    E2E: (300, 6+nk)，已解码 xyxy + score + cls + kpts（letterbox 像素）。
+    raw: (4+nc+nk, N)，**已解码 xywh** + sigmoid 分数 + 解码 kpts（官方 pose `_inference`
+    契约；与检测头 raw 的 ltrb+logits 不同）。NMS 只抑制框，kpts 随同一次选择取回。
+    """
+    k, d = int(kpt_shape[0]), int(kpt_shape[1])
+    nk = k * d
+    h, w = ori_shape
+    if end2end:
+        keep = out[:, 4] > (conf_thres if conf_thres is not None else 0.25)
+        det = out[keep]
+        boxes, scores, cls = det[:, :4], det[:, 4], det[:, 5].astype(np.int64)
+        kpts = det[:, 6:6 + nk].reshape(-1, k, d)
+    else:
+        nc = out.shape[0] - 4 - nk
+        boxes_xywh = out[:4].T.astype(np.float32)
+        score_map = out[4:4 + nc].T
+        kpts_flat = out[4 + nc:].T
+        det, kpts_flat = nms_per_image(xywh2xyxy(boxes_xywh), score_map,
+                                       conf_thres or CONF_THRES, iou_thres, MAX_DET,
+                                       extra=kpts_flat, agnostic=agnostic_nms)
+        boxes, scores, cls = det[:, :4], det[:, 4], det[:, 5].astype(np.int64)
+        kpts = kpts_flat.reshape(-1, k, d)
+    boxes = scale_boxes(boxes, ratio, pad, h, w)
+    kpts = scale_keypoints(kpts, ratio, pad, h, w)
+    return Detections(boxes, scores, cls, keypoints=kpts.astype(np.float32))
 
 
 def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres, arch="yolo26", imgsz=None,
-                   task="detect", mask_device=None, agnostic_nms=False, yoloe_text=False):
+                   task="detect", mask_device=None, agnostic_nms=False, yoloe_text=False,
+                   kpt_shape=None):
     """引擎输出 -> Detections（原图坐标）
 
     imgsz：o2m 原始输出的网格形状按它推（[(S//8)², (S//16)², (S//32)²]；640 -> 80/40/20，
@@ -68,6 +102,9 @@ def _to_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres, a
     NMS 路径经 extra 透传）。
     """
     h, w = ori_shape
+    if task == "pose":  # 关键点解码/选择与框共享同一次 top-k 或 NMS
+        return _pose_detections(out, end2end, ratio, pad, ori_shape, conf_thres, iou_thres,
+                                kpt_shape or (17, 3), agnostic_nms=agnostic_nms)
     proto = None
     if task == "segment":
         out, proto = out
@@ -130,6 +167,7 @@ class BaseEngine:
     imgsz = IMGSZ  # 子类 __init__ 覆盖
     arch = "yolo26"
     task = "detect"  # 子类 __init__ 按 arch 覆盖（model.build.arch_task）
+    kpt_shape = None  # pose：子类按 head / 部署 metadata 设置
     end2end = True
     text_mode = False  # YOLOE 文本布局（PtEngine 按头判定；ONNX/TRT 按导出 metadata 判定）
 
@@ -152,6 +190,7 @@ class BaseEngine:
                               arch=self.arch, imgsz=self.imgsz, task=self.task,
                               mask_device=getattr(self, "mask_device", None),
                               agnostic_nms=getattr(self, "agnostic_nms", False),
-                              yoloe_text=getattr(self, "text_mode", False))
+                              yoloe_text=getattr(self, "text_mode", False),
+                              kpt_shape=self.kpt_shape)
         t3 = time.perf_counter()
         return dets, {"preprocess": (t1 - t0) * 1e3, "inference": (t2 - t1) * 1e3, "postprocess": (t3 - t2) * 1e3}

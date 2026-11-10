@@ -52,7 +52,7 @@ def parse_coco(ann_file, status_line=None):
 
 def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels=False,
                build_segments=False, progress=False, progress_file=None, single_cls=False,
-               build_cls_mask=False):
+               build_cls_mask=False, require_keypoints=False):
     """解析 ann json + 单趟扫描 -> ScanResult
 
     exists 检查 / crowd 剔除 / 逐图标签构造合并进同一个循环：本机 118k 图实测扫描段 ≈2.6s，
@@ -68,6 +68,9 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
     build_cls_mask=True 且 json 带 federated 字段（LVIS 的 `neg_category_ids`）时，为每图
     生成 bool[nc] 分类有效掩码：正类（含 crowd）∪ `neg_category_ids` 为 True；
     `not_exhaustive_category_ids` 及其他未标注类为 False（不参与分类 BCE 负样本）。
+    require_keypoints=True（pose）：只保留至少有一个 `num_keypoints > 0` 标注的图——
+    COCO-pose 官方协议口径（person_keypoints_val2017.json 有 5,000 张图，但官方
+    val2017.txt 只有 2,346 张有有效关键点的图；其余图没有 pose GT，不能当负样本）。
     """
     prefix = f"{label}:".ljust(7)  # `train: ` / `val:   ` 对齐
     mb = ann_file.stat().st_size / 2**20  # MiB（与预览口径一致，非 SI 十进制 MB）
@@ -93,6 +96,8 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
     first_missing = None
     for i, img in enumerate(images, 1):
         raw_anns = by_image.get(img["id"], [])
+        if require_keypoints and not any(a.get("num_keypoints", 0) > 0 for a in raw_anns):
+            continue  # 官方 COCO-pose 口径：无有效关键点的图不参与（不当作背景/负样本）
         anns = raw_anns
         if not (img_dir / img["file_name"]).exists():
             n_missing += 1
@@ -166,7 +171,7 @@ class CocoDataset:
     """按图片索引读取一个 COCO 角色的图片与标注（val/评估口径：保留 crowd、不建标签）"""
 
     def __init__(self, ann_file, img_dir, label="val", progress=False, progress_file=None,
-                 single_cls=False):
+                 single_cls=False, require_keypoints=False):
         self.ann_file = Path(ann_file)
         self.img_dir = Path(img_dir)
         self.label = label
@@ -174,7 +179,7 @@ class CocoDataset:
 
         # category_id（COCO 非连续 id）-> 0..nc-1（与训练侧共用 parse_coco 口径）
         res = scan_split(self.ann_file, self.img_dir, label, progress=progress, progress_file=progress_file,
-                         single_cls=self.single_cls)
+                         single_cls=self.single_cls, require_keypoints=require_keypoints)
         self.images, self.annotations = res.images, res.annotations
         self.cat_id_to_idx, self.names, stats = res.cat_id_to_idx, res.names, res.stats
         if self.single_cls:  # 单类评估：模型 nc=1，GT 类别全部映射到 0
@@ -310,7 +315,8 @@ class CocoTrainDataset(TrainMixin):
     """
 
     def __init__(self, cfg, ann_file, img_dir, label="train", augment=True, limit=0,
-                 progress=False, progress_file=None, segment=False, single_cls=False):
+                 progress=False, progress_file=None, segment=False, single_cls=False,
+                 require_keypoints=False):
         self.cfg = cfg  # TrainConfig 共享引用：close_mosaic 原地清零概率
         self.use_augment = augment
         self.use_segments = segment
@@ -323,7 +329,8 @@ class CocoTrainDataset(TrainMixin):
         res = scan_split(self.ann_file, self.img_dir, label, limit=limit, drop_crowd=True,
                          build_labels=True, build_segments=segment,
                          progress=progress, progress_file=progress_file, single_cls=self.single_cls,
-                         build_cls_mask=getattr(self.cfg, "federated_mask", True) and not self.single_cls)
+                         build_cls_mask=getattr(self.cfg, "federated_mask", True) and not self.single_cls,
+                         require_keypoints=require_keypoints)
         self.images, self.labels, self.cat_id_to_idx = res.images, res.labels, res.cat_id_to_idx
         self.segments = res.segments if segment else None
         self.cls_masks = res.cls_masks  # federated 数据集（LVIS）的训练分类掩码；COCO 为 None

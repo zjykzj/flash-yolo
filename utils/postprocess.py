@@ -11,7 +11,7 @@ from config.inference import CONF_THRES, IOU_THRES, MAX_DET
 from utils.iou import box_iou
 
 __all__ = ["decode_raw", "non_max_suppression", "nms_per_image", "v3_detections", "scale_boxes",
-           "process_mask", "process_mask_lowres", "masks_to_segments"]
+           "scale_keypoints", "process_mask", "process_mask_lowres", "masks_to_segments"]
 
 # 三个检测层特征图尺寸（640 输入）：P3/P4/P5
 _LEVEL_SHAPES = [(80, 80), (40, 40), (20, 20)]
@@ -177,6 +177,23 @@ def scale_boxes(boxes, ratio, pad, ori_h, ori_w):
     boxes[:, [0, 2]] = boxes[:, [0, 2]].clip(0, ori_w)
     boxes[:, [1, 3]] = boxes[:, [1, 3]].clip(0, ori_h)
     return boxes
+
+
+def scale_keypoints(kpts, ratio, pad, ori_h, ori_w):
+    """关键点 letterbox 坐标 -> 原图坐标（x/y 裁剪到图像内，可见性通道原样保留）
+
+    Args:
+        kpts: (N, K, D)（D=2 或 3；最后一维可见性不动）
+        ratio: 缩放比；pad: (top, left)
+    """
+    if len(kpts) == 0:
+        return kpts
+    out = np.asarray(kpts).copy()
+    out[..., 0] = (out[..., 0] - pad[1]) / ratio
+    out[..., 1] = (out[..., 1] - pad[0]) / ratio
+    out[..., 0] = out[..., 0].clip(0, ori_w)
+    out[..., 1] = out[..., 1].clip(0, ori_h)
+    return out
 
 
 def process_mask(proto, coeffs, boxes, net_hw, ori_hw, ratio, pad, device=None):

@@ -17,7 +17,9 @@
 
 from model.head.v3_detect import V3Detect, decode_level
 from model.head.yolo26_detect import Detect, e2e_topk
+from model.head.yolo26_pose import Pose26, RealNVP
 from model.head.yolo26_seg import Proto26, Segment26
 from model.head.yoloe26_seg import YOLOESegment26
 
-__all__ = ["Detect", "Segment26", "Proto26", "V3Detect", "YOLOESegment26", "decode_level", "e2e_topk"]
+__all__ = ["Detect", "Segment26", "Proto26", "Pose26", "RealNVP", "V3Detect", "YOLOESegment26",
+           "decode_level", "e2e_topk"]

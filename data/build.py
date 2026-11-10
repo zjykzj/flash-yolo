@@ -44,10 +44,14 @@ def build_train_dataset(cfg, spec, role="train", augment=True, limit=0, progress
     """
     _check_paths(spec, role)
     r = spec.role(role)
+    if task == "pose" and spec.format != "coco":
+        raise ValueError(f"{spec.name}: pose training currently requires a COCO descriptor "
+                         f"(format: coco), got {spec.format!r}")
     if spec.format == "coco":
         ds = CocoTrainDataset(cfg, r.ann, r.images, label=role, augment=augment, limit=limit,
                               progress=progress, progress_file=progress_file,
-                              segment=(task == "segment"), single_cls=single_cls)
+                              segment=(task == "segment"), single_cls=single_cls,
+                              require_keypoints=(task == "pose"))
         if not single_cls:  # 单类时描述符 nc 与数据类别数故意不同（模型头为 1 类）
             _check_names(spec, ds)
         return ds
@@ -64,9 +68,12 @@ def build_eval_dataset(spec, role="val", progress=False, progress_file=None, tas
     """
     _check_paths(spec, role)
     r = spec.role(role)
+    if task == "pose" and spec.format != "coco":
+        raise ValueError(f"{spec.name}: pose evaluation currently requires a COCO descriptor "
+                         f"(format: coco), got {spec.format!r}")
     if spec.format == "coco":
         ds = CocoDataset(r.ann, r.images, label=role, progress=progress, progress_file=progress_file,
-                         single_cls=single_cls)
+                         single_cls=single_cls, require_keypoints=(task == "pose"))
         if not single_cls:
             _check_names(spec, ds)
         return ds

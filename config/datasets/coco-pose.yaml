@@ -1,0 +1,64 @@
+# COCO 姿态数据集描述符（模板）：COCO keypoints json（person 一类，17 关键点）
+# 与 coco.yaml 的差别只有三处：
+#   1) 标注文件是 person_keypoints_{train,val}2017.json（不是 instances_*.json）；
+#   2) names 只有 person（COCO-pose 的 nc = 1）；
+#   3) 额外的姿态字段：kpt_shape / flip_idx / kpt_names / skeleton。
+# val 口径 = 官方 COCO-pose：2,346 张图（不是检测的 5,000 张）。
+# 本文件刻意保持 path 为空：本机使用复制到 config/datasets/local/coco-pose.yaml 并填 path。
+format: coco
+path: ""
+train:
+  images: train2017
+  ann: annotations/person_keypoints_train2017.json
+val:
+  images: val2017
+  ann: annotations/person_keypoints_val2017.json
+
+names:
+  - person
+
+# 关键点结构：17 个点 × (x, y, visibility)
+kpt_shape: [17, 3]
+# 水平翻转后的关键点重排（官方 coco-pose.yaml 原值；训练增强用）
+flip_idx: [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]
+# 每类关键点名字（可视化/文档用；下标 = 关键点序号）
+kpt_names:
+  0:
+    - nose
+    - left_eye
+    - right_eye
+    - left_ear
+    - right_ear
+    - left_shoulder
+    - right_shoulder
+    - left_elbow
+    - right_elbow
+    - left_wrist
+    - right_wrist
+    - left_hip
+    - right_hip
+    - left_knee
+    - right_knee
+    - left_ankle
+    - right_ankle
+# COCO 17 点骨架（0-based 点对；官方 json 的 skeleton 是 1-based）
+skeleton:
+  - [15, 13]
+  - [13, 11]
+  - [16, 14]
+  - [14, 12]
+  - [11, 12]
+  - [5, 11]
+  - [6, 12]
+  - [5, 6]
+  - [5, 7]
+  - [6, 8]
+  - [7, 9]
+  - [8, 10]
+  - [1, 2]
+  - [0, 1]
+  - [0, 2]
+  - [1, 3]
+  - [2, 4]
+  - [3, 5]
+  - [4, 6]

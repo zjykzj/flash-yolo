@@ -33,19 +33,21 @@ _SCALE_RE = re.compile(r"yolo26([nsmlx])($|[-_.])", re.I)
 # flash-yolo（本项目自有架构）/ flash-yolo-seg（分割变体）。长名在前，否则 "yolov3-tiny-silu"
 # 会被 "yolov3-tiny"、"flash-yolo-seg" 会被 "flash-yolo" 前缀误吸
 _ARCH_RE = re.compile(r"(yolov3-tiny-silu|yolov3-tiny|flash-yolo-seg|flash-yolo)($|[-_.])", re.I)
-# 任务后缀：yolo26n-seg（官方分割权重命名）。先于档位判定：yolo26 系里带 -seg 归 yolo26-seg
-_TASK_SUFFIX_RE = re.compile(r"yolo26[nsmlx](?:[-_.][a-z0-9]+)*[-_.]seg($|[-_.])", re.I)
+# 任务后缀：yolo26n-seg / yolo26n-pose（官方任务权重命名）。先于档位判定：
+# yolo26 系里带 -seg 归 yolo26-seg、带 -pose 归 yolo26-pose
+_TASK_SUFFIX_RE = re.compile(r"yolo26[nsmlx](?:[-_.][a-z0-9]+)*[-_.](seg|pose)($|[-_.])", re.I)
 # YOLOE-26（官方只有 seg 权重；-seg-pf = prompt-free 变体）：yoloe-26n-seg-pf -> arch yoloe-26。
 # 注意官方命名里档位字母直接跟在 "yoloe-26" 后（yoloe-26n，无分隔符），arch 正则必须允许
 # 可选的档位字母（否则 "yoloe-26n..." 匹配不上、掉进 yolo26 兜底）
 _YOLOE_ARCH_RE = re.compile(r"yoloe-26(?:[nsmlx])?($|[-_.])", re.I)
 _YOLOE_SCALE_RE = re.compile(r"yoloe-26([nsmlx])($|[-_.])", re.I)
 # 带档位维度（scale 参与解析）的架构；其余架构档位固定（v3: tiny / flash-yolo: flash）
-_SCALED_ARCHS = ("yolo26", "yolo26-seg", "yoloe-26")
+_SCALED_ARCHS = ("yolo26", "yolo26-seg", "yolo26-pose", "yoloe-26")
 
 _META_STR_KEYS = ("arch", "scale", "version", "repo", "commit", "describe", "prompt_mode")  # 直读字符串
 _META_INT_KEYS = ("nc", "imgsz", "pf_channels", "struct_nc")  # int() 还原
-_META_JSON_KEYS = ("names", "anchors")  # JSON 解码（写入侧统一 json.dumps）
+# JSON 解码（写入侧统一 json.dumps）；kpt_shape 是 pose 的结构参数（README 里也随权重走）
+_META_JSON_KEYS = ("names", "anchors", "kpt_shape")
 _META_BOOL_KEYS = ("end2end", "pe", "fused", "full_finetune")  # 前向模式 / PE 产物 / 类锁定 / 全量微调
 
 
@@ -212,8 +214,9 @@ def arch_from_weights(path):
     YOLOE-26：`yoloe-26n-seg-pf.safetensors` -> "yoloe-26"（26 家族只有 seg 权重）。
     """
     stem = Path(path).stem
-    if _TASK_SUFFIX_RE.search(stem):
-        return "yolo26-seg"
+    m = _TASK_SUFFIX_RE.search(stem)
+    if m:
+        return f"yolo26-{m.group(1).lower()}"
     if _YOLOE_ARCH_RE.search(stem):
         return "yoloe-26"
     m = _ARCH_RE.search(stem)
@@ -302,6 +305,14 @@ def apply_meta(model, meta):
             raise ValueError(f"weights metadata pf_channels ({pf_channels}) != head "
                              f"({head.lrpc[0].pf.out_channels}) — check the scale's pf_channels in the yaml")
         applied.append("pf_channels")
+    # pose：kpt_shape 是结构参数（键点分支输出维度），构建时就应由 metadata 覆盖；
+    # 这里做最后对账，防止 yaml/权重不一致时拖到 strict load 才报难懂的尺寸错误。
+    kpt_shape = meta.get("kpt_shape")
+    if kpt_shape and hasattr(head, "kpt_shape"):
+        if tuple(kpt_shape) != tuple(head.kpt_shape):
+            raise ValueError(f"weights metadata kpt_shape ({tuple(kpt_shape)}) != head "
+                             f"({tuple(head.kpt_shape)}) — incompatible checkpoint")
+        applied.append("kpt_shape")
     return applied
 
 

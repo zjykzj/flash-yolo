@@ -71,6 +71,21 @@ def _fmt_table_row(name, n_img, n_inst, p, r, ap50, ap, ar):
             + "".join(f"{v:>{w}.4f}" for v, w in zip((p, r, ap50, ap, ar), _COL_W[2:])))
 
 
+# pose 表：COCO keypoints 的指标槽位与 bbox 不同（无 P/R，无 small；maxDets=20）
+_POSE_COL_W = (7, 10, 10, 10, 10, 10, 10, 10)  # Images/Instances/AP/AP50/AP75/AP(M)/AP(L)/AR
+def pose_table_header():
+    return ("      " + f"{'Class':<{_NAME_W}}"
+            + "".join(f"{c:>{w}}" for c, w in zip(("Images", "Instances", "AP", "AP50", "AP75",
+                                                   "AP(M)", "AP(L)", "AR"), _POSE_COL_W)))
+
+
+def _fmt_pose_row(name, n_img, n_inst, ap, ap50, ap75, ap_medium, ap_large, ar):
+    return ("      " + f"{str(name)[:_NAME_W]:<{_NAME_W}}"
+            + "".join(f"{v:>{w}}" for v, w in zip((f"{n_img:d}", f"{n_inst:d}"), _POSE_COL_W[:2]))
+            + "".join(f"{v:>{w}.4f}" for v, w in zip((ap, ap50, ap75, ap_medium, ap_large, ar),
+                                                     _POSE_COL_W[2:])))
+
+
 def main():
     parser = argparse.ArgumentParser(description="COCO evaluation")
     parser.add_argument("--weights", required=True, help=".safetensors or .onnx weights")
@@ -140,6 +155,11 @@ def main():
         parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
     if arch_has_scale(arch) and scale is None:
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
+    if arch_task(arch) == "pose":
+        eval_max_dets = 20  # pycocotools keypoints 固定 maxDets=20（不是 bbox 的 100）
+        if args.single_cls:
+            parser.error("--single-cls is not supported for pose evaluation "
+                         "(COCO-pose is already nc=1)")
     # YOLOE prompt mode：text 支持 E2E + o2m/NMS；pf 仅 E2E（raw 列数随提案过滤变化）
     meta = load_meta(args.weights)
     prompt_mode = (prompt_mode_from_weights(args.weights, meta)
@@ -350,14 +370,17 @@ def main():
 
     # ---- 评估循环 ----
     # 任务轴：分割跑两个评估器（bbox + segm），指标口径与官方发布的 Box/Mask 双表一致；
-    # 两者各自持有一份结果累积（同一份 dets 分别 update），互不影响。
-    heads = ["Box"]
-    if arch_task(arch) == "segment":
+    # pose 跑单个 keypoints 评估器（COCO OKS 协议）；两者各自持有一份结果累积，
+    # 同一份 dets 分别 update，互不影响。
+    task = arch_task(arch)
+    heads = ["Pose"] if task == "pose" else ["Box"]
+    if task == "segment":
         heads.append("Mask")
+    iou_type_of = {"Box": "bbox", "Mask": "segm", "Pose": "keypoints"}
     try:  # 协议/依赖错误给干净的 parser.error（LVIS frequency 缺失、faster-coco-eval 未装）
         with redirect_prints(logger):
             evaluators = [(head, build_evaluator(dataset.gt_source(), nc=len(dataset.names),
-                                                 iou_type="segm" if head == "Mask" else "bbox",
+                                                 iou_type=iou_type_of[head],
                                                  eval_style=eval_style, max_dets=eval_max_dets))
                           for head in heads]
     except (ValueError, ImportError) as e:
@@ -400,9 +423,31 @@ def main():
     multi = len(metrics_by_head) > 1  # 分割：Box / Mask 两组表
 
     console_lines, file_lines, detail_lines = [], [], []
-    ar_key = f"AR@{eval_max_dets}"
-    header = table_header(ar_key)
+    ar_key = f"AR@{eval_max_dets}"  # bbox/segm 专用；pose 用固定 maxDets=20 的 AR
     for head, metrics in metrics_by_head:
+        if head == "Pose":
+            header = pose_table_header()
+            n_instances = sum(r[2] for r in metrics["per_class"])
+            full_table = [_fmt_pose_row("all", metrics["images"], n_instances,
+                                        metrics["AP"], metrics["AP50"], metrics["AP75"],
+                                        metrics["AP_medium"], metrics["AP_large"], metrics["AR"])]
+            full_table += [_fmt_pose_row(*row) for row in metrics["per_class"]]
+            if multi:
+                console_lines.append(bold(f"      {head} metrics"))
+                file_lines.append(f"      {head} metrics")
+            console_lines += [header] + (full_table[:1] if args.summary_only else full_table)
+            file_lines += [header] + full_table
+            detail_lines.append(
+                f"      {'Thresholds':<14} AP {metrics['AP']:.4f} · AP50 {metrics['AP50']:.4f} · "
+                f"AP75 {metrics['AP75']:.4f}   (OKS 0.50 / 0.75 / 0.50:0.95)")
+            detail_lines.append(
+                f"      {'Area buckets':<14} AP_medium {metrics['AP_medium']:.4f} · "
+                f"AP_large {metrics['AP_large']:.4f}   (COCO keypoint area ranges; no small bucket)")
+            detail_lines.append(
+                f"      {'Recall':<14} AR {metrics['AR']:.4f} · AR50 {metrics['AR50']:.4f} · "
+                f"AR75 {metrics['AR75']:.4f}   (maxDets=20)")
+            continue
+        header = table_header(ar_key)
         n_instances = sum(r[2] for r in metrics["per_class"])
         full_table = [_fmt_table_row("all", metrics["images"], n_instances, metrics["P"], metrics["R"],
                                      metrics["mAP@50"], metrics["mAP@[.5:.95]"], metrics[ar_key])]
@@ -446,6 +491,15 @@ def main():
         ref_lines = [
             "Reference: official yolo26n-seg = box mAP50-95 0.3975 / mask 0.3386 "
             "(training-time validator; pycocotools numbers above are the project's own baseline)",
+        ]
+    elif arch == "yolo26-pose":
+        ref_lines = [
+            "Reference: official yolo26n-pose (ultralytics 8.4.173, same 2,346-image val) = "
+            "pose AP 0.570 / AP50 0.831",
+            "           this pipeline with the same weights = E2E 0.5687 / 0.8250, "
+            "NMS 0.5670 / 0.8280 (pycocotools, square letterbox; training-time validator 0.5717)",
+            "Protocol: COCO-pose val2017 = 2,346 images with valid keypoints "
+            "(not the 5,000-image detection split); pycocotools OKS, maxDets=20",
         ]
     elif arch in YOLO26_FAMILY:
         ref_lines = ["Reference: Flash-YOLO (this repo's own design) — GFLOPs below yolo26n by design"]

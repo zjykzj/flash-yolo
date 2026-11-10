@@ -5,7 +5,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-__all__ = ["draw_detections", "draw_target_grid"]
+__all__ = ["draw_detections", "draw_target_grid", "COCO_SKELETON"]
+
+# COCO 17 点骨架（0-based；官方 json 的 skeleton 是 1-based，描述符/这里统一 0-based）
+COCO_KPT_COUNT = 17
+COCO_SKELETON = (
+    (15, 13), (13, 11), (16, 14), (14, 12), (11, 12), (5, 11), (6, 12), (5, 6),
+    (5, 7), (6, 8), (7, 9), (8, 10), (1, 2), (0, 1), (0, 2), (1, 3), (2, 4), (3, 5), (4, 6),
+)
 
 # 固定调色板（BGR），按类别 id 取色
 _COLORS = [
@@ -27,14 +34,16 @@ _COLORS = [
 ]
 
 
-def draw_detections(image_bgr, detections, names=None, save_path=None):
+def draw_detections(image_bgr, detections, names=None, save_path=None, skeleton=None):
     """在原图上画检测框（Detections.masks 存在时先叠加半透明掩码，再画框与标签）
 
     Args:
         image_bgr: (H, W, 3)
-        detections: Detections（原图坐标；masks 为 (N, H, W) uint8 @原图分辨率）
+        detections: Detections（原图坐标；masks 为 (N, H, W) uint8 @原图分辨率；
+            keypoints 为 (N, K, D) 时叠加关键点/骨架）
         names: dict[int, str] 类别名（默认 config.datasets.load_names()，即 COCO 80 类）
         save_path: 若给定则保存
+        skeleton: 骨架点对（0-based）；None 且 K=17 时用 COCO 骨架；K≠17 时只画点
     """
     if names is None:
         from config.datasets import load_names
@@ -51,9 +60,30 @@ def draw_detections(image_bgr, detections, names=None, save_path=None):
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         cv2.rectangle(out, (x1, max(y1 - th - 4, 0)), (x1 + tw + 2, y1), color, -1)
         cv2.putText(out, label, (x1 + 1, max(y1 - 3, th)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+    kpts = getattr(detections, "keypoints", None)
+    if kpts is not None and len(kpts):
+        if skeleton is None:
+            skeleton = COCO_SKELETON if kpts.shape[1] == COCO_KPT_COUNT else ()
+        _draw_keypoints(out, detections, skeleton or ())
     if save_path:
         cv2.imwrite(save_path, out)
     return out
+
+
+def _draw_keypoints(image_bgr, detections, skeleton):
+    """逐实例画骨架线 + 关键点（可见性 <0.5 的点不画；两端都可见才连线）"""
+    for kpts, cid in zip(detections.keypoints, detections.class_ids):
+        color = _COLORS[int(cid) % len(_COLORS)]
+        visible = kpts[:, 2] >= 0.5 if kpts.shape[1] >= 3 else np.ones(len(kpts), bool)
+        for i, j in skeleton:
+            if i < len(kpts) and j < len(kpts) and visible[i] and visible[j]:
+                p1 = (int(round(kpts[i, 0])), int(round(kpts[i, 1])))
+                p2 = (int(round(kpts[j, 0])), int(round(kpts[j, 1])))
+                cv2.line(image_bgr, p1, p2, color, 1, cv2.LINE_AA)
+        for q, (x, y) in enumerate(kpts[:, :2]):
+            if visible[q]:
+                cv2.circle(image_bgr, (int(round(x)), int(round(y))), 3, color, -1, cv2.LINE_AA)
+                cv2.circle(image_bgr, (int(round(x)), int(round(y))), 3, (0, 0, 0), 1, cv2.LINE_AA)
 
 
 def _draw_masks(image_bgr, detections, alpha=0.5):

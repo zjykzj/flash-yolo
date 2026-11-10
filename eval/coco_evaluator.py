@@ -78,6 +78,17 @@ _EMPTY_METRICS = {
     "per_class": [],
 }
 
+# COCO keypoints 的 stats 槽位与 bbox 不同（10 项，无 small；maxDets=20）：
+# [AP, AP50, AP75, AP_medium, AP_large, AR, AR50, AR75, AR_medium, AR_large]
+_EMPTY_POSE_METRICS = {
+    "AP": 0.0, "AP50": 0.0, "AP75": 0.0,
+    "AP_medium": 0.0, "AP_large": 0.0,
+    "AR": 0.0, "AR50": 0.0, "AR75": 0.0,
+    "AR_medium": 0.0, "AR_large": 0.0,
+    "images": 0,
+    "per_class": [],
+}
+
 
 def pr_at_max_f1(prec, rec_thrs, k, iou=0, area=_AREA_ALL, maxdet=_MAXDET_100):
     """per-class P/R：101 点召回网格上 F1 最大点的 (P, R)
@@ -122,8 +133,8 @@ class CocoEvaluator:
     """
 
     def __init__(self, gt=None, nc=None, iou_type="bbox"):
-        if iou_type not in ("bbox", "segm"):
-            raise ValueError(f"iou_type must be 'bbox' or 'segm', got {iou_type!r}")
+        if iou_type not in ("bbox", "segm", "keypoints"):
+            raise ValueError(f"iou_type must be 'bbox', 'segm' or 'keypoints', got {iou_type!r}")
         self.iou_type = iou_type
         self._gt_lazy = None
         if callable(gt):
@@ -149,27 +160,36 @@ class CocoEvaluator:
         """累积一张图的结果（COCO 结果格式：xywh + category_id + score [+ segmentation RLE]）
 
         segm 口径下每条结果附 RLE（掩码现编码；Detections.masks 是原图分辨率，与 GT 同尺度）。
+        keypoints 口径写 `keypoints`（K*3，原图像素 x,y,v）；COCO keypoints 结果格式没有 bbox。
         bbox 字段始终写——同一份结果可同时喂给 bbox 与 segm 两个评估器。
         即使 detections 为空也记录 image_id：漏检图必须计入评估，否则 mAP 虚高。
         """
         self.image_ids.add(int(image_id))
         masks = getattr(detections, "masks", None)
+        keypoints = getattr(detections, "keypoints", None)
         if self.iou_type == "segm" and masks is None:
             raise ValueError("segm evaluation requires Detections.masks (engine returned none)")
+        if self.iou_type == "keypoints" and keypoints is None:
+            raise ValueError("keypoints evaluation requires Detections.keypoints (engine returned none)")
         for i, (box, score, cls_idx) in enumerate(zip(detections.boxes, detections.scores, detections.class_ids)):
             x1, y1, x2, y2 = box
             res = {
                 "image_id": int(image_id),
                 "category_id": self.idx_to_cat_id[int(cls_idx)],
-                "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
                 "score": float(score),
             }
+            if self.iou_type == "keypoints":
+                res["keypoints"] = [float(v) for v in keypoints[i].reshape(-1)]
+            else:
+                res["bbox"] = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
             if self.iou_type == "segm":  # 只有 segm 评估器才付出 RLE 编码开销
                 res["segmentation"] = encode_mask_rle(masks[i])
             self.results.append(res)
 
     def compute(self):
         """返回 COCO 指标 dict（无匹配时 -1 归一化为 0；完全无预测时 pycocotools 会崩溃，直接返回 0）"""
+        if self.iou_type == "keypoints":
+            return self._compute_keypoints()
         if not self.results:
             return dict(_EMPTY_METRICS)
         coco_gt = self._materialize()
@@ -197,6 +217,71 @@ class CocoEvaluator:
             "images": len(coco_eval.params.imgIds),
             "per_class": per_class,
         }
+
+    def _compute_keypoints(self):
+        """COCO keypoints 协议（OKS）：stats 槽位与 bbox 不同，单独一套返回结构"""
+        if not self.results:
+            return dict(_EMPTY_POSE_METRICS)
+        coco_gt = self._materialize()
+        coco_dt = coco_gt.loadRes(self.results)
+        coco_eval = COCOeval(coco_gt, coco_dt, "keypoints")
+        coco_eval.params.imgIds = (sorted(self.image_ids) if self.image_ids
+                                   else sorted({r["image_id"] for r in self.results}))
+        coco_eval.evaluate()
+        coco_eval.accumulate()
+        coco_eval.summarize()
+        s = np.nan_to_num(coco_eval.stats, nan=-1.0).clip(min=0.0)
+        return {
+            "AP": round(float(s[0]), 4),
+            "AP50": round(float(s[1]), 4),
+            "AP75": round(float(s[2]), 4),
+            "AP_medium": round(float(s[3]), 4),
+            "AP_large": round(float(s[4]), 4),
+            "AR": round(float(s[5]), 4),
+            "AR50": round(float(s[6]), 4),
+            "AR75": round(float(s[7]), 4),
+            "AR_medium": round(float(s[8]), 4),
+            "AR_large": round(float(s[9]), 4),
+            "images": len(coco_eval.params.imgIds),
+            "per_class": self._per_class_keypoints(coco_eval, coco_gt),
+        }
+
+    def _per_class_keypoints(self, coco_eval, coco_gt):
+        """per-class pose 明细：row = (name, n_img, n_inst, AP, AP50, AP75, AP_medium, AP_large, AR)
+
+        keypoints eval 的 precision 形状 (T, R, K, A, M)，A=3（all/medium/large）、M=1
+        （maxDets=20）；AP 取 area=all 的 T×R 有效点均值，AR 取 recall 的有效点均值。
+        """
+        eval_img_ids = set(coco_eval.params.imgIds)
+        prec = coco_eval.eval["precision"]  # (T, R, K, A, M)
+        recall = coco_eval.eval["recall"]  # (T, K, A, M)
+        rows = []
+        for k, cat_id in self.idx_to_cat_id.items():
+            img_ids = [i for i in coco_gt.getImgIds(catIds=cat_id) if i in eval_img_ids]
+            if not img_ids:
+                continue
+            p_all = prec[:, :, k, 0, 0]
+            p_all = p_all[p_all > -1]
+            ap = float(p_all.mean()) if len(p_all) else 0.0
+            p50 = prec[0, :, k, 0, 0]
+            p50 = p50[p50 > -1]
+            ap50 = float(p50.mean()) if len(p50) else 0.0
+            p75 = prec[5, :, k, 0, 0]
+            p75 = p75[p75 > -1]
+            ap75 = float(p75.mean()) if len(p75) else 0.0
+            p_med = prec[:, :, k, 1, 0]
+            p_med = p_med[p_med > -1]
+            ap_medium = float(p_med.mean()) if len(p_med) else 0.0
+            p_large = prec[:, :, k, 2, 0]
+            p_large = p_large[p_large > -1]
+            ap_large = float(p_large.mean()) if len(p_large) else 0.0
+            r_all = recall[:, k, 0, 0]
+            r_all = r_all[r_all > -1]
+            ar = float(r_all.mean()) if len(r_all) else 0.0
+            name = coco_gt.cats[cat_id]["name"]
+            n_inst = len(coco_gt.getAnnIds(imgIds=img_ids, catIds=cat_id))
+            rows.append((name, len(img_ids), n_inst, ap, ap50, ap75, ap_medium, ap_large, ar))
+        return rows
 
     def _per_class(self, coco_eval, coco_gt):
         """per-class 明细（仅含评估范围内有 GT 的类别）

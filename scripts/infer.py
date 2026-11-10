@@ -30,7 +30,7 @@ from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve
 from utils.logger import attach_file_log, bold, get_logger, log_params, setup_logging
 from utils.paths import increment_path
 from utils.postprocess import masks_to_segments
-from utils.visualize import draw_detections
+from utils.visualize import COCO_SKELETON, draw_detections
 
 # 控制台立刻可用；文件日志等 run 目录确定后挂（见 attach_file_log）
 setup_logging(to_file=False)
@@ -110,7 +110,7 @@ def _video_writer(path, fps, size):
     return writer
 
 
-def _run_video(engine, names, cap, info, args, imgsz, out_path):
+def _run_video(engine, names, cap, info, args, imgsz, out_path, skeleton=None):
     """逐帧推理 + 画框 + 写视频；返回处理帧数（None = 没读到帧）
 
     - 输出尺寸在首帧确定（相机/流打开时 CAP_PROP 可能还是 0）
@@ -133,7 +133,7 @@ def _run_video(engine, names, cap, info, args, imgsz, out_path):
             dets, tseg = engine.predict_timed(frame, conf_thres=args.conf)
             for k in stage_sums:
                 stage_sums[k] += tseg[k]
-            annotated = draw_detections(frame, dets, names)
+            annotated = draw_detections(frame, dets, names, skeleton=skeleton)
             if writer is None:
                 h, w = annotated.shape[:2]
                 writer = _video_writer(out_path, info["fps"], (w, h))
@@ -175,10 +175,11 @@ def _run_video(engine, names, cap, info, args, imgsz, out_path):
 
 
 def _label_lines(dets, task, w_img, h_img):
-    """推理结果 -> YOLO txt 行：分割写归一化多边形，检测写归一化框
+    """推理结果 -> YOLO txt 行：分割写归一化多边形，检测写归一化框，姿态写框+关键点
 
     分割口径与官方 `save_txt` 一致：每条掩码取外轮廓（多段合并），少于 3 点的实例跳过
     （不退回框——官方同样不写该行）；坐标归一化到原图，`%g` 精度。
+    姿态 = `cls xc yc w h px1 py1 v1 ...`（YOLO-pose 格式；x/y 归一化，v 为可见性分数）。
     """
     if task == "segment" and dets.masks is not None:
         lines = []
@@ -189,11 +190,19 @@ def _label_lines(dets, task, w_img, h_img):
             lines.append(f"{int(cid)} " + " ".join(f"{v:g}" for v in coords))
         return lines
     lines = []
-    for box, cid in zip(dets.boxes, dets.class_ids):
+    for k, (box, cid) in enumerate(zip(dets.boxes, dets.class_ids)):
         x1, y1, x2, y2 = box
         xc, yc = (x1 + x2) / 2 / w_img, (y1 + y2) / 2 / h_img
         w, h = (x2 - x1) / w_img, (y2 - y1) / h_img
-        lines.append(f"{int(cid)} {xc:.6f} {yc:.6f} {w:.6f} {h:.6f}")
+        line = f"{int(cid)} {xc:.6f} {yc:.6f} {w:.6f} {h:.6f}"
+        if task == "pose" and dets.keypoints is not None:
+            kp = dets.keypoints[k]
+            vals = []
+            for q in range(kp.shape[0]):
+                vals.extend((kp[q, 0] / w_img, kp[q, 1] / h_img,
+                             kp[q, 2] if kp.shape[1] >= 3 else 2.0))
+            line += " " + " ".join(f"{v:.6f}" for v in vals)
+        lines.append(line)
     return lines
 
 
@@ -256,7 +265,7 @@ def main():
         parser.error("--show is only supported with --video")
 
     meta = load_meta(args.weights)  # 可选：训练保存的权重自带 {arch, scale, nc, imgsz, names, anchors}
-    names, nc = load_names(), None  # 推理无数据集上下文：默认按 COCO 类名/80 类构建
+    names, nc, spec = load_names(), None, None  # 推理无数据集上下文：默认按 COCO 类名/80 类构建
     if args.data:
         try:
             spec = load_dataset(args.data)
@@ -285,6 +294,9 @@ def main():
         parser.error(f"cannot infer the model from '{args.weights}' — pass --model and/or --scale")
     if arch_has_scale(arch) and scale is None:
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
+    # pose 骨架：描述符给了就用它；否则按 COCO 17 点默认（只影响可视化）
+    skeleton = ((spec.skeleton if spec is not None else None)
+                or (COCO_SKELETON if arch == "yolo26-pose" else None))
     # YOLOE prompt mode：text 支持 E2E + o2m/NMS；pf 仅 E2E（raw 列数随提案过滤变化）
     prompt_mode = (prompt_mode_from_weights(args.weights, meta)
                    if arch in YOLOE26_FAMILY else None)
@@ -471,7 +483,7 @@ def main():
         limit = f" · max {args.max_frames} frames" if args.max_frames else ""
         logger.info(f"infer: {source} · video {dims} @ {video_info['fps']:.1f} fps · {frames}{limit} · "
                     f"conf {args.conf} · imgsz {imgsz}")
-        _run_video(engine, names, cap, video_info, args, imgsz, video_out)
+        _run_video(engine, names, cap, video_info, args, imgsz, video_out, skeleton=skeleton)
         return
     logger.info(f"infer: {source} · {len(images)} image{'s' if len(images) > 1 else ''} · "
                 f"conf {args.conf} · imgsz {imgsz}")
@@ -492,7 +504,7 @@ def main():
             stage_sums[k] += tseg[k]
 
         out_path = image_out if image_out is not None else run_dir / path.name
-        draw_detections(image, dets, names, save_path=str(out_path))
+        draw_detections(image, dets, names, save_path=str(out_path), skeleton=skeleton)
 
         # YOLO 格式标签：labels/<输出图同名>.txt；分割写多边形行，检测写 cls xc yc w h（均归一化）
         h_img, w_img = image.shape[:2]

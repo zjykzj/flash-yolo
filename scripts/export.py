@@ -7,6 +7,9 @@ raw: (B, 4+nc+nm, 8400)），output1 是原型 (B, nm, H/4, W/4)；掩码在外�
 utils/postprocess.process_mask 解码（与官方 val 逐像素一致）。
 yolov3-tiny：单输出解码 (B, NA, 5+nc)——obj×cls 与按类 NMS 在外部（utils/postprocess.v3_detections），
 --raw 不适用。
+yolo26-pose：单输出。默认 E2E (B, 300, 6+nk)，关键点与框共享图内 top-k；--raw 出
+(B, 4+nc+nk, 8400) 的 **已解码** 输出（xywh + sigmoid 分数 + 解码关键点，官方 pose
+`_inference` 口径），NMS 在外部。sigma/flow 只在训练期使用，不进导出图。
 yoloe-26 text：默认导出 fuse 后的 E2E 类锁定图；--nms 改出 o2m 密集输出
 (B, 4+V+nm, 8400)（像素 xyxy + sigmoid 分数），NMS 在外部（utils/postprocess.nms_per_image）。
 --visual-prompt（仅 text 权重）：refer 图 + bbox/mask JSON -> SAVPE vpe -> 同一 fuse 路径；
@@ -50,18 +53,20 @@ setup_logging()
 logger = get_logger(__name__)
 
 
-def _deploy_meta(arch, scale, imgsz, nc, end2end, prompt_mode=None, names=None):
+def _deploy_meta(arch, scale, imgsz, nc, end2end, prompt_mode=None, names=None, kpt_shape=None):
     """导出产物的部署 metadata（ONNX metadata_props / TRT 旁车 JSON 共用）
 
     与 safetensors metadata 同键名，读取侧统一走 model.weights.load_meta；`end2end` 让
     infer/eval 能校验“图模式 vs --nms”，`names`/`prompt_mode` 让类锁定的 YOLOE text
-    图无需原 .safetensors 即可推理/评估。
+    图无需原 .safetensors 即可推理/评估；`kpt_shape` 让 pose 图无需原权重即可解码关键点。
     """
     meta = {"arch": arch, "scale": scale, "imgsz": int(imgsz), "end2end": bool(end2end)}
     if nc is not None:
         meta["nc"] = int(nc)
     if prompt_mode:
         meta["prompt_mode"] = prompt_mode
+    if kpt_shape:
+        meta["kpt_shape"] = [int(v) for v in kpt_shape]
     if names:
         meta["names"] = list(names)
     meta.update(provenance_meta())
@@ -74,7 +79,9 @@ def main():
     parser = argparse.ArgumentParser(description="safetensors -> onnx")
     parser.add_argument("--weights", required=True, help=".safetensors path")
     parser.add_argument("--out", default=None, help="output .onnx path (default runs/export/<weights>.onnx)")
-    parser.add_argument("--raw", action="store_true", help="export raw head output (yolo26 only)")
+    parser.add_argument("--raw", action="store_true",
+                        help="export the o2m/NMS graph (yolo26: raw ltrb+logits; "
+                             "yolo26-pose: decoded xywh + scores + keypoints)")
     parser.add_argument("--nms", action="store_true",
                         help="export the o2m+NMS path (yoloe-26 text only; class-locked dense output)")
     parser.add_argument("--dynamic", action="store_true", help="dynamic batch axis (default: fixed batch=1)")
@@ -180,7 +187,8 @@ def main():
     # 必须按 struct_nc 重建后再 fuse 出同构架构，strict load 才对得上。
     fused = bool(meta.get("fused"))
     struct_nc = meta.get("struct_nc") or nc
-    model = build_model(arch, scale, nc=struct_nc, prompt_free=prompt_free)
+    model = build_model(arch, scale, nc=struct_nc, prompt_free=prompt_free,
+                        kpt_shape=meta.get("kpt_shape"))
     model.eval()
     if fused:
         if not text_mode:
@@ -271,7 +279,9 @@ def main():
         len(locked_classes) if text_mode else nc,
         end2end=not (args.raw or args.nms),
         prompt_mode=("text" if text_mode else ("pf" if prompt_free else None)),
-        names=(locked_classes if text_mode else (meta.get("names") if prompt_free else None)),
+        names=(locked_classes if text_mode else
+               (meta.get("names") if (prompt_free or arch == "yolo26-pose") else None)),
+        kpt_shape=(head.kpt_shape if arch_task(arch) == "pose" else None),
     )
     write_onnx_meta(out_path, deploy_meta)
     if arch in YOLOE26_FAMILY and text_mode:
@@ -285,6 +295,8 @@ def main():
         mode = "decoded (v3)"
     elif arch_task(arch) == "segment":
         mode = ("raw NMS path + prototypes" if args.raw else "E2E fused + prototypes")
+    elif arch_task(arch) == "pose":
+        mode = "raw NMS path (decoded pose)" if args.raw else "E2E fused (pose)"
     else:
         mode = "raw NMS path" if args.raw else "E2E fused"
     logger.info(f"exported ({mode}) -> {out_path}")

@@ -88,6 +88,42 @@ def test_role_missing_lists_available(tmp_path):
     print("  缺失角色报错并列出 available")
 
 
+POSE_LIKE = COCO_LIKE + """
+kpt_shape: [2, 3]
+flip_idx: [1, 0]
+kpt_names:
+  0: [left, right]
+skeleton:
+  - [0, 1]
+"""
+
+
+def test_pose_descriptor_fields(tmp_path):
+    """pose 描述符：kpt_shape / flip_idx / kpt_names / skeleton 解析为结构化字段"""
+    spec = load_dataset(str(_descriptor(tmp_path, POSE_LIKE.format(path="."))))
+    assert spec.kpt_shape == (2, 3)
+    assert spec.flip_idx == (1, 0)
+    assert spec.kpt_names == {0: ["left", "right"]}
+    assert spec.skeleton == ((0, 1),)
+    print("  pose 字段：kpt_shape/flip_idx/kpt_names/skeleton 全部就位")
+
+
+def test_pose_descriptor_validation(tmp_path):
+    """pose 字段非法时在描述符解析期报错（不拖到训练/评估中途）"""
+    base = COCO_LIKE.format(path=".")
+    with pytest.raises(ValueError, match="kpt_shape"):
+        parse_descriptor(_descriptor(tmp_path, base + "\nkpt_shape: [2, 9]\n", name="bad_shape.yaml"))
+    with pytest.raises(ValueError, match="flip_idx"):
+        parse_descriptor(_descriptor(tmp_path, base + "\nkpt_shape: [2, 3]\nflip_idx: [0]\n",
+                                     name="bad_flip.yaml"))
+    with pytest.raises(ValueError, match="kpt_names"):
+        parse_descriptor(_descriptor(tmp_path, base + "\nkpt_shape: [2, 3]\nkpt_names: {0: [only_one]}\n",
+                                     name="bad_names.yaml"))
+    with pytest.raises(ValueError, match="skeleton"):
+        parse_descriptor(_descriptor(tmp_path, base + "\nkpt_shape: [2, 3]\nskeleton: [[0, 2]]\n",
+                                     name="bad_skel.yaml"))
+
+
 def test_unknown_role_block_errors_and_scalar_warns(tmp_path, caplog):
     """dict 值且不是角色名 -> 报错（疑似旧式 split 名）；散字段 -> warning 不拦"""
     with pytest.raises(ValueError, match="unknown role"):

@@ -35,6 +35,9 @@ class PtEngine(BaseEngine):
         self.end2end = end2end
         meta = load_meta(weights)  # 可选 metadata：缺失 = 空 dict
         self.imgsz = int(imgsz) if imgsz is not None else int(meta.get("imgsz") or IMGSZ)
+        # pose：kpt_shape 是头结构参数，必须在建图前从 metadata 取（自定义关键点数据集）
+        self.kpt_shape = (tuple(meta.get("kpt_shape") or (17, 3))
+                          if model == "yolo26-pose" else None)
         # YOLOE：prompt 模式经 metadata/文件名解析（pf -> lrpc 布局；text -> 文本布局）
         prompt_free = None
         if model == "yoloe-26":
@@ -54,7 +57,8 @@ class PtEngine(BaseEngine):
             build_nc = nc if nc is not None else meta.get("nc")
         if model == "yoloe-26" and fused and not meta.get("nc"):
             raise ValueError("fused YOLOE checkpoint metadata lacks `nc`; cannot rebuild the class-locked head")
-        self.model = build_model(model, scale, imgsz=self.imgsz, nc=build_nc, prompt_free=prompt_free)
+        self.model = build_model(model, scale, imgsz=self.imgsz, nc=build_nc, prompt_free=prompt_free,
+                                 kpt_shape=self.kpt_shape)
         for key in apply_meta(self.model, meta):  # v3 anchors 随权重（yaml 为原版也能还原训练值）
             logger.info(f"weights metadata applied: {key}")
         head = self.model.model[-1]
@@ -67,6 +71,8 @@ class PtEngine(BaseEngine):
             head.fuse_text(torch.zeros(1, int(meta["nc"]), head.embed))  # 只重建结构，值由 strict load 覆盖
         load_weights(self.model, weights, strict=True)
         self.model.to(self.device).eval()
+        if self.task == "pose":
+            self.kpt_shape = tuple(head.kpt_shape)  # 以实际建出的头为准（yaml/metadata 已对账）
         # yoloe 文本布局无 lrpc（pf 布局有）；其余架构恒 False
         self.text_mode = model == "yoloe-26" and getattr(head, "lrpc", None) is None
         self.fused = fused  # PE 融合产物：类锁定，set_classes 会被拒绝

@@ -12,12 +12,13 @@ import torch.nn as nn
 import yaml
 
 from model.basic import C2PSA, C3k2, Conv, DWConv, LeakyConv, LiteBlock, PoolConv, SPPF
-from model.head import Detect, Segment26, V3Detect, YOLOESegment26
+from model.head import Detect, Pose26, Segment26, V3Detect, YOLOESegment26
 
-__all__ = ["DetectionModel", "build_model", "build_yolo26", "build_yolo26_seg", "build_yoloe26_seg",
-           "build_yolov3_tiny", "arch_display_name", "arch_task", "ARCHS", "YOLO26_FAMILY",
-           "YOLOE26_FAMILY", "YOLO26_CONFIG_PATH", "YOLO26_SEG_CONFIG_PATH", "YOLOE26_CONFIG_PATH",
-           "V3_CONFIG_PATH", "V3_SILU_CONFIG_PATH", "FLASH_CONFIG_PATH", "FLASH_SEG_CONFIG_PATH"]
+__all__ = ["DetectionModel", "build_model", "build_yolo26", "build_yolo26_seg", "build_yolo26_pose",
+           "build_yoloe26_seg", "build_yolov3_tiny", "arch_display_name", "arch_task", "ARCHS",
+           "YOLO26_FAMILY", "YOLOE26_FAMILY", "YOLO26_CONFIG_PATH", "YOLO26_SEG_CONFIG_PATH",
+           "YOLO26_POSE_CONFIG_PATH", "YOLOE26_CONFIG_PATH", "V3_CONFIG_PATH", "V3_SILU_CONFIG_PATH",
+           "FLASH_CONFIG_PATH", "FLASH_SEG_CONFIG_PATH"]
 
 
 class Concat(nn.Module):
@@ -47,6 +48,7 @@ MODULES = {
     "LeakyConv": LeakyConv,
     "Detect": Detect,
     "Segment26": Segment26,
+    "Pose26": Pose26,
     "V3Detect": V3Detect,
     "YOLOESegment26": YOLOESegment26,
 }
@@ -57,6 +59,8 @@ CHANNEL_PRESERVING = {"Upsample", "MaxPool2d", "ZeroPad2d"}
 YOLO26_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolo26.yaml"
 # 分割版：backbone+neck 与 yolo26.yaml 逐行相同，只换 Segment26 头（官方 yolo26-seg.yaml 口径）
 YOLO26_SEG_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolo26-seg.yaml"
+# 姿态版：backbone+neck 同上，只换 Pose26 头（官方 yolo26-pose.yaml 口径）
+YOLO26_POSE_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolo26-pose.yaml"
 V3_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolov3-tiny.yaml"
 # v3-tiny 算子替换版（LeakyReLU -> SiLU，其余逐行同构；见该 yaml 头部注释）
 V3_SILU_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yolov3-tiny-silu.yaml"
@@ -72,6 +76,8 @@ ARCHS = {
     "yolo26": {"cfg": YOLO26_CONFIG_PATH, "default_scale": "n", "display": "YOLO26{scale}", "task": "detect"},
     "yolo26-seg": {"cfg": YOLO26_SEG_CONFIG_PATH, "default_scale": "n", "display": "YOLO26{scale}-seg",
                    "task": "segment"},
+    "yolo26-pose": {"cfg": YOLO26_POSE_CONFIG_PATH, "default_scale": "n", "display": "YOLO26{scale}-pose",
+                    "task": "pose"},
     "yolov3-tiny": {"cfg": V3_CONFIG_PATH, "default_scale": "tiny", "display": "YOLOv3-tiny", "task": "detect"},
     "yolov3-tiny-silu": {"cfg": V3_SILU_CONFIG_PATH, "default_scale": "tiny", "display": "YOLOv3-tiny-SiLU",
                          "task": "detect"},
@@ -82,8 +88,9 @@ ARCHS = {
                  "task": "segment"},
 }
 
-# yolo26 系头（Detect/Segment26 双分支 / E2E，含 flash-yolo 与分割版）：--nms/--raw 门控与解码分派按此判定
-YOLO26_FAMILY = {"yolo26", "yolo26-seg", "flash-yolo", "flash-yolo-seg"}
+# yolo26 系头（Detect/Segment26/Pose26 双分支 / E2E，含 flash-yolo 与分割版）：
+# --nms/--raw 门控与解码分派按此判定
+YOLO26_FAMILY = {"yolo26", "yolo26-seg", "yolo26-pose", "flash-yolo", "flash-yolo-seg"}
 # YOLOE-26 系（YOLOESegment26）：E2E 解码与 yolo26 系同口径（max_det=1000）；text 模式
 # 支持 o2m+NMS，pf 仍 E2E only（raw 列数随提案过滤随图变化）——CLI 用本集合 + prompt_mode 判定
 YOLOE26_FAMILY = {"yoloe-26"}
@@ -110,14 +117,14 @@ class DetectionModel(nn.Module):
     state_dict key = `model.{i}.{属性路径}`，与官方 checkpoint 零映射对齐。
     """
 
-    def __init__(self, cfg_path=None, scale="n", imgsz=640, nc=None, prompt_free=None):
+    def __init__(self, cfg_path=None, scale="n", imgsz=640, nc=None, prompt_free=None, kpt_shape=None):
         super().__init__()
         cfg_path = cfg_path or YOLO26_CONFIG_PATH
         with open(cfg_path) as f:
             cfg = yaml.safe_load(f)
-        self.model, self.save = self._parse(cfg, scale, imgsz, nc, prompt_free)
+        self.model, self.save = self._parse(cfg, scale, imgsz, nc, prompt_free, kpt_shape)
 
-    def _parse(self, d, scale, imgsz=640, nc=None, prompt_free=None):
+    def _parse(self, d, scale, imgsz=640, nc=None, prompt_free=None, kpt_shape=None):
         """解析 backbone+head 行列表，应用缩放规则（depth · width · max_channels，源自论文）
 
         imgsz、nc 是训练侧的数据事实（先验尺寸 / 数据集类别数），默认 None/640 保留
@@ -182,6 +189,19 @@ class DetectionModel(nn.Module):
                 m_.bias_init(imgsz)  # 只初始化 cv2/cv3 先验（cv4 不设先验，官方口径）
                 c2 = None
                 args = [nc_, nm, npr, d["reg_max"], d["end2end"], det_ch]
+            elif name == "Pose26":
+                det_ch = [ch[x] for x in f]
+                nc_ = d["nc"] if nc is None else nc
+                # kpt_shape 是任务常数（COCO 17×3），不随 width 缩放；CLI/权重 metadata
+                # 可覆盖（自定义关键点数据集）。头内 c4 = max(ch0/4, K*(D+2)) 由头自己算。
+                # 注意：yaml 的 `[nc, kpt_shape]` 第二个是顶层变量名（字面量字符串），
+                # 解析器不做变量替换——结构值统一从顶层 `kpt_shape` 读。
+                shape = tuple(kpt_shape if kpt_shape is not None else d["kpt_shape"])
+                m_ = m(nc_, shape, d["reg_max"], d["end2end"], det_ch)
+                m_.stride = torch.tensor([8 * 2**i for i in range(len(det_ch))])
+                m_.bias_init(imgsz)  # 只初始化 cv2/cv3 先验（cv4 不设先验，官方口径）
+                c2 = None
+                args = [nc_, shape, d["reg_max"], d["end2end"], det_ch]
             elif name == "YOLOESegment26":
                 det_ch = [ch[x] for x in f]
                 nc_ = d["nc"] if nc is None else nc
@@ -261,16 +281,19 @@ class DetectionModel(nn.Module):
         return [x if j == -1 else y[j] for j in f]
 
 
-def build_model(arch="yolo26", scale=None, imgsz=640, nc=None, cfg_path=None, prompt_free=None):
+def build_model(arch="yolo26", scale=None, imgsz=640, nc=None, cfg_path=None, prompt_free=None,
+                kpt_shape=None):
     """按架构注册表构建模型（原始构造：不 eval、不改 end2end 状态）
 
     scale=None 用架构默认档位（yolo26: n / yolov3-tiny: tiny）；cfg_path 显式覆盖 yaml；
-    prompt_free 仅 yoloe-26 生效（None = yaml 默认），其余架构忽略。
+    prompt_free 仅 yoloe-26 生效（None = yaml 默认）；kpt_shape 仅 yolo26-pose 生效
+    （None = yaml 默认；权重 metadata 可覆盖，自定义关键点数据集用）。
     """
     spec = ARCHS.get(arch)
     if spec is None:
         raise ValueError(f"unknown arch {arch!r}; available: {sorted(ARCHS)}")
-    return DetectionModel(cfg_path or spec["cfg"], scale or spec["default_scale"], imgsz, nc, prompt_free)
+    return DetectionModel(cfg_path or spec["cfg"], scale or spec["default_scale"], imgsz, nc,
+                          prompt_free, kpt_shape)
 
 
 def build_yolo26(scale="n", cfg_path=None, imgsz=640, nc=None):
@@ -279,6 +302,19 @@ def build_yolo26(scale="n", cfg_path=None, imgsz=640, nc=None):
     model.eval()
     head = model.model[-1]
     if isinstance(head, Detect) and getattr(head, "one2one_cv2", None) is not None:
+        head.end2end = True
+    return model
+
+
+def build_yolo26_pose(scale="n", cfg_path=None, imgsz=640, nc=None, kpt_shape=None):
+    """构建 YOLO26-pose（eval 模式 + E2E；前向输出 (B, max_det, 6+nk)）
+
+    与 build_yolo26 同一口径：Pose26 继承 Detect 的 end2end 开关。
+    """
+    model = build_model("yolo26-pose", scale, imgsz, nc, cfg_path, kpt_shape=kpt_shape)
+    model.eval()
+    head = model.model[-1]
+    if isinstance(head, Pose26) and getattr(head, "one2one_cv2", None) is not None:
         head.end2end = True
     return model
 

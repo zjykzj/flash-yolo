@@ -8,13 +8,14 @@
   无需转置；float32 小端。头部为 4 或 5 个 int32（版本 + seen），按文件长度自动判别，
   要求文件恰好用尽（多/少字节都报错）。
 
-转换产物为纯权重字典 + 可选 metadata（safetensors header：arch/scale/nc[, names, anchors] +
-出处 version/repo[/commit/describe]——随权重走的模型参数，只加 JSON 头不碰张量），运行时
-（engine/tests）零 ultralytics/darknet 依赖。
+转换产物为纯权重字典 + 可选 metadata（safetensors header：arch/scale/nc[, names, anchors,
+kpt_shape] + 出处 version/repo[/commit/describe]——随权重走的模型参数，只加 JSON 头不碰张量），
+运行时（engine/tests）零 ultralytics/darknet 依赖。
 
 用法:
     python scripts/convert_weights.py --src yolo26n.pt --dst weights/yolo26n.safetensors
     python scripts/convert_weights.py --src yolo26n-seg.pt --dst weights/yolo26n-seg.safetensors
+    python scripts/convert_weights.py --src yolo26n-pose.pt --dst weights/yolo26n-pose.safetensors
     python scripts/convert_weights.py --src yolov3-tiny.weights --dst weights/yolov3-tiny.safetensors
 """
 
@@ -59,6 +60,12 @@ def _convert_pt(src, dst):
     if names:
         names = list(names.values()) if isinstance(names, dict) else list(names)
         meta["names"], meta["nc"] = names, len(names)
+    if arch == "yolo26-pose":
+        # 头结构参数：kpt_shape 决定 nk/cv4 输出维度，must travel with the weights；
+        # nc 以头为准（官方 yaml 的 nc: 80 是历史默认值，实际 COCO-pose 头为 1 类）
+        head = model.model[-1]
+        meta["kpt_shape"] = [int(v) for v in head.kpt_shape]
+        meta["nc"] = int(head.nc)
     if arch == "yoloe-26":
         # pf 判定 = 头内是否有 lrpc（官方 set_vocab 的产物）；nc 写 yaml 结构值而非活 nc——
         # pf 权重活 nc = 烘焙词汇数（4585），不是模型结构类别数（构建头要的是 yaml 的 80）

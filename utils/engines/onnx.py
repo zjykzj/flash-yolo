@@ -31,9 +31,13 @@ class OnnxEngine(BaseEngine):
         self.arch = model
         self.task = arch_task(model)
         self.end2end = end2end
+        meta = load_meta(onnx_path)  # 可选部署 metadata（arch/scale/nc/imgsz/kpt_shape/end2end）
+        # pose：关键点维度随导出 metadata 走；缺省退化到 COCO 17×3
+        self.kpt_shape = (tuple(meta.get("kpt_shape") or (17, 3))
+                          if self.task == "pose" else None)
         # YOLOE text 的 o2m 分支：输出已是像素 xyxy + sigmoid，不能走 decode_raw。
         # 缺省从导出 metadata 判定；显式参数供调用方覆盖。
-        self.text_mode = (load_meta(onnx_path).get("prompt_mode") == "text"
+        self.text_mode = (meta.get("prompt_mode") == "text"
                           if text_mode is None else bool(text_mode))
         self.onnx_path = onnx_path
         self._sess_options = self._session_options()

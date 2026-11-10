@@ -29,6 +29,9 @@ __all__ = ["FORMATS", "ROLES", "DATASETS_DIR", "LOCAL_DATASETS_DIR", "RoleSpec",
 
 FORMATS = ("coco", "yolo")
 ROLES = ("train", "val", "test")
+# 姿态任务的描述符字段：kpt_shape 是结构参数，其余是数据/可视化参数（COCO-pose 口径）。
+# 只有 pose 数据集需要；普通检测/分割描述符不写这些键，行为与历史一致。
+POSE_KEYS = ("kpt_shape", "flip_idx", "kpt_names", "skeleton")
 
 DATASETS_DIR = Path(__file__).resolve().parent
 LOCAL_DATASETS_DIR = DATASETS_DIR / "local"  # 本机描述符（gitignored）；名字寻址优先于包内模板
@@ -58,6 +61,12 @@ class DatasetSpec:
     roles: dict[str, RoleSpec]
     vocab_synonyms: dict[str, str] = field(default_factory=dict)  # 数据集类名 -> 词汇名（可选）
     eval_style: str = "coco"  # 评估协议：coco（pycocotools）| lvis（faster_coco_eval lvis_style）
+    # 姿态（可选）：kpt_shape = (K, D)；flip_idx 是水平翻转后的关键点重排；kpt_names/skeleton
+    # 只用于可视化（skeleton 为 0-based 点对）。检测/分割描述符上述字段为空。
+    kpt_shape: tuple[int, int] | None = None
+    flip_idx: tuple[int, ...] | None = None
+    kpt_names: dict[int, list[str]] = field(default_factory=dict)
+    skeleton: tuple[tuple[int, int], ...] = field(default_factory=tuple)
 
     @property
     def nc(self):
@@ -176,7 +185,8 @@ def parse_descriptor(path, name=None) -> DatasetSpec:
     """描述符 yaml -> DatasetSpec（完整校验；解析出的路径全部为绝对路径）"""
     path = Path(path).resolve()
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    for k in sorted(set(raw) - {"format", "path", "eval_style", "names", "vocab_synonyms", *ROLES}):
+    for k in sorted(set(raw) - {"format", "path", "eval_style", "names", "vocab_synonyms",
+                                *ROLES, *POSE_KEYS}):
         if isinstance(raw[k], dict):
             raise ValueError(f"{path.name}: unknown role {k!r}; roles must be one of {list(ROLES)}")
         logger.warning(f"{path.name} 未识别字段（忽略）: {k}")
@@ -212,8 +222,51 @@ def parse_descriptor(path, name=None) -> DatasetSpec:
             isinstance(k, str) and isinstance(v, str) and k and v for k, v in vocab_synonyms.items()):
         raise ValueError(f"{path.name}: 'vocab_synonyms' must be a non-empty {{dataset name: vocab name}} mapping")
 
+    kpt_shape, flip_idx, kpt_names, skeleton = _parse_pose(raw, path)
     return DatasetSpec(name=name or path.stem, source=path, format=fmt, root=root, names=names, roles=roles,
-                       vocab_synonyms=vocab_synonyms, eval_style=eval_style)
+                       vocab_synonyms=vocab_synonyms, eval_style=eval_style,
+                       kpt_shape=kpt_shape, flip_idx=flip_idx, kpt_names=kpt_names, skeleton=skeleton)
+
+
+def _parse_pose(raw, path):
+    """解析姿态描述符的可选字段（缺失 -> None/空；校验失败点名文件与字段）"""
+    shape = raw.get("kpt_shape")
+    if shape is None:
+        return None, None, {}, ()
+    if (not isinstance(shape, (list, tuple)) or len(shape) != 2
+            or not all(isinstance(v, int) and v > 0 for v in shape) or shape[1] not in (2, 3)):
+        raise ValueError(f"{path.name}: 'kpt_shape' must be [K, 2] or [K, 3], got {shape!r}")
+    shape = tuple(shape)
+    k = shape[0]
+
+    flip = raw.get("flip_idx")
+    if flip is not None:
+        if not isinstance(flip, (list, tuple)) or len(flip) != k \
+                or not all(isinstance(v, int) and 0 <= v < k for v in flip):
+            raise ValueError(f"{path.name}: 'flip_idx' must be {k} indices in 0..{k - 1}, got {flip!r}")
+        flip = tuple(flip)
+
+    names = raw.get("kpt_names") or {}
+    if not isinstance(names, dict):
+        raise ValueError(f"{path.name}: 'kpt_names' must be a {{class_id: [names...]}} mapping")
+    try:
+        names = {int(c): [str(n) for n in ns] for c, ns in names.items()}
+    except (TypeError, ValueError):
+        raise ValueError(f"{path.name}: 'kpt_names' keys must be class ids and values lists of strings") from None
+    for c, ns in names.items():
+        if len(ns) != k:
+            raise ValueError(f"{path.name}: 'kpt_names[{c}]' has {len(ns)} names, expected {k} (kpt_shape[0])")
+
+    skel = raw.get("skeleton") or ()
+    if not isinstance(skel, (list, tuple)):
+        raise ValueError(f"{path.name}: 'skeleton' must be a list of [i, j] point pairs")
+    pairs = []
+    for pair in skel:
+        if (not isinstance(pair, (list, tuple)) or len(pair) != 2
+                or not all(isinstance(v, int) and 0 <= v < k for v in pair)):
+            raise ValueError(f"{path.name}: 'skeleton' entries must be [i, j] with 0 <= i,j < {k}, got {pair!r}")
+        pairs.append(tuple(pair))
+    return shape, flip, names, tuple(pairs)
 
 
 def load_dataset(name_or_path) -> DatasetSpec:
