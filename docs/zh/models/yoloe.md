@@ -353,6 +353,18 @@ lr0 0.001 / batch 32 / 640；单卡 3090 4 h 40 min）。正式评估（pycocoto
   --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
   --warmup-epochs 3`；评估加 `--text-encoder weights/mobileclip2_b.safetensors`
   （E2E / `--nms` 两口径）。
+- **LVIS（1,203 类，federated）**：10 轮（5 轮检查点续到 10），batch 16、lr0 0.001；
+  minival 正式评估（LVIS 协议 maxDets=100）：E2E Box **0.2578** / Mask **0.2124**
+  （Box APr / APc / APf 0.1453 / 0.2373 / 0.2962）、Non-E2E Box **0.2712** / Mask
+  **0.2230**（0.1362 / 0.2539 / 0.3109）。PE 10 轮为 0.2346 / 0.1905（APr 0.1180）与
+  0.2436 / 0.1955（APr 0.1215）——全量微调 E2E +0.0232 / +0.0219、Non-E2E +0.0276 /
+  +0.0275；rare 类 APr 从 0.1180 升到 0.1453，但仍低于零样本 0.1923 / 0.1962，
+  增益继续集中在 common/frequent。5 轮检查点（E2E 0.2444 / 0.1978）即已超过 PE 10 轮，
+  10 轮是当前推荐预算。
+- LVIS 复现：`python scripts/train.py --data lvis --model yoloe-26 --scale n --full-finetune
+  --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 16 --lr0 0.001
+  --warmup-epochs 3 --val-limit 5000`；评估用 `--data lvis-minival --eval-max-dets 100
+  --text-encoder weights/mobileclip2_b.safetensors`（E2E / `--nms` 两口径）。
 
 ## 5. 已知边界
 
@@ -378,7 +390,9 @@ lr0 0.001 / batch 32 / 640；单卡 3090 4 h 40 min）。正式评估（pycocoto
   `--full-finetune` 训练全部参数（reprta 在图内），产物未 fused。两者都从官方文本权重
   出发、需要 `--weights`；从零训练尚未接入，prompt-free 权重仅推理（训练会显式报错）。
   全量微调评估必须使用与训练一致的数据集描述符（类名不一致会报错）。
-- **LVIS PE 的 federated 掩码**：LVIS 每图只标注部分类别；训练自动把「正类 ∪
-  `neg_category_ids`」作为有效类，`not_exhaustive_category_ids` 与未标注类从 BCE 忽略，
-  并自动关闭 mosaic/mixup/cutmix/copy_paste。总体指标可超过零样本，但 rare 类 AP 可能
-  仍低于零样本（增益集中在 common/frequent）；负类采样 / 类别平衡是后续改进项。详见 §4。
+- **LVIS 的 federated 掩码（PE / 全量微调）**：LVIS 每图只标注部分类别；训练自动把
+  「正类 ∪ `neg_category_ids`」作为有效类，`not_exhaustive_category_ids` 与未标注类从
+  BCE 忽略，并自动关闭 mosaic/mixup/cutmix/copy_paste。总体指标可超过零样本（全量微调
+  10 轮 E2E 0.2578 / 0.2124），但 rare 类 AP 仍可能低于零样本（全量微调 APr 0.1453、
+  PE 0.1180 vs 零样本 0.1923；增益集中在 common/frequent）。负类采样 / 类别平衡是
+  rare 类的后续改进项。详见 §4。

@@ -408,6 +408,20 @@ evaluation (pycocotools, all 5,000 images):
   --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
   --warmup-epochs 3`; evaluate with `--text-encoder weights/mobileclip2_b.safetensors`
   (E2E / `--nms`).
+- **LVIS (1,203 classes, federated)**: 10 epochs (5-epoch checkpoint resumed to 10), batch 16,
+  lr0 0.001; minival with the LVIS protocol (maxDets=100): E2E Box **0.2578** / Mask
+  **0.2124** (Box APr / APc / APf 0.1453 / 0.2373 / 0.2962), Non-E2E Box **0.2712** / Mask
+  **0.2230** (0.1362 / 0.2539 / 0.3109). PE for 10 epochs scores 0.2346 / 0.1905
+  (APr 0.1180) and 0.2436 / 0.1955 (APr 0.1215) — full fine-tuning is +0.0232 / +0.0219
+  (E2E) and +0.0276 / +0.0275 (Non-E2E); rare APr rises from 0.1180 to 0.1453 but stays
+  below zero-shot 0.1923 / 0.1962, with gains still concentrated in common/frequent. The
+  5-epoch checkpoint (E2E 0.2444 / 0.1978) already beats PE 10 epochs; 10 epochs is the
+  current budget.
+- LVIS reproduce: `python scripts/train.py --data lvis --model yoloe-26 --scale n
+  --full-finetune --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 16
+  --lr0 0.001 --warmup-epochs 3 --val-limit 5000`; evaluate with `--data lvis-minival
+  --eval-max-dets 100 --text-encoder weights/mobileclip2_b.safetensors`
+  (E2E / `--nms`).
 
 ## 5. Known limits
 
@@ -440,9 +454,10 @@ evaluation (pycocotools, all 5,000 images):
   text checkpoint and require `--weights`; from-scratch training is not wired, and prompt-free
   weights are inference-only (training errors out explicitly). Full-fine-tune evaluation must
   use the same dataset descriptor it was trained on (mismatched class names error out).
-- **LVIS PE uses federated class masks**: LVIS annotates only part of the categories per image;
-  training treats `positives ∪ neg_category_ids` as valid classes, ignores
-  `not_exhaustive_category_ids` and unlabeled classes in the BCE, and disables
-  mosaic/mixup/cutmix/copy_paste. Overall metrics can exceed zero-shot, but rare-class AP may
-  still trail it (gains concentrate in common/frequent). Negative sampling / class balancing
-  is the follow-up for rare classes; see §4.
+- **LVIS uses federated class masks (PE and full fine-tuning)**: LVIS annotates only part of
+  the categories per image; training treats `positives ∪ neg_category_ids` as valid classes,
+  ignores `not_exhaustive_category_ids` and unlabeled classes in the BCE, and disables
+  mosaic/mixup/cutmix/copy_paste. Overall metrics can exceed zero-shot (full fine-tuning
+  10 epochs: E2E 0.2578 / 0.2124), but rare-class AP may still trail it (full fine-tuning
+  APr 0.1453, PE 0.1180 vs zero-shot 0.1923; gains concentrate in common/frequent).
+  Negative sampling / class balancing is the follow-up for rare classes; see §4.
