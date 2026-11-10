@@ -47,11 +47,15 @@ def build_train_dataset(cfg, spec, role="train", augment=True, limit=0, progress
     if task == "pose" and spec.format != "coco":
         raise ValueError(f"{spec.name}: pose training currently requires a COCO descriptor "
                          f"(format: coco), got {spec.format!r}")
+    if task == "pose" and spec.kpt_shape is None:
+        raise ValueError(f"{spec.name}: pose training requires 'kpt_shape' in the descriptor")
     if spec.format == "coco":
         ds = CocoTrainDataset(cfg, r.ann, r.images, label=role, augment=augment, limit=limit,
                               progress=progress, progress_file=progress_file,
                               segment=(task == "segment"), single_cls=single_cls,
-                              require_keypoints=(task == "pose"))
+                              require_keypoints=(task == "pose"), pose=(task == "pose"),
+                              kpt_shape=spec.kpt_shape if task == "pose" else None,
+                              flip_idx=spec.flip_idx if task == "pose" else None)
         if not single_cls:  # 单类时描述符 nc 与数据类别数故意不同（模型头为 1 类）
             _check_names(spec, ds)
         return ds
@@ -71,9 +75,12 @@ def build_eval_dataset(spec, role="val", progress=False, progress_file=None, tas
     if task == "pose" and spec.format != "coco":
         raise ValueError(f"{spec.name}: pose evaluation currently requires a COCO descriptor "
                          f"(format: coco), got {spec.format!r}")
+    if task == "pose" and spec.kpt_shape is None:
+        raise ValueError(f"{spec.name}: pose evaluation requires 'kpt_shape' in the descriptor")
     if spec.format == "coco":
         ds = CocoDataset(r.ann, r.images, label=role, progress=progress, progress_file=progress_file,
-                         single_cls=single_cls, require_keypoints=(task == "pose"))
+                         single_cls=single_cls, require_keypoints=(task == "pose"),
+                         kpt_shape=spec.kpt_shape if task == "pose" else None)
         if not single_cls:
             _check_names(spec, ds)
         return ds

@@ -21,23 +21,27 @@ import torch
 
 from config.inference import CONF_THRES, IMGSZ
 from data.preprocess import preprocess
-from train.metrics import FastMetrics
+from train.metrics import FastMetrics, FastPoseMetrics
 from utils.engines import Detections
 from utils.postprocess import process_mask_lowres, scale_boxes
 from utils.progress import ProgressBar
 
-__all__ = ["validate", "VAL_HEADER", "VAL_HEADER_SEG", "format_val_row"]
+__all__ = ["validate", "VAL_HEADER", "VAL_HEADER_SEG", "VAL_HEADER_POSE", "format_val_row"]
 
 VAL_HEADER = "      " + "%11s" * 7 % ("Class", "Images", "Instances", "P", "R", "mAP50", "mAP50-95")
 VAL_HEADER_SEG = "      " + "%11s" * 11 % (
     "Class", "Images", "Instances", "P", "R", "mAP50", "mAP50-95",
     "P(M)", "R(M)", "mAP50(M)", "mAP50-95(M)")
+VAL_HEADER_POSE = "      " + "%11s" * 11 % (
+    "Class", "Images", "Instances", "P", "R", "mAP50", "mAP50-95",
+    "P(P)", "R(P)", "mAP50(P)", "mAP50-95(P)")
 
 _LOSS_KEYS = ("box", "cls", "l1", "o2m", "o2o")  # 无 loss_fn 时的兜底键（正常路径由 item_keys 派生）
 _LOSS_KEYS_SEG = ("box", "seg", "cls", "l1", "o2m", "o2o")
+_LOSS_KEYS_POSE = ("box", "pose", "kobj", "rle", "cls", "l1", "o2m", "o2o")
 
 
-def format_val_row(metrics=None, images=0, instances=0, seg=False):
+def format_val_row(metrics=None, images=0, instances=0, seg=False, pose=False):
     """val 数据行（与表头同构 11 宽右对齐）——进度条实时行与定格行共用"""
     if metrics is not None:
         images, instances = metrics["images"], metrics["instances"]
@@ -45,8 +49,11 @@ def format_val_row(metrics=None, images=0, instances=0, seg=False):
         if seg:
             tail += "%11.4f" * 4 % (metrics["P(M)"], metrics["R(M)"],
                                     metrics["mAP@50(M)"], metrics["mAP@[.5:.95](M)"])
+        elif pose:
+            tail += "%11.4f" * 4 % (metrics["P(P)"], metrics["R(P)"],
+                                    metrics["mAP@50(P)"], metrics["mAP@[.5:.95](P)"])
     else:
-        tail = "".join(f"{'-':>11}" for _ in range(8 if seg else 4))
+        tail = "".join(f"{'-':>11}" for _ in range(8 if (seg or pose) else 4))
     return "      " + "%11s" % "all" + "%11d" * 2 % (images, instances) + tail
 
 
@@ -76,18 +83,23 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
     if hasattr(head, "end2end"):
         head.end2end = True  # YOLO26 走 E2E 解码；V3Detect 无此开关
     is_seg = task == "segment"
+    is_pose = task == "pose"
+    kpt_shape = tuple(getattr(head, "kpt_shape", (17, 3))) if is_pose else None
     metrics = FastMetrics(nc=len(dataset.names), task=task)
+    pose_metrics = FastPoseMetrics(nc=len(dataset.names), kpt_shape=kpt_shape) if is_pose else None
     loss_keys = tuple(loss_fn.item_keys) if loss_fn is not None else (
-        _LOSS_KEYS_SEG if is_seg else _LOSS_KEYS)
+        _LOSS_KEYS_SEG if is_seg else _LOSS_KEYS_POSE if is_pose else _LOSS_KEYS)
 
     n = len(dataset) if not limit else min(limit, len(dataset))
     if n == 0:
         result = metrics.compute()
+        if is_pose:
+            result.update(pose_metrics.compute())
         if loss_fn is not None:
             result["loss"] = dict.fromkeys(loss_keys, 0.0)
         return (result, metrics) if return_metrics else result
 
-    bar = ProgressBar(n, desc=format_val_row(seg=is_seg))
+    bar = ProgressBar(n, desc=format_val_row(seg=is_seg, pose=is_pose))
     t0 = time.monotonic()
     n_inst_seen = 0
     speed = None
@@ -115,7 +127,7 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
             outs = head.postprocess_val(preds, feats)  # 每图 (M, 6[+nm])（letterbox 像素）
             if loss_fn is not None:
                 # 目标变换到 letterbox 空间（scale_boxes 的逆变换），与训练损失同像素口径
-                tgt, seg_masks = [], []
+                tgt, seg_masks, kpt_rows = [], [], []
                 for bi, (j, _img, _t, ratio, pad, extra) in enumerate(pending):
                     if is_seg:
                         gt_lb = extra[0]
@@ -123,14 +135,25 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
                             tgt.append([bi, c, x1, y1, x2, y2])
                         seg_masks.append(extra[1])
                     else:
-                        for (x1, y1, x2, y2), c in dataset.targets(j, include_crowd=False):
+                        gt_j = dataset.targets(j, include_crowd=False)
+                        kps_j = dataset.keypoints(j, include_crowd=False) if is_pose else None
+                        for r, ((x1, y1, x2, y2), c) in enumerate(gt_j):
                             tgt.append([bi, c, x1 * ratio + pad[1], y1 * ratio + pad[0],
                                         x2 * ratio + pad[1], y2 * ratio + pad[0]])
+                            if is_pose:
+                                kp = kps_j[r].copy()
+                                kp[..., 0] = kp[..., 0] * ratio + pad[1]
+                                kp[..., 1] = kp[..., 1] * ratio + pad[0]
+                                kpt_rows.append(kp)
                 tg = (torch.tensor(tgt, dtype=torch.float32, device=device) if tgt
                       else torch.zeros((0, 6), device=device))
                 if is_seg:
                     masks = torch.from_numpy(np.concatenate(seg_masks, 0)).to(device)
                     _, items = loss_fn(preds, tg, len(pending), imgsz, masks=masks)
+                elif is_pose:
+                    kp = (torch.from_numpy(np.stack(kpt_rows)).to(device) if kpt_rows
+                          else torch.zeros((0, *kpt_shape), device=device))
+                    _, items = loss_fn(preds, tg, len(pending), imgsz, keypoints=kp)
                 else:
                     _, items = loss_fn(preds, tg, len(pending), imgsz)
                 for k in loss_sums:
@@ -156,8 +179,8 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
                 metrics.update_mask(det_masks, dets.scores, dets.class_ids, gt_masks, gt_cls)
                 n_inst_seen += len(gt_cls)
             else:
-                gt = np.array([[x1, y1, x2, y2, c] for (x1, y1, x2, y2), c in
-                               dataset.targets(j, include_crowd=False)], np.float32)
+                gt_pairs = dataset.targets(j, include_crowd=False)
+                gt = np.array([[x1, y1, x2, y2, c] for (x1, y1, x2, y2), c in gt_pairs], np.float32)
                 gt = gt.reshape(-1, 5)
                 n_inst_seen += len(gt)
                 metrics.update(
@@ -165,13 +188,28 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
                     gt[:, :4] if len(gt) else np.zeros((0, 4), np.float32),
                     gt[:, 4].astype(np.int64) if len(gt) else np.zeros(0, np.int64),
                 )
+                if is_pose:
+                    k, d = kpt_shape
+                    kpts_lb = out[keep][:, 6:6 + k * d].reshape(-1, k, d)
+                    gt_k = dataset.keypoints(j, include_crowd=False).copy()
+                    gt_k[..., 0] = gt_k[..., 0] * ratio + pad[1]
+                    gt_k[..., 1] = gt_k[..., 1] * ratio + pad[0]
+                    gt_boxes_lb = (gt[:, :4] * np.array([ratio, ratio, ratio, ratio], np.float32)
+                                   + np.array([pad[1], pad[0], pad[1], pad[0]], np.float32)
+                                   if len(gt) else np.zeros((0, 4), np.float32))
+                    pose_metrics.update(kpts_lb, scores, cls, gt_k, gt_boxes_lb,
+                                        gt[:, 4].astype(np.int64) if len(gt) else np.zeros(0, np.int64))
         pending.clear()
         if (i + 1) % 10 == 0 or i == n - 1:
             speed = (i + 1) / max(time.monotonic() - t0, 1e-6)
-            bar.update(i + 1, speed, desc=format_val_row(images=i + 1, instances=n_inst_seen, seg=is_seg))
+            bar.update(i + 1, speed, desc=format_val_row(images=i + 1, instances=n_inst_seen,
+                                                         seg=is_seg, pose=is_pose))
     result = metrics.compute()
+    if is_pose:
+        pr = pose_metrics.compute()
+        result.update({k: v for k, v in pr.items() if k not in ("images", "instances")})
     # 定格：末次刷新换成真实指标行（保留末段速度），换行保留（与训练行同机制）
-    bar.update(n, speed, desc=format_val_row(result, seg=is_seg))
+    bar.update(n, speed, desc=format_val_row(result, seg=is_seg, pose=is_pose))
     bar.close()
     if loss_fn is not None:
         result["loss"] = {k: v / max(n_batches, 1) for k, v in loss_sums.items()}

@@ -34,7 +34,7 @@ class TrainConfig:
                     # 空 = 未设置，必须由 CLI --data 提供（见 scripts/train.py）
     scale: str = "n"
     model: str = "yolo26"  # 架构名（model/build.py 的 ARCHS 注册表；yolo26 | yolo26-seg |
-                          # yolov3-tiny | yolov3-tiny-silu（算子替换版）| flash-yolo）
+                          # yolo26-pose | yolov3-tiny | yolov3-tiny-silu（算子替换版）| flash-yolo）
     cfg_path: str = ""  # 自定义模型 yaml 覆盖 ARCHS 注册路径（架构筛选实验用；"" = 用注册表）
     pe: bool = False  # YOLOE-26 文本模式 PE 线性探测：类名文本嵌入融合进 cv3 尾卷积，
                       # 只训练 cv3 / one2one_cv3 的 6 个尾卷积（官方 PE 口径）
@@ -99,6 +99,9 @@ class TrainConfig:
     cls_w: float = 1.0  # o2o 分类项额外权重（官方 ckpt 记录值；released 代码不消费，默认 1.0）
     dfl_gain: float = 1.5
     obj_gain: float = 1.0  # v3 系 objectness 权重（yolo26 双头无独立 obj 项，不使用）
+    pose_gain: float = 24.0  # pose 关键点位置项（官方 pose ckpt 记录值；仅 yolo26-pose）
+    kobj_gain: float = 4.0  # pose 关键点可见性 BCE 权重（官方 pose ckpt 记录值）
+    rle_gain: float = 1.0  # RLE 项权重（官方 pose ckpt 记录值）
     obj_iou_target: bool = False  # v3 系 IoU-aware objectness（参考 zjykzj/YOLOv3，--yolov3loss）：
                                   # 正样本 obj 目标 = IoU(预测框, 责任 GT)（常量）且权重 ×5；
                                   # false = darknet 硬目标 0/1（默认，行为不变）

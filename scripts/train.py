@@ -48,7 +48,8 @@ _INT_FIELDS = ["epochs", "batch", "nbs", "imgsz", "workers", "seed", "close_mosa
                "freeze"]
 _FLOAT_FIELDS = ["lr0", "lrf", "momentum", "weight_decay", "muon_w", "sgd_w", "warmup_epochs", "warmup_momentum",
                  "warmup_bias_lr",
-                 "lr_step_gamma", "box_gain", "cls_gain", "cls_w", "dfl_gain", "obj_gain", "tal_alpha", "tal_beta",
+                 "lr_step_gamma", "box_gain", "cls_gain", "cls_w", "dfl_gain", "obj_gain",
+                 "pose_gain", "kobj_gain", "rle_gain", "tal_alpha", "tal_beta",
                  "prog_alpha_init", "prog_alpha_final", "stal_s_min", "stal_s_ref", "ema_decay",
                  "multi_scale", "mosaic", "mixup", "cutmix", "copy_paste", "aug_scale", "degrees", "shear",
                  "perspective", "translate",
@@ -57,7 +58,7 @@ _STR_FIELDS = ["copy_paste_mode"]
 
 
 def _build_parser():
-    parser = argparse.ArgumentParser(description="YOLO26 / YOLO26-seg / YOLOv3-tiny training")
+    parser = argparse.ArgumentParser(description="YOLO26 / YOLO26-seg / YOLO26-pose / YOLOv3-tiny training")
     parser.add_argument("--data", default=None,
                         help="dataset descriptor: a name in config/datasets/ (local/ wins) or a .yaml path")
     parser.add_argument("--weights", default=None, help="init from .safetensors (finetune; default: from scratch)")

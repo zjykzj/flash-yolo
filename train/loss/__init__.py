@@ -9,15 +9,17 @@
 
 from train.loss.v3_detect import ComputeLossV3
 from train.loss.yolo26_detect import ComputeLoss
+from train.loss.yolo26_pose import ComputeLossPose
 from train.loss.yolo26_seg import ComputeLossSeg
 
-__all__ = ["ComputeLoss", "ComputeLossSeg", "ComputeLossV3", "build_loss"]
+__all__ = ["ComputeLoss", "ComputeLossSeg", "ComputeLossPose", "ComputeLossV3", "build_loss"]
 
 _LOSS_BY_ARCH = {
     "yolo26": ComputeLoss,
     "flash-yolo": ComputeLoss,
     "yolo26-seg": ComputeLossSeg,
     "flash-yolo-seg": ComputeLossSeg,
+    "yolo26-pose": ComputeLossPose,
     "yolov3-tiny": ComputeLossV3,
     "yolov3-tiny-silu": ComputeLossV3,
 }

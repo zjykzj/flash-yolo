@@ -101,11 +101,12 @@ class ComputeLoss:
         l_l1 = (d.abs().mean(-1) * w * fg).sum() / t_sum * batch_size
         return l_box, l_cls, l_l1, a
 
-    def _extra_branch_terms(self, branch, preds_b, assignment, masks, targets, strides, batch_size, imgsz):
-        """分支附加损失（分割子类覆盖）；检测基类无附加项"""
+    def _extra_branch_terms(self, branch, preds_b, assignment, masks, targets, strides, batch_size, imgsz,
+                            keypoints=None):
+        """分支附加损失（分割/pose 子类覆盖）；检测基类无附加项"""
         return None, {}
 
-    def forward(self, preds, targets, batch_size, imgsz, masks=None, cls_mask=None):
+    def forward(self, preds, targets, batch_size, imgsz, masks=None, cls_mask=None, keypoints=None):
         """总损失（fp32 内部计算，兼容 AMP 下的 fp16 输入）
 
         Args:
@@ -114,6 +115,7 @@ class ComputeLoss:
             batch_size: 本 batch 图像数
             masks: 分割 GT（由子类消费；检测路径为 None）
             cls_mask: (B, nc) bool，federated 数据集的分类有效类掩码（None = 所有类参与）
+            keypoints: pose GT (N, K, D) 原图像素，与 targets 行一一对应（pose 子类消费）
         Returns:
             (loss_total, items) — total 为 weight*Σ_img L_img（x batch 与 nbs/accum 口径一致），
             items 为 per-image 均值口径的分解字典（日志用，float）
@@ -139,7 +141,7 @@ class ComputeLoss:
                 boxes, scores, anchors, strides, gt, gt_mask, batch_size, imgsz,
                 one2one=(branch == "one2one"), cls_mask=cls_mask)
             extra_loss, extra_items = self._extra_branch_terms(
-                branch, preds[branch], a, masks, targets, strides, batch_size, imgsz)
+                branch, preds[branch], a, masks, targets, strides, batch_size, imgsz, keypoints=keypoints)
 
             cls_term = self.cfg.cls_gain * l_cls
             if name == "o2o":  # 官方配方记录的 cls_w：只作用于 o2o 分类项，默认 1.0 行为不变

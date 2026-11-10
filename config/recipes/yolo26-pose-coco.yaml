@@ -1,0 +1,53 @@
+# YOLO26-pose 官方 COCO-pose 训练配方（ultralytics 8.4.173 官方 pose ckpt 的 train_args）
+#
+# 口径说明：官方 pose checkpoint 是 **Objects365 检测预训练 + COCO-pose 400 轮微调**
+# （train_args.pretrained = yolo26n-objv1-150.pt）。因此：
+#   - 从零训练用本配方：调度/增益一致，但起点不同，不能与官方 pose 数字做 like-for-like；
+#     从零训练建议加 `--no-amp`（官方 amp=true 依赖 O365 预训练初始化；检测从零 AMP 的
+#     NaN 机制同样适用，见 CLAUDE.md「Training (M3)」第 10 条）。
+#   - 微调用本配方 + `--weights weights/yolo26n-pose.safetensors`（或官方 .pt 转换产物）。
+# 官方原始 train_args 还包含 cls_w=2 / o2m=1 / muon_w=sgd_w=0.5 / warmup_bias_lr=0.1。
+base:
+  epochs: 400
+  batch: 128
+  nbs: 64
+  imgsz: 640
+  optimizer: musgd
+  lr0: 0.005
+  lrf: 0.1
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 1
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  muon_w: 0.5
+  sgd_w: 0.5
+  amp: true
+  # loss gains（官方 pose ckpt 记录值；dfl 对应 reg_max=1 的 L1 项）
+  box_gain: 7.5
+  cls_gain: 0.5
+  dfl_gain: 6.0
+  cls_w: 2.0
+  pose_gain: 24.0
+  kobj_gain: 4.0
+  rle_gain: 1.0
+  prog_alpha_init: 1.0
+  prog_alpha_final: 0.1
+  # augment（官方 pose 配方：mosaic + fliplr，其余几何/混叠增强全关）
+  mosaic: 1.0
+  close_mosaic: 10
+  mixup: 0.0
+  cutmix: 0.0
+  copy_paste: 0.0
+  copy_paste_mode: "off"  # pose 不消费 CopyPaste（官方 train_args 写 flip，但概率为 0）
+  aug_scale: 0.5
+  degrees: 0.0
+  shear: 0.0
+  perspective: 0.0
+  translate: 0.1
+  fliplr: 0.5
+  flipud: 0.0
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  bgr: 0.0

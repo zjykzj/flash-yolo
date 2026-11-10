@@ -335,30 +335,40 @@ def load_weights(model, path, strict=True):
     return missing, unexpected
 
 
-def load_weights_finetune(model, path):
+def load_weights_finetune(model, path, allow_missing_head=False):
     """微调初始化：key 必须一一对应，只跳过任务头内 shape 变化的张量（如 O365 365 类 -> COCO 80 类）
 
     与 `load_weights(strict=True)` 的区别只有一条：允许同 key 的 shape 变化并按交集加载。
     - key 缺失/多余 -> 报错（架构改名/换错权重不会被静默吞掉）；
     - shape 变化只允许发生在任务头 `model.model[-1]` 内（分类分支/语义头随 nc 变）；
       头外任何 shape 不匹配 -> 报错（不同档位/架构的权重不会被部分加载）；
-    - 加载后返回 (loaded, skipped)：skipped 为 [(key, ckpt_shape, model_shape), ...]，
-      调用方据此打印“跳过了哪些类别相关层”。
+    - `allow_missing_head=True`（pose）：官方 pose 配方从 O365 **检测**权重初始化，
+      任务头里的 cv4/cv4_kpts/cv4_sigma/flow_model 在检测 ckpt 中不存在——这些"头内缺失"
+      允许随机初始化；头外缺失仍然报错。其他架构保持严格（默认 False）。
+    - 加载后返回 (loaded, skipped)：skipped 为 [(key, ckpt_shape, model_shape), ...]
+      （缺失的头内 key 的 ckpt_shape 记 None），调用方据此打印“跳过了哪些类别/任务头层”。
 
     官方 O365 预训练权重是 365 类；COCO 训练建 80 类头时用它初始化，类别头随机初始化、
     backbone/neck/proto/cv2 等逐位加载——与 ultralytics 的 intersect 加载语义一致。
     """
     sd = load_file(path)
     target = model.state_dict()
-    missing = sorted(set(target) - set(sd))
-    unexpected = sorted(set(sd) - set(target))
-    if missing or unexpected:
-        raise ValueError(
-            f"checkpoint/model key mismatch: missing {len(missing)} {missing[:5]}, "
-            f"unexpected {len(unexpected)} {unexpected[:5]} — use the matching architecture"
-        )
     names = {id(m): n for n, m in model.named_modules()}
     head_prefix = names[id(model.model[-1])] + "."
+    missing = sorted(set(target) - set(sd))
+    unexpected = sorted(set(sd) - set(target))
+    if unexpected:
+        raise ValueError(
+            f"checkpoint/model key mismatch: unexpected {len(unexpected)} {unexpected[:5]} — "
+            "use the matching architecture"
+        )
+    if missing:
+        missing_outside = [k for k in missing if not k.startswith(head_prefix)]
+        if not allow_missing_head or missing_outside:
+            raise ValueError(
+                f"checkpoint/model key mismatch: missing {len(missing)} "
+                f"{missing_outside[:5] if missing_outside else missing[:5]} — use the matching architecture"
+            )
     loaded, skipped = {}, []
     for k, v in sd.items():
         if tuple(v.shape) == tuple(target[k].shape):
@@ -374,6 +384,8 @@ def load_weights_finetune(model, path):
     if not loaded:
         raise ValueError("no tensors loaded from checkpoint")
     model.load_state_dict(loaded, strict=False)
+    # 头内缺失（pose 从检测权重初始化）：随机初始化的任务头张量一并回报
+    skipped.extend((k, None, tuple(target[k].shape)) for k in missing)
     return loaded, skipped
 
 

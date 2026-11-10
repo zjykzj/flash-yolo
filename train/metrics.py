@@ -16,11 +16,16 @@ import numpy as np
 
 from utils.iou import box_iou_matrix, mask_iou_matrix
 
-__all__ = ["FastMetrics"]
+__all__ = ["FastMetrics", "FastPoseMetrics"]
 
 _IOU_THRESHOLDS = np.arange(0.5, 0.95 + 1e-9, 0.05)  # 10 个阈值
 _RECALL_POINTS = np.linspace(0, 1, 101)  # 101 点插值
 _MAX_DETS = 100  # 每图每类最多参与匹配的检测数（COCO maxDets=100 口径）
+_POSE_MAX_DETS = 20  # COCO keypoints maxDets=20
+# COCO 17 点 OKS sigmas（与 train/loss/yolo26_pose.py 同值；训练指标只依赖 numpy）
+_OKS_SIGMA = np.array(
+    [0.26, 0.25, 0.25, 0.35, 0.35, 0.79, 0.79, 0.72, 0.72, 0.62, 0.62, 1.07,
+     1.07, 0.87, 0.87, 0.89, 0.89], dtype=np.float32) / 10.0
 
 
 def _greedy_match_all_thr(iou, det_scores):
@@ -104,6 +109,82 @@ def _class_stats_from_records(records, n_gt_c):
         ap_by_thr.append(_ap_from_tp_fp(tp, fp, n_gt_c))
         rec_by_thr.append(tp.sum() / n_gt_c)
     return ap_by_thr[0], float(np.mean(ap_by_thr)), float(np.mean(rec_by_thr)), pr, rc
+
+
+def _oks_matrix(det_kpts, gt_kpts, gt_boxes, sigmas, eps=1e-7):
+    """(N,K,D) det、(M,K,D) gt、(M,4) gt boxes -> OKS (N,M)（COCO keypoints 口径）"""
+    n, m = len(det_kpts), len(gt_kpts)
+    if n == 0 or m == 0:
+        return np.zeros((n, m), np.float32)
+    d = ((det_kpts[None, :, :, 0] - gt_kpts[:, None, :, 0]) ** 2
+         + (det_kpts[None, :, :, 1] - gt_kpts[:, None, :, 1]) ** 2)  # (M,N,K)
+    area = ((gt_boxes[:, 2] - gt_boxes[:, 0]) * (gt_boxes[:, 3] - gt_boxes[:, 1])).astype(np.float32)
+    e = d / ((2 * sigmas)[None, None, :] ** 2 * (area[:, None, None] + eps) * 2)
+    if det_kpts.shape[-1] >= 3:
+        mask = gt_kpts[:, None, :, 2] > 0  # (M,1,K)
+    else:
+        mask = np.ones((m, 1, gt_kpts.shape[1]), bool)
+    oks = (np.exp(-e) * mask).sum(-1) / (mask.sum(-1) + eps)  # (M,N)
+    return oks.T.astype(np.float32)
+
+
+class FastPoseMetrics:
+    """累积每图 (关键点, GT) -> pose mAP@50 / mAP@[.5:.95] / AR@20（COCO OKS 口径近似）
+
+    与 FastMetrics 同一套「每图每类 top-20 + 全局分数排序 + 101 点插值」；匹配矩阵换成
+    OKS（sigmas 用 COCO 17 点值）。训练中 best 选取用 box + pose mAP50-95（官方
+    PoseMetrics.fitness 口径）。
+    """
+
+    def __init__(self, nc=1, kpt_shape=(17, 3)):
+        self.nc = nc
+        self.kpt_shape = tuple(kpt_shape)
+        k = self.kpt_shape[0]
+        self.sigmas = _OKS_SIGMA if self.kpt_shape == (17, 3) else np.ones(k, np.float32) / k
+        self.records = [[] for _ in range(nc)]
+        self.n_gt = np.zeros(nc, np.int64)
+        self.n_images = 0
+        self.n_instances = 0
+
+    def update(self, det_kpts, det_scores, det_cls, gt_kpts, gt_boxes, gt_cls):
+        """累积一张图（关键点/框均为 letterbox 像素；OKS 对等比缩放不敏感）"""
+        self.n_images += 1
+        det_kpts = np.asarray(det_kpts, np.float32).reshape(-1, *self.kpt_shape)
+        gt_kpts = np.asarray(gt_kpts, np.float32).reshape(-1, *self.kpt_shape)
+        det_scores = np.asarray(det_scores, np.float32).reshape(-1)
+        det_cls = np.asarray(det_cls, np.int64).reshape(-1)
+        gt_boxes = np.asarray(gt_boxes, np.float32).reshape(-1, 4)
+        gt_cls = np.asarray(gt_cls, np.int64).reshape(-1)
+        self.n_instances += len(gt_cls)
+        classes = (np.unique(np.concatenate([det_cls, gt_cls]))
+                   if (len(det_cls) or len(gt_cls)) else [])
+        for c in classes:
+            c = int(c)
+            m_det, m_gt = det_cls == c, gt_cls == c
+            scores = det_scores[m_det]
+            order = np.argsort(-scores)[:_POSE_MAX_DETS]
+            scores = scores[order]
+            d_k = det_kpts[m_det][order]
+            g_k = gt_kpts[m_gt]
+            tp = (_greedy_match_all_thr(_oks_matrix(d_k, g_k, gt_boxes[m_gt], self.sigmas), scores)
+                  if len(g_k) else np.zeros((len(scores), len(_IOU_THRESHOLDS)), bool))
+            self.records[c].append((scores, tp))
+            self.n_gt[c] += len(g_k)
+
+    def compute(self):
+        if self.n_images == 0:
+            return {"mAP@50(P)": 0.0, "mAP@[.5:.95](P)": 0.0, "P(P)": 0.0, "R(P)": 0.0,
+                    "AR@20(P)": 0.0, "images": 0, "instances": 0}
+        ap50s, aps, ars, prs, rcs = [], [], [], [], []
+        for c in range(self.nc):
+            if self.n_gt[c] == 0:
+                continue
+            ap50, ap, ar, pr, rc = _class_stats_from_records(self.records[c], int(self.n_gt[c]))
+            ap50s.append(ap50); aps.append(ap); ars.append(ar); prs.append(pr); rcs.append(rc)
+        mean = (lambda xs: round(float(np.mean(xs)), 4) if xs else 0.0)
+        return {"mAP@50(P)": mean(ap50s), "mAP@[.5:.95](P)": mean(aps),
+                "P(P)": mean(prs), "R(P)": mean(rcs), "AR@20(P)": mean(ars),
+                "images": self.n_images, "instances": self.n_instances}
 
 
 class FastMetrics:

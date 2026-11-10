@@ -98,8 +98,9 @@ def _draw_masks(image_bgr, detections, alpha=0.5):
     return out.astype(np.uint8)
 
 
-def draw_target_grid(imgs, targets, save_path, n=8, names=None, scale=1.0):
-    """训练 batch 抽样网格图：在增强后的图上画 GT 框并拼接保存
+def draw_target_grid(imgs, targets, save_path, n=8, names=None, scale=1.0,
+                     keypoints=None, skeleton=None):
+    """训练 batch 抽样网格图：在增强后的图上画 GT 框（pose 另画关键点）并拼接保存
 
     Args:
         imgs: (B,3,H,W) float32 [0,1] RGB 张量（训练输入，已增强，可含 mosaic/mixup）
@@ -108,19 +109,27 @@ def draw_target_grid(imgs, targets, save_path, n=8, names=None, scale=1.0):
         n: 抽样张数（取 batch 前 n 张）
         names: 类别名（默认 load_names()，即 COCO 80 类）
         scale: 单张缩放（0.5 = 半尺寸，控文件大小）
+        keypoints: (N,K,D) 与 targets 行对齐的 GT 关键点（pose；可见性 <0.5 不画）
+        skeleton: 骨架点对（0-based）；None 且 K=17 时用 COCO 骨架
     """
     if names is None:
         from config.datasets import load_names
 
         names = load_names()
     tgt = targets.detach().cpu().numpy() if hasattr(targets, "detach") else np.asarray(targets)
+    kps = (keypoints.detach().cpu().numpy() if hasattr(keypoints, "detach") else
+           np.asarray(keypoints) if keypoints is not None else None)
+    if kps is not None and skeleton is None:
+        skeleton = COCO_SKELETON if kps.shape[1] == COCO_KPT_COUNT else ()
     tiles = []
     b = int(imgs.shape[0])
     for i in range(min(n, b)):
         img = imgs[i].detach().cpu().numpy().transpose(1, 2, 0)  # RGB (H,W,3) [0,1]
         img = np.ascontiguousarray(img[:, :, ::-1])  # -> BGR
         img = (img * 255).clip(0, 255).astype(np.uint8)
-        for row in tgt[tgt[:, 0] == i]:
+        rows = tgt[tgt[:, 0] == i]
+        rows_kp = kps[tgt[:, 0] == i] if kps is not None else [None] * len(rows)
+        for row, kp in zip(rows, rows_kp):
             x1, y1, x2, y2 = map(int, row[2:6])
             color = _COLORS[int(row[1]) % len(_COLORS)]
             cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
@@ -128,6 +137,15 @@ def draw_target_grid(imgs, targets, save_path, n=8, names=None, scale=1.0):
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.rectangle(img, (max(x1 - tw - 2, 0), max(y1 - th - 4, 0)), (x1, y1), color, -1)
             cv2.putText(img, label, (max(x1 - tw, 0), max(y1 - 3, th)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+            if kp is not None:
+                visible = kp[:, 2] >= 0.5 if kp.shape[1] >= 3 else np.ones(len(kp), bool)
+                for a, b_ in skeleton or ():
+                    if visible[a] and visible[b_]:
+                        cv2.line(img, (int(round(kp[a, 0])), int(round(kp[a, 1]))),
+                                 (int(round(kp[b_, 0])), int(round(kp[b_, 1]))), color, 1, cv2.LINE_AA)
+                for q, (x, y) in enumerate(kp[:, :2]):
+                    if visible[q]:
+                        cv2.circle(img, (int(round(x)), int(round(y))), 2, color, -1, cv2.LINE_AA)
         if scale != 1.0:
             img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         tiles.append(img)

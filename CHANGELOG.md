@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **YOLO26-pose**: official `yolo26*-pose` checkpoints convert, strict-load and run bit-identically; pt/ONNX/TensorRT inference, COCO keypoint (OKS) evaluation and export are wired, with skeleton drawing and YOLO-pose labels.
+- **YOLO26-pose training**: COCO keypoint data/augmentation, pose + keypoint-objectness + RLE loss, OKS training metrics, the official 400-epoch COCO-pose recipe, and single-GPU/DDP Trainer support.
 
 ## [1.6.0] - 2026-11-10
 

@@ -62,10 +62,15 @@ def plot_results(csv_path, out_path):
     cols, rows = _read_results(csv_path)
     if not rows:
         return False
-    candidates = [("box", "box loss"), ("seg", "seg loss"), ("cls", "cls loss"), ("l1", "l1 loss"),
-                  ("sem", "sem loss"), ("loss", "total loss"), ("mAP", "box mAP50-95"),
-                  ("mAP50", "box mAP50"), ("mAP@[.5:.95](M)", "mask mAP50-95"),
-                  ("mAP50(M)", "mask mAP50"), ("val_box", "val box loss"), ("val_seg", "val seg loss")]
+    candidates = [("box", "box loss"), ("seg", "seg loss"), ("pose", "pose loss"),
+                  ("kobj", "keypoint obj loss"), ("rle", "RLE loss"),
+                  ("cls", "cls loss"), ("l1", "l1 loss"), ("sem", "sem loss"),
+                  ("loss", "total loss"), ("mAP", "box mAP50-95"), ("mAP50", "box mAP50"),
+                  ("mAP@[.5:.95](M)", "mask mAP50-95"), ("mAP50(M)", "mask mAP50"),
+                  ("mAP@[.5:.95](P)", "pose mAP50-95"), ("mAP50(P)", "pose mAP50"),
+                  ("val_box", "val box loss"), ("val_seg", "val seg loss"),
+                  ("val_pose", "val pose loss"), ("val_kobj", "val kobj loss"),
+                  ("val_rle", "val RLE loss")]
     present = [(k, label) for k, label in candidates if k in cols and np.isfinite(_series(rows, k)).any()]
     if not present:
         return False

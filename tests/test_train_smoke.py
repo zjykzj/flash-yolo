@@ -90,6 +90,58 @@ def _make_mini_yolo(tmp_path, n_img=32, size=320, seg=False):
     return desc
 
 
+def _make_mini_coco_pose(tmp_path, n_img=8, size=160):
+    """迷你 COCO-pose：每图 2 个人（框 + 17 关键点），用于训练全链路冒烟"""
+    K = 17
+    root = tmp_path / "coco-pose"
+    (root / "annotations").mkdir(parents=True)
+    for split in ("train", "val"):
+        (root / "images" / split).mkdir(parents=True)
+        images, anns = [], []
+        aid = 0
+        for i in range(n_img):
+            img = _draw(size)
+            cv2.imwrite(str(root / "images" / split / f"{i:04d}.jpg"), img)
+            images.append({"id": i + 1, "file_name": f"{i:04d}.jpg", "width": size, "height": size})
+            for x1, y1, x2, y2, _cls in _scaled_boxes(size):
+                aid += 1
+                kp = []
+                for q in range(K):
+                    kp += [x1 + (q % 5 + 0.5) / 5 * (x2 - x1),
+                           y1 + (q // 5 + 0.5) / 4 * (y2 - y1), 2]
+                anns.append({"id": aid, "image_id": i + 1, "category_id": 1,
+                             "bbox": [x1, y1, x2 - x1, y2 - y1],
+                             "area": (x2 - x1) * (y2 - y1), "iscrowd": 0,
+                             "keypoints": kp, "num_keypoints": K})
+        (root / "annotations" / f"person_keypoints_{split}.json").write_text(json.dumps(
+            {"images": images, "annotations": anns,
+             "categories": [{"id": 1, "name": "person"}]}))
+    desc = tmp_path / "coco-pose.yaml"
+    desc.write_text(
+        f"format: coco\npath: {root}\nnames: [person]\nkpt_shape: [17, 3]\n"
+        f"flip_idx: [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]\n"
+        "train: {images: images/train, ann: annotations/person_keypoints_train.json}\n"
+        "val: {images: images/val, ann: annotations/person_keypoints_val.json}\n", encoding="utf-8")
+    return desc
+
+
+def test_train_smoke_pose(tmp_path):
+    """pose 全链路：关键点数据 -> 损失/验证 -> best 权重 metadata（kpt_shape）"""
+    data = _make_mini_coco_pose(tmp_path, n_img=8, size=160)
+    cfg = TrainConfig(
+        data=str(data), model="yolo26-pose", epochs=1, batch=2, nbs=2, imgsz=160, workers=0,
+        val_epochs=1, val_limit=4, limit=0, amp=False, mosaic=0.0, fliplr=0.0,
+        mixup=0.0, cutmix=0.0, copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0,
+        aug_samples=0, plots=False,
+    )
+    trainer = Trainer(cfg, device="cpu", run_dir=tmp_path / "run-pose")
+    trainer.train()
+    from model.weights import load_meta
+    wm = load_meta(trainer.run_dir / "weights" / "best.safetensors")
+    assert wm["arch"] == "yolo26-pose" and wm["kpt_shape"] == [17, 3], wm
+    assert (trainer.run_dir / "results.csv").exists()
+
+
 def test_train_smoke_single_cls(tmp_path):
     """--single-cls：模型 nc=1、metadata names=["item"]、训练/验证全链路可跑"""
     data = _make_mini_coco(tmp_path, n_img=8, size=160)

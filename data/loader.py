@@ -12,7 +12,7 @@ import torch
 
 from data.augment import augment, letterbox_train
 
-__all__ = ["TrainMixin", "SharedCounter", "collate_fn", "worker_init_fn", "seed_main_rng"]
+__all__ = ["TrainMixin", "SharedCounter", "collate_fn", "collate_pose_fn", "worker_init_fn", "seed_main_rng"]
 
 _worker_rng = None  # worker 进程内全局 RNG（worker_init_fn 播种，多进程下各 worker 独立）
 _main_rng = None    # workers=0 时主进程的增强 RNG（Trainer 每 epoch 经 seed_main_rng 播种）
@@ -52,6 +52,8 @@ class TrainMixin:
     """
 
     use_segments = False
+    use_keypoints = False
+    flip_idx = None  # pose：水平/垂直翻转后的关键点重排（来自数据集描述符）
 
     def cls_valid_mask(self, idx):
         """federated 训练的分类有效掩码 (nc,) bool；非 federated 数据集返回 None"""
@@ -67,6 +69,13 @@ class TrainMixin:
             else:
                 out = letterbox_train(img, labels, self.cfg.imgsz, segments=segments,
                                       mask_ratio=self.cfg.mask_ratio, overlap_mask=self.cfg.overlap_mask)
+        elif self.use_keypoints:
+            img, labels, keypoints = sample
+            if self.use_augment:
+                out = augment(img, labels, self.load_image, self.cfg, _rng(), idx, len(self),
+                              keypoints=keypoints, flip_idx=self.flip_idx)
+            else:
+                out = letterbox_train(img, labels, self.cfg.imgsz, keypoints=keypoints)
         else:
             img, labels = sample
             out = (augment(img, labels, self.load_image, self.cfg, _rng(), idx, len(self))
@@ -157,3 +166,18 @@ def _stack_targets(labels):
         if len(lbs):
             targets.append(np.concatenate([np.full((len(lbs), 1), bi, np.float32), lbs], axis=1))
     return torch.from_numpy(np.concatenate(targets)) if targets else torch.zeros((0, 6))
+
+
+def collate_pose_fn(batch, kpt_shape):
+    """pose 批次 -> (imgs, targets, keypoints)
+
+    targets (N,6) [batch_idx, cls, x1, y1, x2, y2] 与 keypoints (N,K,D) 逐行对齐；
+    `kpt_shape` 由调用方（Trainer）传入，保证全空 batch 也能给出 (0,K,D) 形状。
+    """
+    imgs = torch.stack([b[0] for b in batch])
+    labels = [b[1] for b in batch]
+    targets = _stack_targets(labels)
+    kps = [np.asarray(b[2], np.float32).reshape(-1, *kpt_shape) for b in batch]
+    kps = [k for k, lbs in zip(kps, labels) if len(lbs)]
+    keypoints = torch.from_numpy(np.concatenate(kps, 0)) if kps else torch.zeros((0, *kpt_shape))
+    return imgs, targets, keypoints

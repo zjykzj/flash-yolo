@@ -47,6 +47,20 @@ def test_wrong_scale_is_rejected(tmp_path):
         load_weights_finetune(dst, path)
 
 
+def test_pose_from_detection_allows_missing_pose_branch(tmp_path):
+    """pose 官方配方从 O365 检测权重初始化：头内新增 pose 分支允许随机初始化"""
+    src = build_model("yolo26", "n", 640, nc=80)
+    path = _save(src, tmp_path / "det.safetensors")
+    dst = build_model("yolo26-pose", "n", 640, nc=1)
+    with pytest.raises(ValueError, match="missing"):
+        load_weights_finetune(dst, path)
+    loaded, skipped = load_weights_finetune(dst, path, allow_missing_head=True)
+    assert any(k.startswith("model.23.cv4") for k, _, _ in skipped)
+    assert any(k.startswith("model.23.flow_model") for k, _, _ in skipped)
+    assert torch.equal(dst.model[0].conv.weight, src.model[0].conv.weight)
+    assert loaded
+
+
 def test_wrong_architecture_is_rejected(tmp_path):
     path = _save(build_model("yolo26-seg", "n", 640, nc=80), tmp_path / "seg.safetensors")
     dst = build_model("yolo26", "n", 640, nc=80)

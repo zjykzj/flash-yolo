@@ -52,7 +52,7 @@ def parse_coco(ann_file, status_line=None):
 
 def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels=False,
                build_segments=False, progress=False, progress_file=None, single_cls=False,
-               build_cls_mask=False, require_keypoints=False):
+               build_cls_mask=False, require_keypoints=False, build_keypoints=False, kpt_shape=None):
     """解析 ann json + 单趟扫描 -> ScanResult
 
     exists 检查 / crowd 剔除 / 逐图标签构造合并进同一个循环：本机 118k 图实测扫描段 ≈2.6s，
@@ -71,6 +71,8 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
     require_keypoints=True（pose）：只保留至少有一个 `num_keypoints > 0` 标注的图——
     COCO-pose 官方协议口径（person_keypoints_val2017.json 有 5,000 张图，但官方
     val2017.txt 只有 2,346 张有有效关键点的图；其余图没有 pose GT，不能当负样本）。
+    build_keypoints=True（pose 训练）：与 labels 逐行对齐地收集 `annotations[].keypoints`
+    （(M, K, 3) 原图像素 x,y,v；kpt_shape 必填）。分割/pose 不同时开。
     """
     prefix = f"{label}:".ljust(7)  # `train: ` / `val:   ` 对齐
     mb = ann_file.stat().st_size / 2**20  # MiB（与预览口径一致，非 SI 十进制 MB）
@@ -91,6 +93,12 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
     t_scan = time.monotonic()
     kept, labels = [], [] if build_labels else None
     segments = [] if build_segments else None
+    keypoints = [] if build_keypoints else None
+    kpt_shape = tuple(kpt_shape) if kpt_shape is not None else None
+    if build_keypoints and (kpt_shape is None or len(kpt_shape) != 2):
+        raise ValueError("build_keypoints=True requires kpt_shape=(K, D)")
+    if build_keypoints and build_segments:
+        raise ValueError("build_keypoints and build_segments are mutually exclusive (pose vs segment)")
     n_missing = n_bg = n_crowd = n_instances = n_seg_fallback = n_seg_rle = 0
     cls_of = (lambda a: 0) if single_cls else (lambda a: cat_id_to_idx[a["category_id"]])
     first_missing = None
@@ -131,6 +139,20 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
                     lbs = [[cls_of(a), *a["bbox"][:2],
                             a["bbox"][0] + a["bbox"][2], a["bbox"][1] + a["bbox"][3]] for a in anns]
                     labels.append(np.array(lbs, np.float32).reshape(-1, 5) if lbs else np.zeros((0, 5), np.float32))
+                if build_keypoints:
+                    kps = []
+                    for a in anns:
+                        raw = a.get("keypoints")
+                        if raw is None:
+                            raise ValueError(f"{ann_file}: annotation {a.get('id')} has no 'keypoints' "
+                                             f"(pose training needs person_keypoints json)")
+                        arr = np.asarray(raw, np.float32).reshape(-1)
+                        if arr.size != kpt_shape[0] * kpt_shape[1]:
+                            raise ValueError(f"{ann_file}: annotation {a.get('id')} has {arr.size} keypoint "
+                                             f"values, expected {kpt_shape[0] * kpt_shape[1]} "
+                                             f"(kpt_shape={kpt_shape})")
+                        kps.append(arr.reshape(kpt_shape))
+                    keypoints.append(np.stack(kps) if kps else np.zeros((0, *kpt_shape), np.float32))
                 n_instances += len(anns)
                 n_bg += not anns
             if cls_masks is not None:
@@ -164,18 +186,19 @@ def scan_split(ann_file, img_dir, label, limit=0, drop_crowd=False, build_labels
             f"check the dataset descriptor / annotation format")
     stats = ScanStats(n_missing, n_bg, n_crowd, n_instances,
                       parse_time, time.monotonic() - t_scan, first_missing, n_seg_fallback, n_seg_rle)
-    return ScanResult(kept, labels, by_image, cat_id_to_idx, names, stats, segments, cls_masks)
+    return ScanResult(kept, labels, by_image, cat_id_to_idx, names, stats, segments, cls_masks, keypoints)
 
 
 class CocoDataset:
     """按图片索引读取一个 COCO 角色的图片与标注（val/评估口径：保留 crowd、不建标签）"""
 
     def __init__(self, ann_file, img_dir, label="val", progress=False, progress_file=None,
-                 single_cls=False, require_keypoints=False):
+                 single_cls=False, require_keypoints=False, kpt_shape=None):
         self.ann_file = Path(ann_file)
         self.img_dir = Path(img_dir)
         self.label = label
         self.single_cls = bool(single_cls)
+        self.kpt_shape = tuple(kpt_shape) if kpt_shape is not None else None
 
         # category_id（COCO 非连续 id）-> 0..nc-1（与训练侧共用 parse_coco 口径）
         res = scan_split(self.ann_file, self.img_dir, label, progress=progress, progress_file=progress_file,
@@ -253,6 +276,21 @@ class CocoDataset:
             out.append(([x, y, x + w, y + h], (0 if self.single_cls else self.cat_id_to_idx[a["category_id"]])))
         return out
 
+    def keypoints(self, idx, include_crowd=False):
+        """第 idx 张图的 GT 关键点：(M, K, D) 原图像素坐标，与 targets(include_crowd) 逐行对齐"""
+        if self.kpt_shape is None:
+            raise ValueError("CocoDataset.keypoints requires kpt_shape")
+        info = self.images[idx]
+        out = []
+        for a in self.annotations[info["id"]]:
+            if not include_crowd and a.get("iscrowd", 0):
+                continue
+            raw = a.get("keypoints")
+            if raw is None:
+                raise ValueError(f"{self.ann_file}: annotation {a.get('id')} has no 'keypoints'")
+            out.append(np.asarray(raw, np.float32).reshape(self.kpt_shape))
+        return np.stack(out) if out else np.zeros((0, *self.kpt_shape), np.float32)
+
     def _seg_polys(self, idx, imgsz, ratio, pad, include_crowd):
         """第 idx 张图 -> (labels (M,5), polygons)；框由多边形包围盒导出（与训练侧同口径）
 
@@ -316,10 +354,13 @@ class CocoTrainDataset(TrainMixin):
 
     def __init__(self, cfg, ann_file, img_dir, label="train", augment=True, limit=0,
                  progress=False, progress_file=None, segment=False, single_cls=False,
-                 require_keypoints=False):
+                 require_keypoints=False, pose=False, kpt_shape=None, flip_idx=None):
         self.cfg = cfg  # TrainConfig 共享引用：close_mosaic 原地清零概率
         self.use_augment = augment
         self.use_segments = segment
+        self.use_keypoints = pose
+        self.kpt_shape = tuple(kpt_shape) if kpt_shape is not None else None
+        self.flip_idx = tuple(flip_idx) if flip_idx is not None else None
         self.ann_file = Path(ann_file)
         self.img_dir = Path(img_dir)
         self.label = label
@@ -330,9 +371,11 @@ class CocoTrainDataset(TrainMixin):
                          build_labels=True, build_segments=segment,
                          progress=progress, progress_file=progress_file, single_cls=self.single_cls,
                          build_cls_mask=getattr(self.cfg, "federated_mask", True) and not self.single_cls,
-                         require_keypoints=require_keypoints)
+                         require_keypoints=require_keypoints,
+                         build_keypoints=pose, kpt_shape=self.kpt_shape)
         self.images, self.labels, self.cat_id_to_idx = res.images, res.labels, res.cat_id_to_idx
         self.segments = res.segments if segment else None
+        self.keypoints = res.keypoints if pose else None
         self.cls_masks = res.cls_masks  # federated 数据集（LVIS）的训练分类掩码；COCO 为 None
         self.federated = self.cls_masks is not None
         self.names = {0: "item"} if self.single_cls else res.names
@@ -378,7 +421,11 @@ class CocoTrainDataset(TrainMixin):
             blank = np.zeros((self.cfg.imgsz, self.cfg.imgsz, 3), np.uint8)
             if self.use_segments:
                 return blank, np.zeros((0, 5), np.float32), []
+            if self.use_keypoints:
+                return blank, np.zeros((0, 5), np.float32), np.zeros((0, *self.kpt_shape), np.float32)
             return blank, np.zeros((0, 5), np.float32)
         if self.use_segments:
             return img, self.labels[idx].copy(), [p.copy() for p in self.segments[idx]]
+        if self.use_keypoints:
+            return img, self.labels[idx].copy(), self.keypoints[idx].copy()
         return img, self.labels[idx].copy()

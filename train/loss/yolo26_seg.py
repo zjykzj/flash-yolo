@@ -124,7 +124,8 @@ class ComputeLossSeg(ComputeLoss):
         super().__init__(cfg, head, device)
         self.overlap = bool(getattr(cfg, "overlap_mask", True))
 
-    def _extra_branch_terms(self, branch, preds_b, assignment, masks, targets, strides, batch_size, imgsz):
+    def _extra_branch_terms(self, branch, preds_b, assignment, masks, targets, strides, batch_size, imgsz,
+                            keypoints=None):
         if masks is None:
             raise ValueError("ComputeLossSeg requires GT masks (masks=None)")
         coeff = preds_b["mask_coefficient"].float().permute(0, 2, 1)  # (B, N, nm)

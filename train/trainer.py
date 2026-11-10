@@ -11,6 +11,7 @@ import logging
 import os
 from contextlib import nullcontext
 from dataclasses import replace
+from functools import partial
 import random
 import sys
 import time
@@ -27,7 +28,7 @@ from config import __version__
 from config.datasets import load_dataset
 from config.train_config import TrainConfig
 from data.build import build_eval_dataset, build_train_dataset
-from data.loader import collate_fn, seed_main_rng, worker_init_fn
+from data.loader import collate_fn, collate_pose_fn, seed_main_rng, worker_init_fn
 from data.scan import scan_summary
 from model.summary import summary_lines
 from model.text_prompt import (encode_text_prompts, load_text_encoder, resolve_text_encoder)
@@ -40,7 +41,7 @@ from train.ema import ModelEMA
 from train.loss import build_loss
 from train.lr import cosine_lr, linear_lr, set_epoch_lr, step_lr, warmup_momentum
 from train.optimizer import MuSGD, build_param_groups
-from train.validator import VAL_HEADER, VAL_HEADER_SEG, format_val_row, validate
+from train.validator import VAL_HEADER, VAL_HEADER_POSE, VAL_HEADER_SEG, format_val_row, validate
 from utils.logger import bold, log_file_only
 from utils.paths import write_run_meta
 from utils.progress import ProgressBar, fmt_elapsed, fmt_num
@@ -55,7 +56,7 @@ def _pred_tensors(preds):
         for branch in preds:
             yield f"{branch}.boxes", preds[branch]["boxes"]
             yield f"{branch}.scores", preds[branch]["scores"]
-            for extra in ("mask_coefficient", "proto", "semantic"):
+            for extra in ("mask_coefficient", "proto", "semantic", "kpts", "kpts_sigma"):
                 if extra in preds[branch]:
                     yield f"{branch}.{extra}", preds[branch][extra]
     else:
@@ -140,6 +141,7 @@ class Trainer:
         "box": ("box_loss", 3), "seg": ("seg_loss", 4), "cls": ("cls_loss", 4),
         "l1": ("l1_loss", 3), "o2m": ("o2m_loss", 2), "o2o": ("o2o_loss", 2),
         "sem": ("sem_loss", 4), "obj": ("obj_loss", 3),
+        "pose": ("pose_loss", 3), "kobj": ("kobj_loss", 3), "rle": ("rle_loss", 3),
     }
 
     def __init__(self, cfg: TrainConfig, device=None, run_dir=None, resume=None, weights=None, spec=None,
@@ -148,9 +150,11 @@ class Trainer:
         self.data_spec = spec or load_dataset(cfg.data)  # 描述符：角色路径与原始类别表的来源
         # 单类训练：模型头/掩码 metadata 用 nc=1，数据侧仍按原始类别表解析后再映射到 0
         self.spec = replace(self.data_spec, names={0: "item"}) if cfg.single_cls else self.data_spec
-        self.task = arch_task(cfg.model)  # detect | segment（数据/损失/验证的任务轴）
+        self.task = arch_task(cfg.model)  # detect | segment | pose（数据/损失/验证的任务轴）
         if self.task == "segment" and (cfg.mask_ratio < 1 or cfg.imgsz % cfg.mask_ratio):
             raise ValueError(f"mask_ratio={cfg.mask_ratio} must be >=1 and divide imgsz={cfg.imgsz}")
+        if self.task == "pose" and cfg.copy_paste > 0:
+            raise ValueError("CopyPaste is not supported for pose training (set copy_paste: 0)")
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         # 分布式身份：默认 world=1（单卡/单进程，所有 rank 分支为真、barrier 为 no-op）
         self.dist = dist_info if dist_info is not None else DistInfo(device=self.device)
@@ -213,18 +217,21 @@ class Trainer:
             meta_nc = struct_meta.get("struct_nc") or struct_meta.get("nc")
             if meta_nc:
                 struct_nc = int(meta_nc)
+        kpt_shape = struct_meta.get("kpt_shape") if cfg.model == "yolo26-pose" else None
         model = build_model(cfg.model, cfg.scale, cfg.imgsz, nc=struct_nc,
-                            cfg_path=cfg.cfg_path or None)
+                            cfg_path=cfg.cfg_path or None, kpt_shape=kpt_shape)
         if cfg.cfg_path:
             logger.info(f"model cfg: {cfg.cfg_path} (custom structure, not from the ARCHS registry)")
         if weights:
-            loaded, skipped = load_weights_finetune(model, weights)
+            loaded, skipped = load_weights_finetune(
+                model, weights, allow_missing_head=(cfg.model == "yolo26-pose"))
             if skipped:
                 logger.info(f"weight init: {len(loaded)} tensors loaded · {len(skipped)} class-head "
                             f"tensors re-initialized ({skipped[0][1]} -> {skipped[0][2]})")
         model.to(self.device)
         self.model = model
         self.head = model.model[-1]
+        self.kpt_shape = tuple(self.head.kpt_shape) if self.task == "pose" else None
         if cfg.model == "yoloe-26":
             if getattr(self.head, "lrpc", None) is not None:
                 raise ValueError("YOLOE-26 prompt-free weights are inference-only; "
@@ -255,6 +262,8 @@ class Trainer:
         }
         if hasattr(self.head, "anchors"):  # v3：固化模型实际使用的锚点（自定义重聚类后换 yaml 也能复现）
             self.weights_meta["anchors"] = encode_anchors(self.head.anchors)
+        if self.kpt_shape is not None:  # pose：关键点结构随权重走（重建头解码用）
+            self.weights_meta["kpt_shape"] = list(self.kpt_shape)
         if self.cfg.model == "yoloe-26":  # 结构 nc 与活 nc 解耦：前者用于重建，后者 = 数据集类数
             self.weights_meta["struct_nc"] = struct_nc
             self.weights_meta["prompt_mode"] = "text"
@@ -336,9 +345,12 @@ class Trainer:
         self.accumulate = max(round(cfg.nbs / cfg.batch), 1)
         self.val_enabled = cfg.val_epochs > 0  # val_epochs=0 时全程不验证（小数据集冒烟用）
         self.val_dataset = None  # 懒构建（JSON 解析 ~数秒，仅需一次）
-        mask_fields = ["P(M)", "R(M)", "mAP50(M)", "mAP@[.5:.95](M)"] if self.task == "segment" else []
+        extra_metric_fields = ([f"P(M)", "R(M)", "mAP50(M)", "mAP@[.5:.95](M)"]
+                               if self.task == "segment" else
+                               ["P(P)", "R(P)", "mAP50(P)", "mAP@[.5:.95](P)"]
+                               if self.task == "pose" else [])
         self.csv_fields = ["epoch", "time_s", *self.loss_keys, "loss", "lr",
-                           "mAP", "mAP50", "P", "R", "AR@100", *mask_fields,
+                           "mAP", "mAP50", "P", "R", "AR@100", *extra_metric_fields,
                            *(f"val_{k}" for k in self.loss_keys)]
         # close_mosaic 自动适配短跑：官方语义 = 最后 N 个 epoch 关 mosaic，但不超过总轮数的 1/5
         # （缩放结果在 _print_components 的 mosaic 行体现）
@@ -445,6 +457,8 @@ class Trainer:
         generator = torch.Generator().manual_seed(seed)
         if self.cfg.workers == 0:  # workers=0：增强在主进程跑，与 worker 侧同构地每 epoch 重播 RNG
             seed_main_rng(seed)
+        collate = (partial(collate_pose_fn, kpt_shape=self.kpt_shape)
+                   if self.task == "pose" else collate_fn)
         if self.dist.enabled:
             # DistributedSampler：同一 permuted 索引表的跨步切片（各 rank 无重叠），每 epoch set_epoch
             sampler = DistributedSampler(self.dataset, num_replicas=self.world_size, rank=self.dist.rank,
@@ -455,7 +469,7 @@ class Trainer:
                 batch_size=self.per_rank_batch,
                 sampler=sampler,
                 num_workers=self.cfg.workers,
-                collate_fn=collate_fn,
+                collate_fn=collate,
                 worker_init_fn=worker_init_fn,
                 generator=generator,
                 pin_memory=self.device.type == "cuda",
@@ -465,7 +479,7 @@ class Trainer:
             batch_size=self.cfg.batch,
             shuffle=True,
             num_workers=self.cfg.workers,
-            collate_fn=collate_fn,
+            collate_fn=collate,
             worker_init_fn=worker_init_fn,
             generator=generator,
             pin_memory=self.device.type == "cuda",
@@ -669,8 +683,14 @@ class Trainer:
             if self.pe:  # PE 只训 cv3 尾卷积：mask/proto 分支冻结，损失只有检测三项
                 seg = " · PE linear probe (mask/proto frozen, detection loss only)"
             else:
-                seg = (f" · seg BCE (gain {self.cfg.box_gain}) · sem BCE-Dice (gain {self.cfg.box_gain})"
-                       if self.task == "segment" else "")
+                if self.task == "segment":
+                    seg = (f" · seg BCE (gain {self.cfg.box_gain}) · "
+                           f"sem BCE-Dice (gain {self.cfg.box_gain})")
+                elif self.task == "pose":
+                    seg = (f" · pose {self.cfg.pose_gain} kpt · kobj {self.cfg.kobj_gain} vis · "
+                           f"rle {self.cfg.rle_gain}")
+                else:
+                    seg = ""
                 if self.full_finetune:
                     seg = " · full finetune (all weights, prompt embeddings in-graph)" + seg
             logger.info(f"loss: box {self.cfg.box_gain} CIoU · cls {self.cfg.cls_gain} BCE · "
@@ -771,14 +791,18 @@ class Trainer:
             lr_last = 0.0
 
             for bi, batch in enumerate(dl):
-                # 批次形状：检测 (imgs, targets)、分割 (+masks)；federated（LVIS）末尾多一项
-                # cls_mask (B,nc) bool（collate 见 data/loader.py）。
+                # 批次形状：检测 (imgs, targets)、分割 (+masks)、pose (+keypoints)；
+                # federated（LVIS）末尾多一项 cls_mask (B,nc) bool（collate 见 data/loader.py）。
                 cls_mask = None
+                keypoints = None
                 if self.task == "segment":
                     if len(batch) == 4:
                         imgs, targets, masks, cls_mask = batch
                     else:
                         imgs, targets, masks = batch
+                elif self.task == "pose":
+                    imgs, targets, keypoints = batch
+                    masks = None
                 else:
                     if len(batch) == 3:
                         imgs, targets, cls_mask = batch
@@ -798,11 +822,15 @@ class Trainer:
                 # 增强抽样可视化：首个 / close_mosaic 后首个 / 末轮各存一张网格图（产物只由 rank0 写）
                 if self.is_main and bi == 0 and self.cfg.aug_samples and epoch in self._sample_epochs():
                     draw_target_grid(imgs, targets, self.samples_dir / f"epoch{epoch + 1:03d}.png",
-                                     n=self.cfg.aug_samples, names=self.dataset.names)
+                                     n=self.cfg.aug_samples, names=self.dataset.names,
+                                     keypoints=(keypoints.cpu().numpy() if keypoints is not None else None),
+                                     skeleton=self.data_spec.skeleton or None)
 
                 imgs = imgs.to(self.device, non_blocking=True,
                                memory_format=torch.channels_last if self.cfg.channels_last else torch.preserve_format)
                 targets = targets.to(self.device)
+                if keypoints is not None:
+                    keypoints = keypoints.to(self.device)
                 if masks is not None:
                     masks = masks.to(self.device)  # 掩码保持整数 dtype（不做多尺度缩放）
                 if cls_mask is not None:
@@ -819,6 +847,8 @@ class Trainer:
                                                                mode="bilinear", align_corners=False)
                         if targets.numel():
                             targets[:, 2:6] *= sf
+                        if keypoints is not None and keypoints.numel():
+                            keypoints[..., :2] *= sf
                 # DDP 梯度累积：非累积边界的 micro-batch 不发 all-reduce（forward+backward 整个包住），
                 # 累积边界/末批走默认同步（单卡 nullcontext，代码顺序与历史完全一致）。
                 is_update = (bi + 1) % self.accumulate == 0 or bi == n_batch - 1
@@ -831,6 +861,9 @@ class Trainer:
                         if self.task == "segment":
                             loss, items = self.loss_fn(preds, targets, imgs.shape[0], imgsz,
                                                        masks=masks, cls_mask=cls_mask)
+                        elif self.task == "pose":
+                            loss, items = self.loss_fn(preds, targets, imgs.shape[0], imgsz,
+                                                       keypoints=keypoints)
                         else:
                             loss, items = self.loss_fn(preds, targets, imgs.shape[0], imgsz,
                                                        cls_mask=cls_mask)
@@ -923,15 +956,19 @@ class Trainer:
                 metrics = None
                 if self.val_enabled and ((epoch + 1) % self.cfg.val_epochs == 0 or epoch == self.cfg.epochs - 1):
                     t_val = time.monotonic()
-                    logger.info(VAL_HEADER_SEG if self.task == "segment" else VAL_HEADER)
+                    logger.info(VAL_HEADER_POSE if self.task == "pose" else
+                                VAL_HEADER_SEG if self.task == "segment" else VAL_HEADER)
                     metrics = self._validate()
                     val_elapsed = time.monotonic() - t_val
                     # 控制台定格行=进度条行；文件日志另落一行（带评估耗时）
-                    log_file_only(format_val_row(metrics, seg=self.task == "segment")
+                    log_file_only(format_val_row(metrics, seg=self.task == "segment",
+                                                 pose=self.task == "pose")
                                   + f" · {fmt_elapsed(val_elapsed)}", name=logger.name)
                     fitness = metrics["mAP@[.5:.95]"]
                     if self.task == "segment":  # 官方 SegmentMetrics.fitness = box + mask mAP50-95
                         fitness += metrics["mAP@[.5:.95](M)"]
+                    elif self.task == "pose":  # 官方 PoseMetrics.fitness = box + pose mAP50-95
+                        fitness += metrics["mAP@[.5:.95](P)"]
                 else:
                     fitness = self.best_fitness
                 is_best = fitness > self.best_fitness
@@ -983,6 +1020,10 @@ class Trainer:
                 row.update({"P(M)": metrics["P(M)"], "R(M)": metrics["R(M)"],
                             "mAP50(M)": metrics["mAP@50(M)"],
                             "mAP@[.5:.95](M)": metrics["mAP@[.5:.95](M)"]})
+            elif self.task == "pose":
+                row.update({"P(P)": metrics["P(P)"], "R(P)": metrics["R(P)"],
+                            "mAP50(P)": metrics["mAP@50(P)"],
+                            "mAP@[.5:.95](P)": metrics["mAP@[.5:.95](P)"]})
             if metrics.get("loss"):
                 row.update({f"val_{k}": round(v, 4) for k, v in metrics["loss"].items()})
         new_file = not self.results_csv.exists()
