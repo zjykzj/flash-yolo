@@ -4,7 +4,8 @@
 > **identical line-by-line** with the detection variant — only the last line swaps `Detect` for
 > `Segment26`, the same relation as `yolo26 → yolo26-seg`.
 > Structure: `config/models/flash-yolo-seg.yaml`; shared structure:
-> [flash-yolo.md](flash-yolo.md).
+> [flash-yolo.md](flash-yolo.md), pose variant:
+> [flash-yolo-pose.md](flash-yolo-pose.md).
 
 ## 1. Naming and scales
 

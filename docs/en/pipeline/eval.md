@@ -126,7 +126,7 @@ Segmentation weights automatically produce two tables: the same results evaluate
 - In-training validation computes Box + Mask simultaneously (low-resolution approximation), best
   fitness = box + mask mAP50-95; formal numbers still come from this script.
 
-### 5.1 Pose (yolo26-pose)
+### 5.1 Pose (yolo26-pose / flash-yolo-pose)
 
 - `--data coco-pose`: COCO `person_keypoints_*.json`; the evaluator uses
   `iou_type="keypoints"` (pycocotools OKS, `maxDets=20`). **Val only evaluates the 2,346 images
@@ -139,7 +139,9 @@ Segmentation weights automatically produce two tables: the same results evaluate
   script.
 - Official `yolo26n-pose` reference (same 2,346 images): this repo E2E **0.5687 / 0.8250**,
   NMS 0.5670 / 0.8280; Ultralytics E2E 0.572 / 0.833, NMS 0.570 / 0.831. Full conventions:
-  [../models/yolo26-pose.md](../models/yolo26-pose.md).
+  [../models/yolo26-pose.md](../models/yolo26-pose.md). `flash-yolo-pose` has no official
+  reference — evaluate it with this script; structure:
+  [../models/flash-yolo-pose.md](../models/flash-yolo-pose.md).
 
 **Official yolo26n-seg @640 acceptance**: Box 0.3967 / 0.5548, Mask 0.3367 / 0.5276 (mAP50-95 /
 mAP50). The official training-time validator records box 0.3975 / mask 0.3386 — the ~0.002 gap

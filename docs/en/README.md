@@ -33,6 +33,7 @@ docs/en/
 │   ├── yolo26-pose.md
 │   ├── flash-yolo.md
 │   ├── flash-yolo-seg.md
+│   ├── flash-yolo-pose.md
 │   └── yolov3-tiny.md original + SiLU variant
 ├── pipeline/
 │   ├── README.md      shared CLI / run dir / engine conventions

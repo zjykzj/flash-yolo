@@ -57,7 +57,7 @@ Each instance additionally reads `segmentation`:
 - `overlap_mask=True` (default) produces an area-descending instance index map; labels are
   reordered accordingly — **the index-map IDs must match the targets row order**.
 
-## 4. Keypoint annotations (`--model yolo26-pose`)
+## 4. Keypoint annotations (`--model yolo26-pose` / `flash-yolo-pose`)
 
 COCO-pose uses `person_keypoints_{train,val}2017.json` (not `instances_*.json`):
 
@@ -73,6 +73,8 @@ COCO-pose uses `person_keypoints_{train,val}2017.json` (not `instances_*.json`):
 ```bash
 python scripts/train.py --data coco-pose --model yolo26-pose \
     --weights weights/yolo26n-pose.safetensors --recipe yolo26-pose-coco --epochs 10
+python scripts/train.py --data coco-pose --model flash-yolo-pose \
+    --name flash-pose --batch 32 --no-amp
 python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
 ```
 

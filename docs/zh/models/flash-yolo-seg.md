@@ -3,7 +3,7 @@
 > `flash-yolo` 的实例分割变体（`arch_task = segment`）。backbone/neck 与检测版**逐行相同**，
 > 只把最后一行 `Detect` 换成 `Segment26`——与 `yolo26 → yolo26-seg` 是同一种关系。
 > 结构定义：`config/models/flash-yolo-seg.yaml`；共享结构见
-> [flash-yolo.md](flash-yolo.md)。
+> [flash-yolo.md](flash-yolo.md)，姿态版见 [flash-yolo-pose.md](flash-yolo-pose.md)。
 
 ## 1. 命名与档位
 

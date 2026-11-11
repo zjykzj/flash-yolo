@@ -29,7 +29,7 @@ import numpy as np
 import torch
 from safetensors.torch import save_file
 
-from model.build import build_model
+from model.build import arch_task, build_model
 from model.weights import arch_from_weights, encode_anchors, encode_meta, provenance_meta, scale_from_weights
 from utils.logger import get_logger, log_params, setup_logging
 
@@ -60,7 +60,7 @@ def _convert_pt(src, dst):
     if names:
         names = list(names.values()) if isinstance(names, dict) else list(names)
         meta["names"], meta["nc"] = names, len(names)
-    if arch == "yolo26-pose":
+    if arch_task(arch) == "pose":
         # 头结构参数：kpt_shape 决定 nk/cv4 输出维度，must travel with the weights；
         # nc 以头为准（官方 yaml 的 nc: 80 是历史默认值，实际 COCO-pose 头为 1 类）
         head = model.model[-1]

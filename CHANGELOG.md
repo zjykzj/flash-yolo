@@ -11,11 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **YOLO26-pose**: official `yolo26*-pose` checkpoints convert, strict-load and run bit-identically; pt/ONNX/TensorRT inference, COCO keypoint (OKS) evaluation and export are wired, with skeleton drawing and YOLO-pose labels.
 - **YOLO26-pose training**: COCO keypoint data/augmentation, pose + keypoint-objectness + RLE loss, OKS training metrics, the official 400-epoch COCO-pose recipe, and single-GPU/DDP Trainer support.
+- **Flash-YOLO-pose**: the flash-yolo backbone/neck with a Pose26 head (3.08M params / 5.9 GFLOPs @640); training, OKS eval, E2E/raw export and inference are wired, including `kpt_shape` metadata and initialization from flash-yolo detection weights with a random pose head.
 
 ### Changed
 
 - **Pose documentation**: bilingual YOLO26-pose model pages and task-specific train/eval/export/infer/dataset/model-matrix/alignment/FAQ sections document the new pipeline and its 2,346-image COCO-pose protocol.
 - **Pose training parity evidence**: a 10-epoch official-weight finetune matches ultralytics 8.4.173 (E2E AP 0.5476 vs 0.5477, NMS 0.5528 vs 0.5508), and the docs flag that pose training-time metrics sit well below pycocotools (0.4367 / 0.3676 vs 0.5476 / 0.5477).
+
+### Fixed
+
+- **Fixed-scale export metadata**: ONNX/TRT deploy metadata records the architecture default scale (`flash` / `tiny`) instead of the JSON `null` string for fixed-scale models.
 
 ## [1.6.0] - 2026-11-10
 

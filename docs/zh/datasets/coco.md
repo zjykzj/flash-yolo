@@ -49,7 +49,7 @@ val:   {images: images/val2017,   ann: annotations/instances_val2017.json}
 - `overlap_mask=True`（默认）生成面积降序的实例索引图；labels 同步重排，**索引图 ID 与
   targets 行序必须一致**。
 
-## 4. 关键点标注（`--model yolo26-pose`）
+## 4. 关键点标注（`--model yolo26-pose` / `flash-yolo-pose`）
 
 COCO-pose 使用 `person_keypoints_{train,val}2017.json`（不是 `instances_*.json`）：
 
@@ -64,6 +64,8 @@ COCO-pose 使用 `person_keypoints_{train,val}2017.json`（不是 `instances_*.j
 ```bash
 python scripts/train.py --data coco-pose --model yolo26-pose \
     --weights weights/yolo26n-pose.safetensors --recipe yolo26-pose-coco --epochs 10
+python scripts/train.py --data coco-pose --model flash-yolo-pose \
+    --name flash-pose --batch 32 --no-amp
 python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
 ```
 

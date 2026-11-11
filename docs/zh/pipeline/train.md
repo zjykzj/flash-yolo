@@ -33,6 +33,10 @@ python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
 python scripts/train.py --data coco-pose --model yolo26-pose \
     --weights weights/yolo26n-pose.safetensors \
     --recipe yolo26-pose-coco --epochs 10 --batch 32 --name pose-ft
+
+# Flash-YOLO-pose：没有官方权重，从零用 default 配方
+python scripts/train.py --data coco-pose --model flash-yolo-pose \
+    --name flash-pose --batch 32 --workers 8 --no-amp
 ```
 
 ## 2. 配方（recipe）
@@ -69,6 +73,9 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
   覆盖 `--cls-w 1.0 --prog-alpha-init 0.8 --muon-w 0.2 --sgd-w 1.0`：该版本不消费
   `cls_w`，另三项是硬编码默认值。10 轮对齐结果见
   [../development/alignment.md](../development/alignment.md) §3.1。
+- `flash-yolo-pose` 没有官方预训练权重；从零训练用 `default`，不要用
+  `yolo26-pose-coco`（其 lr/轮数是针对官方 pose 起点调的）。从 `flash-yolo` 检测权重
+  初始化时 pose 头随机，backbone/neck 逐位加载。
 
 ## 3. 常用参数
 
@@ -77,7 +84,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--data` | —（必填） | 描述符 |
 | `--name` | 空 → `runs/train/train` | run 目录后缀；已存在自动加序号 |
 | `--recipe` | 内置 default | 配方名或 `.yaml` 路径 |
-| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `yolo26-pose` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu` / `yoloe-26` |
+| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `yolo26-pose` / `flash-yolo` / `flash-yolo-seg` / `flash-yolo-pose` / `yolov3-tiny` / `yolov3-tiny-silu` / `yoloe-26` |
 | `--scale` | `n` | yolo26 系档位；其他架构固定 |
 | `--pe` | false | YOLOE-26 文本模式 PE 线性探测（需 `--weights` 文本权重；只训 cv3 尾卷积） |
 | `--full-finetune` | false | YOLOE-26 全量微调（需 `--weights` 文本权重；全部参数训练，reprta 在图内） |
@@ -99,9 +106,9 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--amp` | false | fp16+GradScaler；**从零训练会 NaN，仅微调可试** |
 | `--optimizer` | `musgd` | `musgd`（Muon+SGD）或 `sgd`（darknet 口径） |
 | `--obj-iou-target` | false | v3 IoU-aware objectness |
-| `--pose-gain` | 24.0 | pose 关键点位置损失权重（仅 `yolo26-pose`） |
-| `--kobj-gain` | 4.0 | pose 关键点可见性 BCE 权重（仅 `yolo26-pose`） |
-| `--rle-gain` | 1.0 | pose RLE 损失权重（仅 `yolo26-pose`） |
+| `--pose-gain` | 24.0 | pose 关键点位置损失权重（仅 pose 架构） |
+| `--kobj-gain` | 4.0 | pose 关键点可见性 BCE 权重（仅 pose 架构） |
+| `--rle-gain` | 1.0 | pose RLE 损失权重（仅 pose 架构） |
 | `--close-mosaic` | 10 | 最后 N 轮关 mosaic/mixup/cutmix/copy_paste（自动 `min(N, epochs//5)`） |
 | `--multi-scale` | 0.0 | 输入尺寸抖动 ±r |
 | `--copy-paste-mode` | `off` | `off` / `box` / `flip`（官方分割 CopyPaste） |

@@ -4,7 +4,8 @@
 > input, **GFLOPs strictly below YOLO26n (5.48)**, accuracy above YOLOv3-tiny's converged level,
 > and the change comes from a new structural idea, not hyperparameter tuning.
 > Structure: `config/models/flash-yolo.yaml`; segmentation variant:
-> [flash-yolo-seg.md](flash-yolo-seg.md).
+> [flash-yolo-seg.md](flash-yolo-seg.md), pose variant:
+> [flash-yolo-pose.md](flash-yolo-pose.md).
 
 ## 1. Design proposition
 

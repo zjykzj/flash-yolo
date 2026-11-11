@@ -12,6 +12,7 @@ details live on their own pages.
 | YOLO26-pose | pose estimation (COCO 17 keypoints) | n / s / m / l / x | 3.68M (n) | 7.6 (n) | [yolo26-pose.md](yolo26-pose.md) |
 | Flash-YOLO | detection | flash (single) | 1.97M | 3.80 | [flash-yolo.md](flash-yolo.md) |
 | Flash-YOLO-seg | instance segmentation | flash (single) | 2.53M | 7.6 | [flash-yolo-seg.md](flash-yolo-seg.md) |
+| Flash-YOLO-pose | pose estimation (COCO 17 keypoints) | flash (single) | 3.08M | 5.9 | [flash-yolo-pose.md](flash-yolo-pose.md) |
 | YOLOv3-tiny / -SiLU | detection | tiny (single) | 8.85M | 5.56 @416 | [yolov3-tiny.md](yolov3-tiny.md) |
 | YOLOE-26 | open-vocabulary segmentation (pf / text / visual prompts) | n / s / m / l / x | 7.84M (n) | 16.0 (n) | [yoloe.md](yoloe.md) |
 
@@ -23,16 +24,19 @@ python scripts/train.py --data coco --model yolo26-seg --scale n
 python scripts/train.py --data coco-pose --model yolo26-pose --scale n
 python scripts/train.py --data coco --model flash-yolo
 python scripts/train.py --data coco --model flash-yolo-seg
+python scripts/train.py --data coco-pose --model flash-yolo-pose
 python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 ```
 
 - `yolo26` / `yolo26-seg` / `yolo26-pose` / `yoloe-26` have the `n/s/m/l/x` scales;
-  `flash-yolo` / `flash-yolo-seg` only `flash`, `yolov3-tiny` only `tiny` — passing `--scale`
-  for those warns and does nothing.
-- `yolo26-pose` uses `--data coco-pose` (COCO keypoints JSON, 17 points, `nc=1`); the official
-  400-epoch recipe is O365 detection pretraining + COCO-pose finetuning, so from-scratch runs
-  are not like-for-like. Training/eval/export/infer are all wired; see
-  [yolo26-pose.md](yolo26-pose.md).
+  `flash-yolo` / `flash-yolo-seg` / `flash-yolo-pose` only `flash`, `yolov3-tiny` only
+  `tiny` — passing `--scale` for those warns and does nothing.
+- `yolo26-pose` / `flash-yolo-pose` use `--data coco-pose` (COCO keypoints JSON, 17 points,
+  `nc=1`). The `yolo26-pose` official 400-epoch recipe is O365 detection pretraining +
+  COCO-pose finetuning, so from-scratch runs are not like-for-like; `flash-yolo-pose` has no
+  official weights and uses the `default` recipe from scratch. Training/eval/export/infer are
+  all wired for both; see [yolo26-pose.md](yolo26-pose.md) /
+  [flash-yolo-pose.md](flash-yolo-pose.md).
 - `yoloe-26` supports prompt-free (-pf) and text-prompt weights; `--raw` does not apply and
   `--nms` is text-mode only (o2m + NMS; pf stays E2E, see yoloe.md). Text mode additionally
   needs `mobileclip2_b.safetensors` (the converted Apple MobileCLIP2-B text encoder) next to
@@ -102,7 +106,7 @@ whose filename cannot reveal the scale skip `--model/--scale`; custom-dataset ar
 - **NMS**: o2m head + class-aware NMS, usually ~0.9 points higher, slightly slower; enabled with
   `--nms`. Pose's raw/NMS output is the **decoded** `(B, 4+nc+nk, N)` (xywh + sigmoid +
   keypoints), unlike the detection head's raw ltrb+logits; see
-  [yolo26-pose.md](yolo26-pose.md).
+  [yolo26-pose.md](yolo26-pose.md) / [flash-yolo-pose.md](flash-yolo-pose.md).
 - YOLOv3-tiny has a single "decode + obj×cls + NMS" path; `--nms` / `--raw` error out for it.
 
 ### anchors (YOLOv3-tiny only)
@@ -120,8 +124,9 @@ whose filename cannot reveal the scale skip `--model/--scale`; custom-dataset ar
   COCO(-pose) finetuning**, not from-scratch training; comparing from-scratch numbers against
   the official ones is not like-for-like. The pose COCO stage runs 400 epochs and initializes
   from O365 **detection** weights.
-- Each model page gives the available final results (mostly 300-epoch from scratch; pose
-  currently has official-weight reproduction only, with no full from-scratch run yet), weight
+- Each model page gives the available final results (mostly 300-epoch from scratch;
+  `yolo26-pose` currently has official-weight reproduction only, and `flash-yolo-pose` has no
+  public checkpoint or formal metrics yet — neither has a full from-scratch run), weight
   downloads and latency; the same-budget cross-model comparison lives in the root README's
   Results.
 - Formal metrics always come from `scripts/eval.py` (pycocotools); in-training FastMetrics are

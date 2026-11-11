@@ -178,3 +178,5 @@ conventions: [../pipeline/eval.md](../pipeline/eval.md); export contracts:
 - COCO-pose val has 2,346 images; do not mix it with the 5,000-image detection split.
 - Official pose weights come from O365 detection pretraining + 400 COCO-pose epochs;
   from-scratch numbers are this repo's baseline only.
+- `flash-yolo-pose` reuses the same `Pose26` head with the flash-yolo backbone/neck; see
+  [flash-yolo-pose.md](flash-yolo-pose.md).

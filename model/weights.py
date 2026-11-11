@@ -30,9 +30,11 @@ logger = logging.getLogger(__name__)
 # 官方档位命名：yolo26n/s/m/l/x（scripts/download_weights.py 与 scripts/export.py 都沿用）
 _SCALE_RE = re.compile(r"yolo26([nsmlx])($|[-_.])", re.I)
 # 架构命名：yolov3-tiny（官方 darknet 权重命名）/ yolov3-tiny-silu（算子替换版）/
-# flash-yolo（本项目自有架构）/ flash-yolo-seg（分割变体）。长名在前，否则 "yolov3-tiny-silu"
-# 会被 "yolov3-tiny"、"flash-yolo-seg" 会被 "flash-yolo" 前缀误吸
-_ARCH_RE = re.compile(r"(yolov3-tiny-silu|yolov3-tiny|flash-yolo-seg|flash-yolo)($|[-_.])", re.I)
+# flash-yolo（本项目自有架构）/ flash-yolo-seg（分割变体）/ flash-yolo-pose（姿态变体）。
+# 长名在前，否则 "yolov3-tiny-silu" 会被 "yolov3-tiny"、"flash-yolo-pose"/"flash-yolo-seg"
+# 会被 "flash-yolo" 前缀误吸
+_ARCH_RE = re.compile(
+    r"(yolov3-tiny-silu|yolov3-tiny|flash-yolo-pose|flash-yolo-seg|flash-yolo)($|[-_.])", re.I)
 # 任务后缀：yolo26n-seg / yolo26n-pose（官方任务权重命名）。先于档位判定：
 # yolo26 系里带 -seg 归 yolo26-seg、带 -pose 归 yolo26-pose
 _TASK_SUFFIX_RE = re.compile(r"yolo26[nsmlx](?:[-_.][a-z0-9]+)*[-_.](seg|pose)($|[-_.])", re.I)

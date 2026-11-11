@@ -2,7 +2,8 @@
 
 > 本仓库自有轻量架构（模型名 = 项目名）。目标：在 640 输入下 **GFLOPs 严格低于 YOLO26n
 > （5.48）**，精度高于 YOLOv3-tiny 的收敛值，并且改动来自新的结构思路而非调参。
-> 结构定义：`config/models/flash-yolo.yaml`；分割版见 [flash-yolo-seg.md](flash-yolo-seg.md)。
+> 结构定义：`config/models/flash-yolo.yaml`；分割版见 [flash-yolo-seg.md](flash-yolo-seg.md)，
+> 姿态版见 [flash-yolo-pose.md](flash-yolo-pose.md)。
 
 ## 1. 设计命题
 

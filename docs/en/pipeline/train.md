@@ -34,6 +34,10 @@ python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
 python scripts/train.py --data coco-pose --model yolo26-pose \
     --weights weights/yolo26n-pose.safetensors \
     --recipe yolo26-pose-coco --epochs 10 --batch 32 --name pose-ft
+
+# Flash-YOLO-pose: no official weights; from scratch with the default recipe
+python scripts/train.py --data coco-pose --model flash-yolo-pose \
+    --name flash-pose --batch 32 --workers 8 --no-amp
 ```
 
 ## 2. Recipes
@@ -74,6 +78,10 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
   --muon-w 0.2 --sgd-w 1.0`: that version does not consume `cls_w`, and the other three are
   hardcoded defaults. The 10-epoch parity result is in
   [../development/alignment.md](../development/alignment.md) §3.1.
+- `flash-yolo-pose` has no official pretrained weights; train it from scratch with the
+  `default` recipe, not `yolo26-pose-coco` (whose lr/epoch budget targets the official pose
+  start). Initializing from `flash-yolo` detection weights keeps the backbone/neck and
+  randomizes the pose head.
 
 ## 3. Common arguments
 
@@ -82,7 +90,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--data` | — (required) | descriptor |
 | `--name` | empty → `runs/train/train` | run-dir suffix; incremented if it exists |
 | `--recipe` | built-in default | recipe name or `.yaml` path |
-| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `yolo26-pose` / `flash-yolo` / `flash-yolo-seg` / `yolov3-tiny` / `yolov3-tiny-silu` / `yoloe-26` |
+| `--model` | `yolo26` | `yolo26` / `yolo26-seg` / `yolo26-pose` / `flash-yolo` / `flash-yolo-seg` / `flash-yolo-pose` / `yolov3-tiny` / `yolov3-tiny-silu` / `yoloe-26` |
 | `--scale` | `n` | yolo26-family scale; fixed for other architectures |
 | `--pe` | false | YOLOE-26 text-mode PE linear probing (requires a text `--weights`; only the cv3 tails train) |
 | `--full-finetune` | false | YOLOE-26 full fine-tuning (requires a text `--weights`; all weights train, reprta in-graph) |
@@ -104,9 +112,9 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 | `--amp` | false | fp16+GradScaler; **NaNs in from-scratch training, finetune only** |
 | `--optimizer` | `musgd` | `musgd` (Muon+SGD) or `sgd` (darknet convention) |
 | `--obj-iou-target` | false | v3 IoU-aware objectness |
-| `--pose-gain` | 24.0 | pose keypoint-location loss gain (`yolo26-pose` only) |
-| `--kobj-gain` | 4.0 | pose keypoint-visibility BCE gain (`yolo26-pose` only) |
-| `--rle-gain` | 1.0 | pose RLE loss gain (`yolo26-pose` only) |
+| `--pose-gain` | 24.0 | pose keypoint-location loss gain (pose architectures only) |
+| `--kobj-gain` | 4.0 | pose keypoint-visibility BCE gain (pose architectures only) |
+| `--rle-gain` | 1.0 | pose RLE loss gain (pose architectures only) |
 | `--close-mosaic` | 10 | last N epochs without mosaic/mixup/cutmix/copy_paste (auto `min(N, epochs//5)`) |
 | `--multi-scale` | 0.0 | input-size jitter ±r |
 | `--copy-paste-mode` | `off` | `off` / `box` / `flip` (official segmentation CopyPaste) |

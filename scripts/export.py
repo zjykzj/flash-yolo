@@ -7,7 +7,7 @@ raw: (B, 4+nc+nm, 8400)），output1 是原型 (B, nm, H/4, W/4)；掩码在外�
 utils/postprocess.process_mask 解码（与官方 val 逐像素一致）。
 yolov3-tiny：单输出解码 (B, NA, 5+nc)——obj×cls 与按类 NMS 在外部（utils/postprocess.v3_detections），
 --raw 不适用。
-yolo26-pose：单输出。默认 E2E (B, 300, 6+nk)，关键点与框共享图内 top-k；--raw 出
+pose（yolo26-pose / flash-yolo-pose）：单输出。默认 E2E (B, 300, 6+nk)，关键点与框共享图内 top-k；--raw 出
 (B, 4+nc+nk, 8400) 的 **已解码** 输出（xywh + sigmoid 分数 + 解码关键点，官方 pose
 `_inference` 口径），NMS 在外部。sigma/flow 只在训练期使用，不进导出图。
 yoloe-26 text：默认导出 fuse 后的 E2E 类锁定图；--nms 改出 o2m 密集输出
@@ -60,7 +60,10 @@ def _deploy_meta(arch, scale, imgsz, nc, end2end, prompt_mode=None, names=None, 
     infer/eval 能校验“图模式 vs --nms”，`names`/`prompt_mode` 让类锁定的 YOLOE text
     图无需原 .safetensors 即可推理/评估；`kpt_shape` 让 pose 图无需原权重即可解码关键点。
     """
-    meta = {"arch": arch, "scale": scale, "imgsz": int(imgsz), "end2end": bool(end2end)}
+    # 固定档架构（flash / tiny）的 scale 在 resolve_arch_scale 里是 None；部署 metadata
+    # 写架构默认档位（flash/tiny），避免把 JSON null 存成字符串 "null"。
+    meta = {"arch": arch, "scale": scale or ARCHS[arch]["default_scale"],
+            "imgsz": int(imgsz), "end2end": bool(end2end)}
     if nc is not None:
         meta["nc"] = int(nc)
     if prompt_mode:
@@ -81,7 +84,7 @@ def main():
     parser.add_argument("--out", default=None, help="output .onnx path (default runs/export/<weights>.onnx)")
     parser.add_argument("--raw", action="store_true",
                         help="export the o2m/NMS graph (yolo26: raw ltrb+logits; "
-                             "yolo26-pose: decoded xywh + scores + keypoints)")
+                             "pose: decoded xywh + scores + keypoints)")
     parser.add_argument("--nms", action="store_true",
                         help="export the o2m+NMS path (yoloe-26 text only; class-locked dense output)")
     parser.add_argument("--dynamic", action="store_true", help="dynamic batch axis (default: fixed batch=1)")
@@ -280,7 +283,7 @@ def main():
         end2end=not (args.raw or args.nms),
         prompt_mode=("text" if text_mode else ("pf" if prompt_free else None)),
         names=(locked_classes if text_mode else
-               (meta.get("names") if (prompt_free or arch == "yolo26-pose") else None)),
+               (meta.get("names") if (prompt_free or arch_task(arch) == "pose") else None)),
         kpt_shape=(head.kpt_shape if arch_task(arch) == "pose" else None),
     )
     write_onnx_meta(out_path, deploy_meta)

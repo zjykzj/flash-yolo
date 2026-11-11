@@ -163,3 +163,5 @@ python scripts/export.py --weights weights/yolo26n-pose.safetensors --trt --fp16
 - `--single-cls` 对 pose 不适用（COCO-pose 已经是 `nc=1`），CLI 会直接报错。
 - COCO-pose val 是 2,346 图；报告数字时不要与检测的 5,000 图混用。
 - 官方 pose 权重由 O365 检测预训练 + 400 轮 COCO-pose 微调得到；从零数字只作本仓库基线。
+- `flash-yolo-pose` 复用同一个 `Pose26` 头，只把 backbone/neck 换成 flash-yolo；结构见
+  [flash-yolo-pose.md](flash-yolo-pose.md)。

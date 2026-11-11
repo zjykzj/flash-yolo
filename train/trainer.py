@@ -217,14 +217,24 @@ class Trainer:
             meta_nc = struct_meta.get("struct_nc") or struct_meta.get("nc")
             if meta_nc:
                 struct_nc = int(meta_nc)
-        kpt_shape = struct_meta.get("kpt_shape") if cfg.model == "yolo26-pose" else None
+        kpt_shape = None
+        if self.task == "pose":
+            # 起点权重优先（微调），否则用描述符（从零训练）；两者不一致直接报错，
+            # 否则数据侧的 K 与头侧 nk 会在 collate/loss 处错位。
+            meta_shape = struct_meta.get("kpt_shape")
+            spec_shape = self.spec.kpt_shape
+            if meta_shape and spec_shape and tuple(meta_shape) != tuple(spec_shape):
+                raise ValueError(f"kpt_shape mismatch: weights {tuple(meta_shape)} vs dataset "
+                                 f"descriptor {tuple(spec_shape)}")
+            shape = meta_shape or spec_shape
+            kpt_shape = tuple(shape) if shape else None
         model = build_model(cfg.model, cfg.scale, cfg.imgsz, nc=struct_nc,
                             cfg_path=cfg.cfg_path or None, kpt_shape=kpt_shape)
         if cfg.cfg_path:
             logger.info(f"model cfg: {cfg.cfg_path} (custom structure, not from the ARCHS registry)")
         if weights:
             loaded, skipped = load_weights_finetune(
-                model, weights, allow_missing_head=(cfg.model == "yolo26-pose"))
+                model, weights, allow_missing_head=(self.task == "pose"))
             if skipped:
                 logger.info(f"weight init: {len(loaded)} tensors loaded · {len(skipped)} class-head "
                             f"tensors re-initialized ({skipped[0][1]} -> {skipped[0][2]})")

@@ -85,6 +85,7 @@ b8 = batch-8 per-image). Full protocol and per-model tables:
 | YOLO26-pose | pose estimation (COCO 17 keypoints) | n / s / m / l / x | 3.68M (n) | 7.6 (n) | official checkpoints, bit-identical forward; training / eval / export / infer wired |
 | Flash-YOLO | detection | flash | 1.97M | 3.80 | this repo's lightweight design |
 | Flash-YOLO-seg | segmentation | flash | 2.53M | 7.6 | same backbone/neck, Segment26 head |
+| Flash-YOLO-pose | pose estimation (COCO 17 keypoints) | flash | 3.08M | 5.9 | same backbone/neck, Pose26 head; no public checkpoint/metrics yet |
 | YOLOv3-tiny / -SiLU | detection | tiny | 8.85M | 5.56 @416 | darknet-compatible; official `.weights` for the original variant |
 | YOLOE-26 | open-vocab segmentation (pf / text / visual prompts) | n / s / m / l / x | 7.84M (n) | 16.0 (n) | official checkpoints (pf + text/visual modes), bit-identical forward |
 
@@ -102,6 +103,10 @@ YOLO26-pose reference: official `yolo26n-pose` weights through this pipeline rea
 against E2E 0.572 / 0.833 and NMS 0.570 / 0.831 for Ultralytics on the same data. The official pose checkpoint is
 O365 detection pretraining + 400 COCO-pose epochs; from-scratch runs are not like-for-like.
 See [docs/en/models/yolo26-pose.md](docs/en/models/yolo26-pose.md).
+
+Flash-YOLO-pose (flash-yolo backbone/neck + Pose26 head, 3.08M / 5.9 GFLOPs) is also wired for
+training / eval / export / infer; it has no public checkpoint or formal metrics yet. See
+[docs/en/models/flash-yolo-pose.md](docs/en/models/flash-yolo-pose.md).
 
 ## Installation
 
@@ -295,16 +300,20 @@ Full engine and output notes: [docs/pipeline/infer.md](docs/en/pipeline/infer.md
 
 ### Pose
 
-Supported architecture: **YOLO26-pose** (n/s/m/l/x); data is COCO keypoints JSON
-(`person_keypoints_*.json`, 17 points, `nc=1`) with the `config/datasets/coco-pose.yaml`
-descriptor template. The COCO-pose val protocol is **2,346 images with valid keypoints**, not
-the 5,000-image detection split.
+Supported architectures: **YOLO26-pose** (n/s/m/l/x) and **Flash-YOLO-pose** (single
+`flash`); data is COCO keypoints JSON (`person_keypoints_*.json`, 17 points, `nc=1`) with the
+`config/datasets/coco-pose.yaml` descriptor template. The COCO-pose val protocol is **2,346
+images with valid keypoints**, not the 5,000-image detection split.
 
 ```bash
 # train (official 400-epoch recipe; finetune from the official pose weights)
 python scripts/train.py --data coco-pose --model yolo26-pose \
     --weights weights/yolo26n-pose.safetensors \
     --recipe yolo26-pose-coco --epochs 10 --batch 32 --device 0
+
+# Flash-YOLO-pose from scratch (default recipe)
+python scripts/train.py --data coco-pose --model flash-yolo-pose \
+    --name flash-pose --batch 32 --device 0 --no-amp
 
 # evaluate (E2E / NMS), export, infer
 python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
@@ -315,12 +324,13 @@ python scripts/infer.py --weights weights/yolo26n-pose.safetensors \
 
 Structure, metrics, training details and caveats:
 [docs/en/models/yolo26-pose.md](docs/en/models/yolo26-pose.md).
+Flash-YOLO-pose structure: [docs/en/models/flash-yolo-pose.md](docs/en/models/flash-yolo-pose.md).
 
 ## Documentation
 
 The full manual starts at [docs/README.md](docs/en/README.md): train / val / export / infer / dataset /
 docker / FAQ, released weights and latency ([docs/models/README.md](docs/en/models/README.md)),
-per-architecture specs (YOLO26 / -seg / -pose, Flash-YOLO / -seg, YOLOv3-tiny), and the
+per-architecture specs (YOLO26 / -seg / -pose, Flash-YOLO / -seg / -pose, YOLOv3-tiny), and the
 verification evidence against the official implementation
 ([docs/development/alignment.md](docs/en/development/alignment.md)).
 

@@ -501,6 +501,13 @@ def main():
             "Protocol: COCO-pose val2017 = 2,346 images with valid keypoints "
             "(not the 5,000-image detection split); pycocotools OKS, maxDets=20",
         ]
+    elif arch == "flash-yolo-pose":
+        ref_lines = [
+            "Reference: Flash-YOLO-pose (this repo's own design) — no official checkpoint; "
+            "pose head shared with yolo26-pose",
+            "Protocol: COCO-pose val2017 = 2,346 images with valid keypoints "
+            "(not the 5,000-image detection split); pycocotools OKS, maxDets=20",
+        ]
     elif arch in YOLO26_FAMILY:
         ref_lines = ["Reference: Flash-YOLO (this repo's own design) — GFLOPs below yolo26n by design"]
     elif arch in YOLOE26_FAMILY:

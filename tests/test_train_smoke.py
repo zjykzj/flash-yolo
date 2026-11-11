@@ -90,9 +90,9 @@ def _make_mini_yolo(tmp_path, n_img=32, size=320, seg=False):
     return desc
 
 
-def _make_mini_coco_pose(tmp_path, n_img=8, size=160):
-    """迷你 COCO-pose：每图 2 个人（框 + 17 关键点），用于训练全链路冒烟"""
-    K = 17
+def _make_mini_coco_pose(tmp_path, n_img=8, size=160, k=17):
+    """迷你 COCO-pose：每图 2 个人（框 + k 关键点），用于训练全链路冒烟"""
+    K = k
     root = tmp_path / "coco-pose"
     (root / "annotations").mkdir(parents=True)
     for split in ("train", "val"):
@@ -118,28 +118,46 @@ def _make_mini_coco_pose(tmp_path, n_img=8, size=160):
              "categories": [{"id": 1, "name": "person"}]}))
     desc = tmp_path / "coco-pose.yaml"
     desc.write_text(
-        f"format: coco\npath: {root}\nnames: [person]\nkpt_shape: [17, 3]\n"
-        f"flip_idx: [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]\n"
+        f"format: coco\npath: {root}\nnames: [person]\nkpt_shape: [{k}, 3]\n"
+        f"flip_idx: {list(range(k))}\n"
         "train: {images: images/train, ann: annotations/person_keypoints_train.json}\n"
         "val: {images: images/val, ann: annotations/person_keypoints_val.json}\n", encoding="utf-8")
     return desc
 
 
-def test_train_smoke_pose(tmp_path):
+@pytest.mark.parametrize("model", ["yolo26-pose", "flash-yolo-pose"])
+def test_train_smoke_pose(tmp_path, model):
     """pose 全链路：关键点数据 -> 损失/验证 -> best 权重 metadata（kpt_shape）"""
     data = _make_mini_coco_pose(tmp_path, n_img=8, size=160)
     cfg = TrainConfig(
-        data=str(data), model="yolo26-pose", epochs=1, batch=2, nbs=2, imgsz=160, workers=0,
+        data=str(data), model=model, epochs=1, batch=2, nbs=2, imgsz=160, workers=0,
         val_epochs=1, val_limit=4, limit=0, amp=False, mosaic=0.0, fliplr=0.0,
         mixup=0.0, cutmix=0.0, copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0,
         aug_samples=0, plots=False,
     )
-    trainer = Trainer(cfg, device="cpu", run_dir=tmp_path / "run-pose")
+    trainer = Trainer(cfg, device="cpu", run_dir=tmp_path / f"run-pose-{model}")
     trainer.train()
     from model.weights import load_meta
     wm = load_meta(trainer.run_dir / "weights" / "best.safetensors")
-    assert wm["arch"] == "yolo26-pose" and wm["kpt_shape"] == [17, 3], wm
+    assert wm["arch"] == model and wm["kpt_shape"] == [17, 3], wm
     assert (trainer.run_dir / "results.csv").exists()
+
+
+def test_train_smoke_custom_kpt_shape(tmp_path):
+    """从零训练：头结构从描述符 kpt_shape 来（无权重 metadata 时不能退回 yaml 的 17 点）"""
+    data = _make_mini_coco_pose(tmp_path, n_img=4, size=160, k=5)
+    cfg = TrainConfig(
+        data=str(data), model="flash-yolo-pose", epochs=1, batch=2, nbs=2, imgsz=160,
+        workers=0, val_epochs=1, val_limit=2, limit=0, amp=False, mosaic=0.0, fliplr=0.0,
+        mixup=0.0, cutmix=0.0, copy_paste=0.0, close_mosaic=0, warmup_epochs=0.0,
+        aug_samples=0, plots=False,
+    )
+    trainer = Trainer(cfg, device="cpu", run_dir=tmp_path / "run-pose-k5")
+    assert trainer.kpt_shape == (5, 3) and trainer.head.kpt_shape == (5, 3)
+    trainer.train()
+    from model.weights import load_meta
+    wm = load_meta(trainer.run_dir / "weights" / "best.safetensors")
+    assert wm["arch"] == "flash-yolo-pose" and wm["kpt_shape"] == [5, 3], wm
 
 
 def test_train_smoke_single_cls(tmp_path):

@@ -112,7 +112,7 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - 掩码解码与官方 val 管线逐像素一致（`tests/test_seg_inference.py` 对拍）。
 - 数据集支持 COCO json 与 YOLO-seg txt；YOLO 无 crowd，GT 会少 crowd 实例。
 
-### 5.1 Pose（yolo26-pose）
+### 5.1 Pose（yolo26-pose / flash-yolo-pose）
 
 - `--data coco-pose`：COCO `person_keypoints_*.json`；评估器 `iou_type="keypoints"`，
   pycocotools OKS，`maxDets=20`。**val 只评估 2,346 张有有效关键点的图**（不是 5,000 张）；
@@ -124,7 +124,8 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
   0.5476）；训练日志只用于趋势，正式数字以本脚本为准。
 - 官方 `yolo26n-pose` 参考（同一 2,346 图）：本仓库 E2E **0.5687 / 0.8250**，
   NMS 0.5670 / 0.8280；ultralytics E2E 0.572 / 0.833、NMS 0.570 / 0.831。完整口径见
-  [../models/yolo26-pose.md](../models/yolo26-pose.md)。
+  [../models/yolo26-pose.md](../models/yolo26-pose.md)。`flash-yolo-pose` 没有官方参考，
+  按本脚本自评，结构见 [../models/flash-yolo-pose.md](../models/flash-yolo-pose.md)。
 - 训练中验证同时算 Box + Mask（低分辨率近似），best fitness = box + mask mAP50-95；
   正式数字仍以本脚本为准。
 

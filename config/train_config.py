@@ -34,7 +34,8 @@ class TrainConfig:
                     # 空 = 未设置，必须由 CLI --data 提供（见 scripts/train.py）
     scale: str = "n"
     model: str = "yolo26"  # 架构名（model/build.py 的 ARCHS 注册表；yolo26 | yolo26-seg |
-                          # yolo26-pose | yolov3-tiny | yolov3-tiny-silu（算子替换版）| flash-yolo）
+                          # yolo26-pose | flash-yolo | flash-yolo-seg | flash-yolo-pose |
+                          # yolov3-tiny | yolov3-tiny-silu（算子替换版））
     cfg_path: str = ""  # 自定义模型 yaml 覆盖 ARCHS 注册路径（架构筛选实验用；"" = 用注册表）
     pe: bool = False  # YOLOE-26 文本模式 PE 线性探测：类名文本嵌入融合进 cv3 尾卷积，
                       # 只训练 cv3 / one2one_cv3 的 6 个尾卷积（官方 PE 口径）
@@ -99,7 +100,7 @@ class TrainConfig:
     cls_w: float = 1.0  # o2o 分类项额外权重（官方 ckpt 记录值；released 代码不消费，默认 1.0）
     dfl_gain: float = 1.5
     obj_gain: float = 1.0  # v3 系 objectness 权重（yolo26 双头无独立 obj 项，不使用）
-    pose_gain: float = 24.0  # pose 关键点位置项（官方 pose ckpt 记录值；仅 yolo26-pose）
+    pose_gain: float = 24.0  # pose 关键点位置项（官方 pose ckpt 记录值；仅 pose 架构）
     kobj_gain: float = 4.0  # pose 关键点可见性 BCE 权重（官方 pose ckpt 记录值）
     rle_gain: float = 1.0  # RLE 项权重（官方 pose ckpt 记录值）
     obj_iou_target: bool = False  # v3 系 IoU-aware objectness（参考 zjykzj/YOLOv3，--yolov3loss）：
@@ -198,7 +199,7 @@ def load_train_config(path, recipe=None, scale=None) -> TrainConfig:
         raise ValueError(f"unknown optimizer {merged['optimizer']!r} (musgd | sgd)")
     if recipe != "default" and "model" not in overrides:
         # 配方未声明 model 视为 yolo26 系配方（coco-ft/o365-pt 均如此）；自带 model 的配方
-        # 面向特定架构，不告警。yolo26 系（含 seg / flash-yolo）复用同一套超参。
+        # 面向特定架构，不告警。yolo26 系（含 seg / pose / flash-yolo）复用同一套超参。
         from model.build import YOLO26_FAMILY  # 懒加载：config 模块不承担 torch 导入
         if merged.get("model", "yolo26") not in YOLO26_FAMILY:
             logger.warning(f"recipe {recipe!r} does not declare a model — it is a yolo26-tuned recipe; "

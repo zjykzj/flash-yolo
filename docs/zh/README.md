@@ -32,6 +32,7 @@ docs/
 │   ├── yolo26-pose.md
 │   ├── flash-yolo.md
 │   ├── flash-yolo-seg.md
+│   ├── flash-yolo-pose.md
 │   └── yolov3-tiny.md 原版 + SiLU 变体
 ├── pipeline/
 │   ├── README.md      公共 CLI / run 目录 / 引擎约定

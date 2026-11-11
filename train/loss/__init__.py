@@ -1,7 +1,8 @@
 """训练损失：按「结构家族 × 任务」分文件（规则同 model/head/__init__.py）
 
 家族短名对照：
-    yolo26_*  ->  yolo26 / yolo26-seg / flash-yolo（flash-yolo 复用 yolo26 检测损失）
+    yolo26_*  ->  yolo26 / yolo26-seg / yolo26-pose / flash-yolo 系
+                  （flash-yolo 复用 yolo26 损失；flash-yolo-pose 复用 ComputeLossPose）
     v3_*      ->  yolov3-tiny / yolov3-tiny-silu
 
 本模块只做分派与公共导出；实现见同目录模块。接口同构：item_keys / __call__。
@@ -20,6 +21,7 @@ _LOSS_BY_ARCH = {
     "yolo26-seg": ComputeLossSeg,
     "flash-yolo-seg": ComputeLossSeg,
     "yolo26-pose": ComputeLossPose,
+    "flash-yolo-pose": ComputeLossPose,
     "yolov3-tiny": ComputeLossV3,
     "yolov3-tiny-silu": ComputeLossV3,
 }

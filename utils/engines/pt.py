@@ -37,7 +37,7 @@ class PtEngine(BaseEngine):
         self.imgsz = int(imgsz) if imgsz is not None else int(meta.get("imgsz") or IMGSZ)
         # pose：kpt_shape 是头结构参数，必须在建图前从 metadata 取（自定义关键点数据集）
         self.kpt_shape = (tuple(meta.get("kpt_shape") or (17, 3))
-                          if model == "yolo26-pose" else None)
+                          if self.task == "pose" else None)
         # YOLOE：prompt 模式经 metadata/文件名解析（pf -> lrpc 布局；text -> 文本布局）
         prompt_free = None
         if model == "yoloe-26":

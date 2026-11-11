@@ -24,7 +24,7 @@ import torch
 
 from config import __version__
 from config.datasets import load_dataset, load_names
-from model.build import ARCHS, YOLO26_FAMILY, YOLOE26_FAMILY, arch_display_name
+from model.build import ARCHS, YOLO26_FAMILY, YOLOE26_FAMILY, arch_display_name, arch_task
 from model.weights import arch_has_scale, load_meta, prompt_mode_from_weights, resolve_arch_scale, resolve_imgsz
 from utils.engines import OnnxEngine, PtEngine, TRTEngine, device_label, resolve_device
 from utils.logger import attach_file_log, bold, get_logger, log_params, setup_logging
@@ -296,7 +296,7 @@ def main():
         parser.error(f"cannot infer the model scale from '{args.weights}' — pass --scale n/s/m/l/x")
     # pose 骨架：描述符给了就用它；否则按 COCO 17 点默认（只影响可视化）
     skeleton = ((spec.skeleton if spec is not None else None)
-                or (COCO_SKELETON if arch == "yolo26-pose" else None))
+                or (COCO_SKELETON if arch_task(arch) == "pose" else None))
     # YOLOE prompt mode：text 支持 E2E + o2m/NMS；pf 仅 E2E（raw 列数随提案过滤变化）
     prompt_mode = (prompt_mode_from_weights(args.weights, meta)
                    if arch in YOLOE26_FAMILY else None)

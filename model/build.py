@@ -18,7 +18,7 @@ __all__ = ["DetectionModel", "build_model", "build_yolo26", "build_yolo26_seg", 
            "build_yoloe26_seg", "build_yolov3_tiny", "arch_display_name", "arch_task", "ARCHS",
            "YOLO26_FAMILY", "YOLOE26_FAMILY", "YOLO26_CONFIG_PATH", "YOLO26_SEG_CONFIG_PATH",
            "YOLO26_POSE_CONFIG_PATH", "YOLOE26_CONFIG_PATH", "V3_CONFIG_PATH", "V3_SILU_CONFIG_PATH",
-           "FLASH_CONFIG_PATH", "FLASH_SEG_CONFIG_PATH"]
+           "FLASH_CONFIG_PATH", "FLASH_SEG_CONFIG_PATH", "FLASH_POSE_CONFIG_PATH"]
 
 
 class Concat(nn.Module):
@@ -67,10 +67,12 @@ V3_SILU_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "model
 FLASH_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "flash-yolo.yaml"
 # 分割版：backbone+neck 与 flash-yolo.yaml 逐行相同，只换最后一行 Segment26（与 yolo26-seg 同构）
 FLASH_SEG_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "flash-yolo-seg.yaml"
+# 姿态版：backbone+neck 与 flash-yolo.yaml 逐行相同，只换最后一行 Pose26
+FLASH_POSE_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "flash-yolo-pose.yaml"
 # YOLOE-26：backbone+neck 与 yolo26-seg.yaml 逐行相同，只换 YOLOESegment26 头（官方 yoloe-26-seg.yaml 口径）
 YOLOE26_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "models" / "yoloe-26-seg.yaml"
 
-# 架构注册表：name -> yaml 路径 + 默认档位 + 展示名模板 + 任务（detect|segment）
+# 架构注册表：name -> yaml 路径 + 默认档位 + 展示名模板 + 任务（detect|segment|pose）
 # task 是"任务轴"：引擎/后处理/评估按它分派（差异处加参数，不复制链路），不在各处比 arch 名字。
 ARCHS = {
     "yolo26": {"cfg": YOLO26_CONFIG_PATH, "default_scale": "n", "display": "YOLO26{scale}", "task": "detect"},
@@ -84,13 +86,16 @@ ARCHS = {
     "flash-yolo": {"cfg": FLASH_CONFIG_PATH, "default_scale": "flash", "display": "Flash-YOLO", "task": "detect"},
     "flash-yolo-seg": {"cfg": FLASH_SEG_CONFIG_PATH, "default_scale": "flash",
                        "display": "Flash-YOLO-seg", "task": "segment"},
+    "flash-yolo-pose": {"cfg": FLASH_POSE_CONFIG_PATH, "default_scale": "flash",
+                        "display": "Flash-YOLO-pose", "task": "pose"},
     "yoloe-26": {"cfg": YOLOE26_CONFIG_PATH, "default_scale": "n", "display": "YOLOE-26{scale}-seg",
                  "task": "segment"},
 }
 
 # yolo26 系头（Detect/Segment26/Pose26 双分支 / E2E，含 flash-yolo 与分割版）：
 # --nms/--raw 门控与解码分派按此判定
-YOLO26_FAMILY = {"yolo26", "yolo26-seg", "yolo26-pose", "flash-yolo", "flash-yolo-seg"}
+YOLO26_FAMILY = {"yolo26", "yolo26-seg", "yolo26-pose", "flash-yolo", "flash-yolo-seg",
+                 "flash-yolo-pose"}
 # YOLOE-26 系（YOLOESegment26）：E2E 解码与 yolo26 系同口径（max_det=1000）；text 模式
 # 支持 o2m+NMS，pf 仍 E2E only（raw 列数随提案过滤随图变化）——CLI 用本集合 + prompt_mode 判定
 YOLOE26_FAMILY = {"yoloe-26"}
@@ -286,7 +291,7 @@ def build_model(arch="yolo26", scale=None, imgsz=640, nc=None, cfg_path=None, pr
     """按架构注册表构建模型（原始构造：不 eval、不改 end2end 状态）
 
     scale=None 用架构默认档位（yolo26: n / yolov3-tiny: tiny）；cfg_path 显式覆盖 yaml；
-    prompt_free 仅 yoloe-26 生效（None = yaml 默认）；kpt_shape 仅 yolo26-pose 生效
+    prompt_free 仅 yoloe-26 生效（None = yaml 默认）；kpt_shape 仅 pose 架构生效
     （None = yaml 默认；权重 metadata 可覆盖，自定义关键点数据集用）。
     """
     spec = ARCHS.get(arch)

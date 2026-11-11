@@ -83,6 +83,7 @@ b8 = batch 8 每图平均）。完整口径与逐模型表格：
 | YOLO26-pose | 姿态估计（COCO 17 关键点） | n / s / m / l / x | 3.68M (n) | 7.6 (n) | 官方权重前向逐位一致；训练 / 评估 / 导出 / 推理已接入 |
 | Flash-YOLO | 检测 | flash | 1.97M | 3.80 | 本仓库的轻量设计 |
 | Flash-YOLO-seg | 分割 | flash | 2.53M | 7.6 | 同 backbone/neck，Segment26 头 |
+| Flash-YOLO-pose | 姿态估计（COCO 17 关键点） | flash | 3.08M | 5.9 | 同 backbone/neck，Pose26 头；尚无公开权重/正式指标 |
 | YOLOv3-tiny / -SiLU | 检测 | tiny | 8.85M | 5.56 @416 | darknet 兼容；官方 `.weights` 只配原版 |
 | YOLOE-26 | 开放词汇分割（pf / 文本 / 视觉提示词） | n / s / m / l / x | 7.84M (n) | 16.0 (n) | 官方 checkpoint（-pf 与文本/视觉模式），前向逐位一致 |
 
@@ -98,6 +99,10 @@ YOLO26-pose 参考：官方 `yolo26n-pose` 权重经本管线在 COCO-pose val20
 pose AP **0.5687** / AP50 **0.8250**（E2E；NMS 0.5670 / 0.8280），同数据 ultralytics 为
 E2E 0.572 / 0.833、NMS 0.570 / 0.831。官方 pose checkpoint 是 O365 检测预训练 + COCO-pose 400 轮；从零训练不是
 like-for-like。详见 [docs/zh/models/yolo26-pose.md](docs/zh/models/yolo26-pose.md)。
+
+Flash-YOLO-pose（flash-yolo backbone/neck + Pose26 头，3.08M / 5.9 GFLOPs）也已接入训练 /
+评估 / 导出 / 推理；目前没有公开权重和正式指标，见
+[docs/zh/models/flash-yolo-pose.md](docs/zh/models/flash-yolo-pose.md)。
 
 ## 安装
 
@@ -289,15 +294,20 @@ python scripts/infer.py --weights flash-yolo-seg-e300-640.safetensors \
 
 ### 姿态估计
 
-支持的架构：**YOLO26-pose**（n/s/m/l/x）；数据用 COCO keypoints json（`person_keypoints_*.json`，
-17 点，`nc=1`），描述符模板 `config/datasets/coco-pose.yaml`。COCO-pose 的 val 协议是
-**2,346 张有有效关键点的图**，不是检测的 5,000 张。
+支持的架构：**YOLO26-pose**（n/s/m/l/x）与 **Flash-YOLO-pose**（flash 单档）；数据用
+COCO keypoints json（`person_keypoints_*.json`，17 点，`nc=1`），描述符模板
+`config/datasets/coco-pose.yaml`。COCO-pose 的 val 协议是 **2,346 张有有效关键点的图**，
+不是检测的 5,000 张。
 
 ```bash
 # 训练（官方 400 轮配方；微调从官方 pose 权重开始）
 python scripts/train.py --data coco-pose --model yolo26-pose \
     --weights weights/yolo26n-pose.safetensors \
     --recipe yolo26-pose-coco --epochs 10 --batch 32 --device 0
+
+# Flash-YOLO-pose 从零训练（default 配方）
+python scripts/train.py --data coco-pose --model flash-yolo-pose \
+    --name flash-pose --batch 32 --device 0 --no-amp
 
 # 评估（E2E / NMS）、导出、推理
 python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
@@ -307,12 +317,13 @@ python scripts/infer.py --weights weights/yolo26n-pose.safetensors \
 ```
 
 完整结构、指标、训练细节与注意事项：[docs/zh/models/yolo26-pose.md](docs/zh/models/yolo26-pose.md)。
+Flash-YOLO-pose 结构见 [docs/zh/models/flash-yolo-pose.md](docs/zh/models/flash-yolo-pose.md)。
 
 ## 文档
 
 完整手册从 [docs/zh/README.md](docs/zh/README.md) 开始：训练 / 评估 / 导出 / 推理 / 数据集 /
 Docker / FAQ、已发布权重与延迟（[docs/zh/models/README.md](docs/zh/models/README.md)）、
-各架构规格（YOLO26 / -seg / -pose、Flash-YOLO / -seg、YOLOv3-tiny），以及与官方实现的对齐证据
+各架构规格（YOLO26 / -seg / -pose、Flash-YOLO / -seg / -pose、YOLOv3-tiny），以及与官方实现的对齐证据
 （[docs/zh/development/alignment.md](docs/zh/development/alignment.md)）。
 
 ## 贡献

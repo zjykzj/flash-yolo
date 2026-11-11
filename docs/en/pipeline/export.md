@@ -51,8 +51,8 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 |---|---|---|
 | yolo26 default (E2E) | `(B, 300, 6)` = [x1,y1,x2,y2,conf,cls] | decode + two-stage top-k in-graph |
 | yolo26 `--raw` | `(B, 4+nc, N)` | decode/postprocess outside |
-| yolo26-pose default (E2E) | `(B, 300, 6+nk)` | keypoints share the in-graph two-stage top-k; nk = K·D (COCO 51) |
-| yolo26-pose `--raw` | `(B, 4+nc+nk, N)` | **decoded** pixel xywh + sigmoid scores + keypoints (official pose convention); NMS outside |
+| pose default (E2E; yolo26-pose / flash-yolo-pose) | `(B, 300, 6+nk)` | keypoints share the in-graph two-stage top-k; nk = K·D (COCO 51) |
+| pose `--raw` | `(B, 4+nc+nk, N)` | **decoded** pixel xywh + sigmoid scores + keypoints (official pose convention); NMS outside |
 | yolo26-seg / flash-yolo-seg | `output0 (B, 300, 6+nm)` + `output1 (B, nm, H/4, W/4)` | coefficients appended; prototypes a separate branch |
 | seg `--raw` | `output0 (B, 4+nc+nm, N)` + `output1` | masks decoded by `process_mask` |
 | yolov3-tiny | `(B, NA, 5+nc)` | NA = 3·ΣH·W; obj×cls and NMS outside |

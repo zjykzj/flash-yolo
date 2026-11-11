@@ -50,8 +50,8 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 |---|---|---|
 | yolo26 默认（E2E） | `(B, 300, 6)` = [x1,y1,x2,y2,conf,cls] | 解码 + 两阶段 top-k 在图内 |
 | yolo26 `--raw` | `(B, 4+nc, N)` | 解码/后处理在外 |
-| yolo26-pose 默认（E2E） | `(B, 300, 6+nk)` | 关键点与框共享图内两阶段 top-k；nk = K·D（COCO 51） |
-| yolo26-pose `--raw` | `(B, 4+nc+nk, N)` | **已解码**像素 xywh + sigmoid 分数 + 关键点（官方 pose 口径）；NMS 在外 |
+| pose 默认（E2E；yolo26-pose / flash-yolo-pose） | `(B, 300, 6+nk)` | 关键点与框共享图内两阶段 top-k；nk = K·D（COCO 51） |
+| pose `--raw` | `(B, 4+nc+nk, N)` | **已解码**像素 xywh + sigmoid 分数 + 关键点（官方 pose 口径）；NMS 在外 |
 | yolo26-seg / flash-yolo-seg | `output0 (B, 300, 6+nm)` + `output1 (B, nm, H/4, W/4)` | 系数接末维；原型单独一路 |
 | seg `--raw` | `output0 (B, 4+nc+nm, N)` + `output1` | 掩码由 `process_mask` 解码 |
 | yolov3-tiny | `(B, NA, 5+nc)` | NA = 3·ΣH·W；obj×cls 与 NMS 在外 |

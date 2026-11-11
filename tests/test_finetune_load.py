@@ -61,6 +61,20 @@ def test_pose_from_detection_allows_missing_pose_branch(tmp_path):
     assert loaded
 
 
+def test_flash_pose_from_detection_allows_missing_pose_branch(tmp_path):
+    """flash-yolo 检测权重 -> flash-yolo-pose：头内新增 pose 分支允许随机初始化"""
+    src = build_model("flash-yolo", nc=80)
+    path = _save(src, tmp_path / "flash-det.safetensors")
+    dst = build_model("flash-yolo-pose", nc=1)
+    with pytest.raises(ValueError, match="missing"):
+        load_weights_finetune(dst, path)
+    loaded, skipped = load_weights_finetune(dst, path, allow_missing_head=True)
+    assert any(k.startswith("model.24.cv4") for k, _, _ in skipped)
+    assert any(k.startswith("model.24.flow_model") for k, _, _ in skipped)
+    assert torch.equal(dst.model[0].conv.weight, src.model[0].conv.weight)
+    assert loaded
+
+
 def test_wrong_architecture_is_rejected(tmp_path):
     path = _save(build_model("yolo26-seg", "n", 640, nc=80), tmp_path / "seg.safetensors")
     dst = build_model("yolo26", "n", 640, nc=80)
