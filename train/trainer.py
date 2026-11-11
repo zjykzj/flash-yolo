@@ -450,7 +450,11 @@ class Trainer:
             raise RuntimeError(f"process group reports rank {dist.get_rank()}/{dist.get_world_size()} "
                                f"but DistInfo says {self.dist.rank}/{self.world_size}")
         device_ids = [self.device.index] if self.device.type == "cuda" else None
-        self.ddp_model = DDP(self.model, device_ids=device_ids, find_unused_parameters=True)
+        # pose 的 flow_model 在 o2m/o2o 两个损失分支里各用一次；find_unused_parameters=True
+        # 会在同一 iter 把它标记两次（marked as ready twice）。pose 的所有参数都通过前向或
+        # 损失参与计算，关闭该开关；其他任务保留 True 覆盖 freeze / 动态分支。
+        find_unused = self.task != "pose"
+        self.ddp_model = DDP(self.model, device_ids=device_ids, find_unused_parameters=find_unused)
         logger.info(f"DDP: world_size {self.world_size} · rank {self.dist.rank} · backend {self.dist.backend} · "
                     f"per-rank batch {self.per_rank_batch}/{self.cfg.batch} · "
                     f"loss x{self.world_size} before backward")

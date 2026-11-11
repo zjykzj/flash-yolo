@@ -189,7 +189,10 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
 - 验证只 rank 0 且全量；checkpoint/CSV/diag/samples/plots/meta.json/run.log 只 rank 0 写。
 - `self.model` / `self.head` 始终是 raw module，DDP 只存 `self.ddp_model`。
 - 无 SyncBatchNorm：BN 统计按卡独立；多卡与单卡不逐位一致，同 world_size 重复运行可逐位复现。
-- `find_unused_parameters=True`（覆盖 freeze 与条件分支）。
+- `find_unused_parameters=True`（覆盖 freeze 与条件分支）；**pose 例外**：`flow_model`
+  在 o2m/o2o 两个损失分支各用一次，DDP 会报 `marked as ready twice`，因此 pose 关闭该开关
+  （所有 pose 参数都通过前向或损失参与计算）。回归闸门：
+  `tests/test_distributed.py::test_ddp_pose_smoke`（yolo26-pose / flash-yolo-pose）。
 - 梯度累积的非边界步把 forward+backward 包进 `no_sync()`。
 - 换卡数/换设备续训支持（`resume.pt` 记录 world_size/device），但轨迹不再逐位一致。
 - 吞吐：数据管线常先饱和；2×5090 / yolo26n@640 / batch 64 / workers 8 实测约 258 img/s

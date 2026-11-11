@@ -205,7 +205,11 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
 - `self.model` / `self.head` are always the raw modules; DDP only stores `self.ddp_model`.
 - No SyncBatchNorm: BN statistics are per-GPU; multi-GPU is not bit-identical with single-GPU,
   but repeated runs at the same world_size are bit-reproducible.
-- `find_unused_parameters=True` (covers freeze and conditional branches).
+- `find_unused_parameters=True` (covers freeze and conditional branches); **pose is the
+  exception**: `flow_model` is used by both the o2m and o2o loss branches, so DDP raises
+  `marked as ready twice`; pose disables the flag (all pose parameters participate through
+  the forward or loss). Regression gate:
+  `tests/test_distributed.py::test_ddp_pose_smoke` (yolo26-pose / flash-yolo-pose).
 - Non-boundary accumulation steps wrap forward+backward in `no_sync()`.
 - Resume across GPU counts / devices works (`resume.pt` records world_size/device), but the
   trajectory is no longer bit-identical.

@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Fixed-scale export metadata**: ONNX/TRT deploy metadata records the architecture default scale (`flash` / `tiny`) instead of the JSON `null` string for fixed-scale models.
+- **Pose DDP**: pose training disables `find_unused_parameters` because `flow_model` is used by both the o2m and o2o losses (the flag raised `marked as ready twice`); a 2-rank pose smoke gate now covers `yolo26-pose` and `flash-yolo-pose`.
 
 ## [1.6.0] - 2026-11-10
 

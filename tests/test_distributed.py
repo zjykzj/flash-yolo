@@ -1,7 +1,7 @@
 """DDP 训练闸门：设备解析 / loss 补偿（无环境依赖）+ 2 进程 CPU gloo 训练冒烟（门控）
 
-默认只跑纯函数单测；`FLASH_YOLO_DDP=1` 时追加 2 进程冒烟（检测 + 分割 + resume 等价 +
-world=1 路径等价）。2 进程由 subprocess 启动 tests/ddp_worker.py（显式 env:// rendezvous、
+默认只跑纯函数单测；`FLASH_YOLO_DDP=1` 时追加 2 进程冒烟（检测 + 分割 + 姿态 + resume
+等价 + world=1 路径等价）。2 进程由 subprocess 启动 tests/ddp_worker.py（显式 env:// rendezvous、
 CUDA_VISIBLE_DEVICES=""），避免 mp.spawn 在 pytest 下的 pickle/import-path 问题。
 """
 
@@ -16,7 +16,7 @@ import pytest
 import torch
 from safetensors.torch import load_file
 
-from test_train_smoke import _make_mini_coco  # 复用冒烟夹具（迷你 COCO + 描述符）
+from test_train_smoke import _make_mini_coco, _make_mini_coco_pose  # 复用冒烟夹具
 from train.distributed import DistInfo, ddp_scale_loss, free_port, parse_device_ids, resolve_single_device
 
 HERE = Path(__file__).resolve().parent
@@ -154,6 +154,21 @@ def test_ddp_seg_smoke(tmp_path):
     data = _make_mini_coco(tmp_path, n_img=8, size=160, seg=True)
     run_dir = tmp_path / "run-seg"
     hashes = _launch(tmp_path, data, "yolo26-seg", run_dir, "seg")
+    assert hashes[0] == hashes[1], "ranks diverged after all-reduce"
+    _assert_run_products(run_dir)
+
+
+@pytest.mark.skipif(not DDP_ENABLED, reason="FLASH_YOLO_DDP=1 才执行 2 进程 DDP 冒烟")
+@pytest.mark.parametrize("model", ["yolo26-pose", "flash-yolo-pose"])
+def test_ddp_pose_smoke(tmp_path, model):
+    """姿态：flow_model 在 o2m/o2o 损失各用一次，DDP 必须关闭 find_unused_parameters
+
+    回归：find_unused_parameters=True 时 flow_model.t.* 报 marked as ready twice。
+    两 rank 参数逐位一致 + rank0 产物齐全。
+    """
+    data = _make_mini_coco_pose(tmp_path, n_img=8, size=160)
+    run_dir = tmp_path / f"run-{model}"
+    hashes = _launch(tmp_path, data, model, run_dir, model.replace("-", "_"))
     assert hashes[0] == hashes[1], "ranks diverged after all-reduce"
     _assert_run_products(run_dir)
 
