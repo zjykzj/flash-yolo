@@ -111,14 +111,22 @@ def _class_stats_from_records(records, n_gt_c):
     return ap_by_thr[0], float(np.mean(ap_by_thr)), float(np.mean(rec_by_thr)), pr, rc
 
 
-def _oks_matrix(det_kpts, gt_kpts, gt_boxes, sigmas, eps=1e-7):
-    """(N,K,D) det、(M,K,D) gt、(M,4) gt boxes -> OKS (N,M)（COCO keypoints 口径）"""
+def _oks_matrix(det_kpts, gt_kpts, gt_boxes, sigmas, eps=1e-7, gt_areas=None):
+    """(N,K,D) det、(M,K,D) gt、(M,4) gt boxes -> OKS (N,M)（COCO keypoints 口径）
+
+    gt_areas 给定时用标注面积（COCO `area`，分割面积）；否则回退框面积。
+    """
     n, m = len(det_kpts), len(gt_kpts)
     if n == 0 or m == 0:
         return np.zeros((n, m), np.float32)
     d = ((det_kpts[None, :, :, 0] - gt_kpts[:, None, :, 0]) ** 2
          + (det_kpts[None, :, :, 1] - gt_kpts[:, None, :, 1]) ** 2)  # (M,N,K)
-    area = ((gt_boxes[:, 2] - gt_boxes[:, 0]) * (gt_boxes[:, 3] - gt_boxes[:, 1])).astype(np.float32)
+    if gt_areas is None:
+        area = ((gt_boxes[:, 2] - gt_boxes[:, 0]) * (gt_boxes[:, 3] - gt_boxes[:, 1])).astype(np.float32)
+    else:
+        area = np.asarray(gt_areas, np.float32).reshape(-1)
+        if len(area) != m:
+            raise ValueError(f"gt_areas length {len(area)} != gt count {m}")
     e = d / ((2 * sigmas)[None, None, :] ** 2 * (area[:, None, None] + eps) * 2)
     if det_kpts.shape[-1] >= 3:
         mask = gt_kpts[:, None, :, 2] > 0  # (M,1,K)
@@ -146,8 +154,13 @@ class FastPoseMetrics:
         self.n_images = 0
         self.n_instances = 0
 
-    def update(self, det_kpts, det_scores, det_cls, gt_kpts, gt_boxes, gt_cls):
-        """累积一张图（关键点/框均为 letterbox 像素；OKS 对等比缩放不敏感）"""
+    def update(self, det_kpts, det_scores, det_cls, gt_kpts, gt_boxes, gt_cls, gt_areas=None):
+        """累积一张图（关键点/框均为 letterbox 像素；OKS 对等比缩放不敏感）
+
+        num_keypoints==0 的 GT 按 pycocotools keypoints 口径忽略：它们不参与匹配，
+        也不计入召回分母（否则这些永远无法匹配的标注会把 AP 系统性压低）。
+        gt_areas 给定时用标注面积（COCO `area`）；否则回退框面积。
+        """
         self.n_images += 1
         det_kpts = np.asarray(det_kpts, np.float32).reshape(-1, *self.kpt_shape)
         gt_kpts = np.asarray(gt_kpts, np.float32).reshape(-1, *self.kpt_shape)
@@ -155,6 +168,17 @@ class FastPoseMetrics:
         det_cls = np.asarray(det_cls, np.int64).reshape(-1)
         gt_boxes = np.asarray(gt_boxes, np.float32).reshape(-1, 4)
         gt_cls = np.asarray(gt_cls, np.int64).reshape(-1)
+        if gt_areas is not None:
+            gt_areas = np.asarray(gt_areas, np.float32).reshape(-1)
+            if len(gt_areas) != len(gt_kpts):
+                raise ValueError(f"gt_areas length {len(gt_areas)} != gt count {len(gt_kpts)}")
+        if len(gt_kpts):
+            valid = ((gt_kpts[..., 2] > 0).any(1) if gt_kpts.shape[-1] >= 3
+                     else np.ones(len(gt_kpts), bool))
+            if not valid.all():
+                gt_kpts, gt_boxes, gt_cls = gt_kpts[valid], gt_boxes[valid], gt_cls[valid]
+                if gt_areas is not None:
+                    gt_areas = gt_areas[valid]
         self.n_instances += len(gt_cls)
         classes = (np.unique(np.concatenate([det_cls, gt_cls]))
                    if (len(det_cls) or len(gt_cls)) else [])
@@ -166,7 +190,9 @@ class FastPoseMetrics:
             scores = scores[order]
             d_k = det_kpts[m_det][order]
             g_k = gt_kpts[m_gt]
-            tp = (_greedy_match_all_thr(_oks_matrix(d_k, g_k, gt_boxes[m_gt], self.sigmas), scores)
+            g_areas = gt_areas[m_gt] if gt_areas is not None else None
+            tp = (_greedy_match_all_thr(
+                _oks_matrix(d_k, g_k, gt_boxes[m_gt], self.sigmas, gt_areas=g_areas), scores)
                   if len(g_k) else np.zeros((len(scores), len(_IOU_THRESHOLDS)), bool))
             self.records[c].append((scores, tp))
             self.n_gt[c] += len(g_k)

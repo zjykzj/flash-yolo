@@ -4,6 +4,8 @@
 > **0.5687** pose AP / **0.8250** AP50 on COCO-pose val2017 (2,346 images, pycocotools OKS);
 > Ultralytics' default val (NMS) reaches 0.570 / 0.831 and E2E reaches 0.572 / 0.833 on the
 > same data.
+> 300 epochs from scratch: E2E **0.5529** / NMS **0.5541** (same protocol; not like-for-like
+> with O365 + 400 COCO-pose epochs).
 > Structure: `config/models/yolo26-pose.yaml`; shared detection/segmentation structure:
 > [yolo26.md](yolo26.md) / [yolo26-seg.md](yolo26-seg.md).
 
@@ -79,6 +81,8 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
 |---|---:|---:|---:|---:|---:|---:|
 | Official weights · this repo E2E | **0.5687** | 0.8250 | 0.6176 | 0.4814 | 0.6924 | 0.6350 |
 | Official weights · this repo NMS | **0.5670** | 0.8280 | 0.6116 | 0.4774 | 0.6923 | 0.6303 |
+| 300 epochs from scratch · this repo E2E | **0.5529** | 0.8200 | 0.5947 | 0.4686 | 0.6748 | 0.6193 |
+| 300 epochs from scratch · this repo NMS | **0.5541** | 0.8249 | 0.5984 | 0.4704 | 0.6747 | 0.6166 |
 | Official weights · Ultralytics E2E (same 2,346 images) | 0.572 | 0.833 | 0.618 | 0.499 | 0.689 | 0.635 |
 | Official weights · Ultralytics NMS (default val) | 0.570 | 0.831 | 0.614 | 0.496 | 0.686 | 0.631 |
 
@@ -86,12 +90,18 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
   and metric-implementation noise; the forward itself is bit-identical on the same input (see
   [../development/alignment.md](../development/alignment.md)).
 - The official training-time validator records pose 0.5717 / AP50 0.8332, the same order.
-- FastPoseMetrics during training can differ from pycocotools by ~0.1 pose AP (10-epoch
-  finetune: 0.4367 vs 0.5476); training logs are for trends/best-picking only — formal
-  numbers come from `scripts/eval.py`.
-- **No full 400-epoch / from-scratch pose result yet**; short runs are not reported as formal
-  metrics; the 10-epoch pipeline parity check is in
-  [../development/alignment.md](../development/alignment.md) §3.1.
+- The 300-epoch from-scratch run (default recipe, batch 32, nbs 64, fp32, single GPU) reaches
+  E2E **0.5529** / NMS **0.5541**; the official model is O365 + 400 epochs, so this is still
+  not like-for-like.
+- FastPoseMetrics now follows the COCO keypoint convention: `num_keypoints==0` annotations are
+  ignored and OKS uses the annotation `area`. On the same checkpoint it is within ~0.02 AP of
+  pycocotools and AR@20 matches; training logs remain trend/best-picking only — formal numbers
+  come from `scripts/eval.py`.
+- The full 400-epoch official recipe has not been reproduced here; the 300-epoch baseline and
+  the 10-epoch pipeline parity check are in
+  [../development/alignment.md](../development/alignment.md) §3.1 / §3.2.
+- The 300-epoch from-scratch weights are local training artifacts and are not distributed with
+  the Release; the Release ships download/conversion scripts for the official weights.
 
 ## 6. Inference latency (model-only, b1, 640)
 
@@ -142,9 +152,9 @@ python scripts/train.py --data coco-pose --model yolo26-pose \
     --weights weights/yolo26n-pose.safetensors \
     --recipe yolo26-pose-coco --epochs 10 --batch 32 --device 0
 
-# from scratch (not like-for-like with the official numbers; disable AMP)
+# from scratch, 300 epochs (default recipe; not like-for-like with the official numbers)
 python scripts/train.py --data coco-pose --model yolo26-pose \
-    --recipe yolo26-pose-coco --no-amp --epochs 100 --batch 32 --device 0,1
+    --epochs 300 --batch 32 --workers 12 --device 0 --no-amp
 ```
 
 ## 8. Usage

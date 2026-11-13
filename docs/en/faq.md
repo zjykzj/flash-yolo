@@ -68,10 +68,12 @@ relies on the O365 initialization; from-scratch runs should use `--no-amp`.
 
 ### Why is the in-training pose mAP far from `scripts/eval.py`?
 
-That is expected. FastPoseMetrics is a fast approximation (greedy matching / 101-point
-interpolation / crowd ignored); on a 10-epoch finetune it read **0.4367 vs the formal 0.5476**.
-Ultralytics' PoseMetrics is also low (0.3676 vs 0.5477). Training logs are for trends and
-best-picking only; cross-run / cross-implementation comparisons use `scripts/eval.py`.
+FastPoseMetrics is a fast approximation (greedy matching / 101-point interpolation / crowd
+ignored), but now follows the COCO keypoint convention: it ignores `num_keypoints==0`
+annotations and uses the annotation `area`. On the same checkpoint it is within ~0.02 AP of
+pycocotools and AR@20 matches; the remaining difference comes from crowd/ignore-region
+semantics. Training logs are for trends and best-picking only; cross-run /
+cross-implementation comparisons use `scripts/eval.py`.
 
 ## 2. Training
 

@@ -53,7 +53,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 |---|---|---|---|
 | **Formal · COCO protocol** (default) | pycocotools | COCO external numbers, acceptance | — |
 | **Formal · LVIS protocol** | faster_coco_eval (`lvis_style=True`) | LVIS / YOLOE open-vocabulary comparisons | — |
-| In-training | pure-numpy FastMetrics / FastPoseMetrics | per-epoch trends + picking `best.safetensors` | ignores crowd, maxDets=100 (pose 20), no area grouping; greedy matching + 101-point interpolation |
+| In-training | pure-numpy FastMetrics / FastPoseMetrics | per-epoch trends + picking `best.safetensors` | ignores crowd, maxDets=100 (pose 20), no area grouping; pose ignores `num_keypoints==0` annotations and uses the annotation `area`; greedy matching + 101-point interpolation |
 
 FastMetrics tracks the formal convention well, but **cross-run comparisons and external
 references always use the formal convention**.
@@ -134,8 +134,9 @@ Segmentation weights automatically produce two tables: the same results evaluate
 - The table is `Class Images Instances AP AP50 AP75 AP(M) AP(L) AR`; there is no bbox-style P/R
   and no small bucket. `results.json` writes COCO keypoints results (`keypoints` + `score`).
 - `--nms` uses the pose o2m branch; `--single-cls` is not applicable to pose.
-- FastPoseMetrics during training can differ from pycocotools by ~0.1 pose AP (10-epoch
-  finetune: 0.4367 vs 0.5476); training logs are trend-only — formal numbers come from this
+- FastPoseMetrics now follows the COCO keypoint convention: it ignores `num_keypoints==0`
+  annotations and uses the annotation `area`. On the same checkpoint it is within ~0.02 AP of
+  pycocotools and AR@20 matches; training logs are trend-only — formal numbers come from this
   script.
 - Official `yolo26n-pose` reference (same 2,346 images): this repo E2E **0.5687 / 0.8250**,
   NMS 0.5670 / 0.8280; Ultralytics E2E 0.572 / 0.833, NMS 0.570 / 0.831. Full conventions:

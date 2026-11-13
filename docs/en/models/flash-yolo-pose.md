@@ -5,8 +5,8 @@
 > [yolo26-pose.md](yolo26-pose.md) (keypoints + visibility + training-time RLE); detection and
 > segmentation structures are in [flash-yolo.md](flash-yolo.md) /
 > [flash-yolo-seg.md](flash-yolo-seg.md).
-> Status: structure / training / evaluation / export / inference are wired; **no public
-> checkpoint or formal metrics yet**.
+> Status: structure / training / evaluation / export / inference are wired; **300-epoch
+> from-scratch result: E2E 0.5004 / NMS 0.5055** on COCO-pose val2017 (2,346 images).
 
 ## 1. Structure
 
@@ -33,11 +33,31 @@
 - Validation computes Box + Pose; best fitness = box + pose mAP50-95; formal numbers still come
   from `scripts/eval.py`.
 
-## 3. Training
+## 3. Formal metrics (300 epochs from scratch)
 
-Use the built-in `default` recipe (100 epochs) from scratch — `yolo26-pose-coco` is the official
-pose checkpoint's 400-epoch finetune recipe and relies on an O365-pretrained start; do not use it
-directly for a from-scratch flash model:
+Protocol: COCO-pose val2017, 2,346 images, pycocotools OKS, maxDets=20; `default` recipe,
+batch 32, nbs 64, fp32, single GPU; best = ep300.
+
+| Training / path | AP | AP50 | AP75 | AP(M) | AP(L) | AR |
+|---|---:|---:|---:|---:|---:|---:|
+| 300 ep from scratch · E2E | **0.5004** | 0.7832 | 0.5285 | 0.4024 | 0.6390 | 0.5681 |
+| 300 ep from scratch · NMS | **0.5055** | 0.7884 | 0.5380 | 0.4051 | 0.6450 | 0.5669 |
+| Reference: yolo26n-pose 300 ep E2E | 0.5529 | 0.8200 | 0.5947 | 0.4686 | 0.6748 | 0.6193 |
+| Reference: yolo26n-pose 300 ep NMS | 0.5541 | 0.8249 | 0.5984 | 0.4704 | 0.6747 | 0.6166 |
+
+- At the same budget flash is **5.25 AP (E2E) / 4.86 AP (NMS)** below yolo26n-pose, about −9%,
+  while using 16.3% fewer parameters (3.08M vs 3.68M) and 22.4% fewer GFLOPs (5.9 vs 7.6).
+- The 10-epoch gap was 3.54 AP (E2E: 0.2719 vs 0.3073); at 300 epochs it widened to 5.25 AP.
+  The gap is driven by architecture capacity and does not close with a longer schedule.
+- FastPoseMetrics now follows the COCO keypoint convention (ignores `num_keypoints==0`, uses the
+  annotation `area`); on the same best checkpoint it reads 0.4791, within ~0.02 of the formal
+  0.5004, with AR@20 matching.
+
+## 4. Training
+
+Use the built-in `default` recipe from scratch (100 epochs by default; the formal run below uses
+300) — `yolo26-pose-coco` is the official pose checkpoint's 400-epoch finetune recipe and relies
+on an O365-pretrained start; do not use it directly for a from-scratch flash model:
 
 ```bash
 # architecture sanity check (no data)
@@ -45,7 +65,8 @@ python model/summary.py --model flash-yolo-pose
 
 # from scratch (COCO-pose; fp32 by default)
 python scripts/train.py --data coco-pose --model flash-yolo-pose \
-    --name flash-pose --batch 32 --workers 8 --no-amp
+    --epochs 300 --batch 32 --workers 12 --no-amp \
+    --name flash-pose-scratch-300ep
 
 # optional: initialize backbone/neck from flash-yolo detection weights; pose head is random
 python scripts/train.py --data coco-pose --model flash-yolo-pose \
@@ -57,11 +78,11 @@ python scripts/train.py --data coco-pose --model flash-yolo-pose \
   `load_weights_finetune(..., allow_missing_head=True)` initializes them randomly and loads
   every other key bit-for-bit (see `tests/test_finetune_load.py`).
 - `copy_paste > 0` errors out for pose; `fliplr` uses the descriptor's `flip_idx`.
-- FastPoseMetrics during training can differ from pycocotools by ~0.1 AP; training logs are for
-  trends/best-picking only — formal numbers come from `scripts/eval.py` (same protocol as
+- The FastPoseMetrics correction and its re-evaluation are in §3; training logs remain
+  trend/best-picking only — formal numbers come from `scripts/eval.py` (same protocol as
   [yolo26-pose.md](yolo26-pose.md)).
 
-## 4. Evaluate / export / infer
+## 5. Evaluate / export / infer
 
 ```bash
 python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --data coco-pose
@@ -79,12 +100,14 @@ python scripts/infer.py --weights runs/train/<run>/weights/best.safetensors \
   end2end`; infer/eval no longer need the original `.safetensors`.
 - `--nms` is supported (pose o2m branch); `--single-cls` is not applicable to pose.
 
-## 5. Notes
+## 6. Notes
 
 - Only the `flash` scale exists; do not pass `--scale`.
 - The official `yolo26n-pose` reference numbers (E2E 0.5687 / 0.8250) do **not** apply to this
-  structure; this page does not publish unfinished flash-yolo-pose training numbers. Add formal
-  metrics after a complete run.
+  structure; this page's 300-epoch from-scratch numbers are in §3, together with the same-budget
+  yolo26n-pose comparison.
 - Structure: 3,081,432 params / 5.9 GFLOPs @640; the first 24 rows are shared with `flash-yolo`.
+- The 300-epoch from-scratch weights are local training artifacts and are not distributed with
+  the Release.
 - `val_rle` is always 0 in validation logs (the val forward does not return sigma); it does not
   mean RLE was not trained.

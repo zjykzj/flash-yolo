@@ -60,9 +60,10 @@ COCO-pose 官方协议只评估**有有效关键点**的图（`num_keypoints > 0
 
 ### 训练中 pose mAP 和 `scripts/eval.py` 差很多，正常吗？
 
-正常。FastPoseMetrics 是快速近似（贪婪匹配 / 101 点插值 / 忽略 crowd），10 轮微调实测
-**0.4367 vs 正式 0.5476**；ultralytics 的 PoseMetrics 也同样偏低（0.3676 vs 0.5477）。
-训练日志只用于趋势和 best 选取，跨 run / 跨实现比较只用 `scripts/eval.py`。
+FastPoseMetrics 是快速近似（贪婪匹配 / 101 点插值 / 忽略 crowd），但已按 COCO keypoint 口径
+修正：忽略 `num_keypoints==0` 标注、OKS 使用标注 `area`。同一 checkpoint 与正式 AP 差约
+0.02，AR@20 基本一致；剩余差异来自 crowd/ignore 区域语义。训练日志只用于趋势和 best 选取，
+跨 run / 跨实现比较只用 `scripts/eval.py`。
 
 ## 2. 训练
 

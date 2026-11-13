@@ -37,6 +37,33 @@ def test_fast_pose_metrics_perfect_match():
     assert out["images"] == 1 and out["instances"] == 1
 
 
+def test_fast_pose_metrics_ignores_zero_keypoint_gt():
+    """num_keypoints==0 的标注按 pycocotools 口径忽略，不压低 AP"""
+    gt = _kpts(10, 10, 50, 50)
+    pred = gt.copy()
+    pred[:, 2] = 1.0
+    zero = np.zeros((K, 3), np.float32)
+    m = FastPoseMetrics(nc=1, kpt_shape=(K, 3))
+    m.update(pred[None], np.array([0.9], np.float32), np.array([0], np.int64),
+             np.stack([gt, zero]), np.array([[10, 10, 60, 60], [0, 0, 1, 1]], np.float32),
+             np.array([0, 0], np.int64))
+    out = m.compute()
+    assert out["mAP@50(P)"] == 1.0 and out["mAP@[.5:.95](P)"] == 1.0
+    assert out["instances"] == 1
+
+
+def test_oks_matrix_uses_annotation_area():
+    """给定 COCO area 时覆盖框面积；更小的面积 -> 更低的 OKS"""
+    gt = _kpts(10, 10, 50, 50)
+    box = np.array([[10, 10, 60, 60]], np.float32)
+    shifted = gt.copy()
+    shifted[:, :2] += 20
+    sig = np.ones(K, np.float32) / K
+    oks_box = _oks_matrix(shifted[None], gt[None], box, sig)[0, 0]
+    oks_area = _oks_matrix(shifted[None], gt[None], box, sig, gt_areas=np.array([500], np.float32))[0, 0]
+    assert 0.0 < oks_area < oks_box < 1.0
+
+
 def test_fast_pose_metrics_no_prediction():
     gt = _kpts(10, 10, 50, 50)
     m = FastPoseMetrics(nc=1, kpt_shape=(K, 3))

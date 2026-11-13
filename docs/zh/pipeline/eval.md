@@ -52,7 +52,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 |---|---|---|---|
 | **正式 · COCO 协议**（默认） | pycocotools | COCO 对外数字、验收 | — |
 | **正式 · LVIS 协议** | faster_coco_eval（`lvis_style=True`） | LVIS / YOLOE 开放词汇对比 | — |
-| 训练中 | 纯 numpy FastMetrics / FastPoseMetrics | 每轮趋势 + 选 `best.safetensors` | 忽略 crowd、maxDets=100（pose 20）、无面积分组；贪婪匹配 + 101 点插值 |
+| 训练中 | 纯 numpy FastMetrics / FastPoseMetrics | 每轮趋势 + 选 `best.safetensors` | 忽略 crowd、maxDets=100（pose 20）、无面积分组；pose 忽略 `num_keypoints==0` 标注、OKS 用标注 `area`；贪婪匹配 + 101 点插值 |
 
 FastMetrics 与正式口径贴合良好，但**跨 run 比较/对外引用一律用正式口径**。
 
@@ -120,8 +120,9 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - 表头是 `Class Images Instances AP AP50 AP75 AP(M) AP(L) AR`；没有 bbox 表的 P/R 与 small
   bucket。`results.json` 写 COCO keypoints 结果（`keypoints` + `score`）。
 - `--nms` 走 pose 的 o2m 分支；`--single-cls` 对 pose 不适用。
-- 训练中 FastPoseMetrics 与 pycocotools 的 pose AP 可差约 0.1（10 轮微调实测 0.4367 vs
-  0.5476）；训练日志只用于趋势，正式数字以本脚本为准。
+- 训练中 FastPoseMetrics 已按 COCO keypoint 口径修正（忽略 `num_keypoints==0` 标注、OKS 用
+  标注 `area`）；同一 checkpoint 与正式 AP 差约 0.02，AR@20 基本一致。训练日志只用于趋势，
+  正式数字以本脚本为准。
 - 官方 `yolo26n-pose` 参考（同一 2,346 图）：本仓库 E2E **0.5687 / 0.8250**，
   NMS 0.5670 / 0.8280；ultralytics E2E 0.572 / 0.833、NMS 0.570 / 0.831。完整口径见
   [../models/yolo26-pose.md](../models/yolo26-pose.md)。`flash-yolo-pose` 没有官方参考，

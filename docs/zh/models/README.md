@@ -109,7 +109,6 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
 - 官方 YOLO26 / YOLO26-seg / YOLO26-pose 权重是 **Objects365v1 预训练 + COCO(-pose) 微调**，
   不是从零训练；把从零数字和官方数字放在一起比较不是 like-for-like。
   pose 的 COCO 阶段是 400 轮，且从 O365 **检测**权重初始化。
-- 各模型页给出可用的最终结果（多数为 300 轮从零；`yolo26-pose` 目前只有官方权重复现，
-  `flash-yolo-pose` 尚无公开权重/正式指标，均无完整从零全长结果）、权重下载与延迟；
-  跨模型的同预算对照见根 README 的 Results。
+- 各模型页给出可用的最终结果（检测/分割/pose 均已有 300 轮从零结果；pose 另有官方权重
+  复现）、权重下载与延迟；跨模型的同预算对照见根 README 的 Results。
 - 正式指标一律以 `scripts/eval.py`（pycocotools）为准；训练中的 FastMetrics 只用于趋势与选 best。

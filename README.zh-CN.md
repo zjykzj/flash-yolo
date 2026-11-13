@@ -47,6 +47,20 @@ NMS = one-to-many 头 + NMS。官方行为 Objects365 预训练 + COCO 微调；
   模型细节见 [docs/zh/models/flash-yolo-seg.md](docs/zh/models/flash-yolo-seg.md)。
 - 部署产物与出处：[docs/zh/models/README.md](docs/zh/models/README.md)。
 
+Pose 使用 COCO-pose val2017 协议（**2,346 张有有效关键点的图**，pycocotools OKS，
+maxDets=20）：
+
+| 模型 | 训练 | E2E AP | E2E AP50 | NMS AP | NMS AP50 | Params | GFLOPs |
+|---|---|---:|---:|---:|---:|---:|---:|
+| YOLO26n-pose · 官方权重 | O365 + 400 COCO-pose | **0.5687** | **0.8250** | **0.5670** | **0.8280** | 3.68M | 7.6 |
+| YOLO26n-pose · 本仓库 | 从零 300 轮 | **0.5529** | **0.8200** | **0.5541** | **0.8249** | 3.68M | 7.6 |
+| Flash-YOLO-pose · 本仓库 | 从零 300 轮 | **0.5004** | **0.7832** | **0.5055** | **0.7884** | 3.08M | 5.9 |
+| **Δ（Flash-YOLO-pose vs YOLO26n-pose，同预算）** | | **−5.25（−9.5%）** | **−3.68（−4.5%）** | **−4.86（−8.8%）** | **−3.65（−4.4%）** | **−0.60M（−16%）** | **−1.7（−22%）** |
+
+- COCO-pose val2017 只评估 **2,346 张有有效关键点的图**（不是检测的 5,000 张）；pycocotools
+  OKS，maxDets=20。官方 pose checkpoint 是 O365 预训练 + 400 轮 COCO-pose，从零行与其
+  不是 like-for-like。
+
 **推理延迟**——model-only，640 输入（ORT-CPU = Xeon 8470Q · fp32；TRT = RTX 5090 · fp16；
 b8 = batch 8 每图平均）。完整口径与逐模型表格：
 [docs/zh/models/README.md](docs/zh/models/README.md)。
@@ -80,10 +94,10 @@ b8 = batch 8 每图平均）。完整口径与逐模型表格：
 |---|---|---|---:|---:|---|
 | YOLO26 | 检测 | n / s / m / l / x | 2.57M (n) | 5.48 (n) | 官方 n 档 checkpoint + 本仓库 n 档从零已验证 |
 | YOLO26-seg | 分割 | n / s / m / l / x | 3.13M (n) | 9.3 (n) | Box + Mask，COCO 多边形 / YOLO-seg txt |
-| YOLO26-pose | 姿态估计（COCO 17 关键点） | n / s / m / l / x | 3.68M (n) | 7.6 (n) | 官方权重前向逐位一致；训练 / 评估 / 导出 / 推理已接入 |
+| YOLO26-pose | 姿态估计（COCO 17 关键点） | n / s / m / l / x | 3.68M (n) | 7.6 (n) | 官方权重前向逐位一致；300 轮从零已验证 |
 | Flash-YOLO | 检测 | flash | 1.97M | 3.80 | 本仓库的轻量设计 |
 | Flash-YOLO-seg | 分割 | flash | 2.53M | 7.6 | 同 backbone/neck，Segment26 头 |
-| Flash-YOLO-pose | 姿态估计（COCO 17 关键点） | flash | 3.08M | 5.9 | 同 backbone/neck，Pose26 头；尚无公开权重/正式指标 |
+| Flash-YOLO-pose | 姿态估计（COCO 17 关键点） | flash | 3.08M | 5.9 | 同 backbone/neck，Pose26 头；300 轮从零 E2E 0.5004 |
 | YOLOv3-tiny / -SiLU | 检测 | tiny | 8.85M | 5.56 @416 | darknet 兼容；官方 `.weights` 只配原版 |
 | YOLOE-26 | 开放词汇分割（pf / 文本 / 视觉提示词） | n / s / m / l / x | 7.84M (n) | 16.0 (n) | 官方 checkpoint（-pf 与文本/视觉模式），前向逐位一致 |
 
@@ -97,11 +111,12 @@ YOLOv3-tiny 参考：官方 darknet 权重经本管线在 @640 评估为 17.16 /
 
 YOLO26-pose 参考：官方 `yolo26n-pose` 权重经本管线在 COCO-pose val2017（2,346 图）达到
 pose AP **0.5687** / AP50 **0.8250**（E2E；NMS 0.5670 / 0.8280），同数据 ultralytics 为
-E2E 0.572 / 0.833、NMS 0.570 / 0.831。官方 pose checkpoint 是 O365 检测预训练 + COCO-pose 400 轮；从零训练不是
-like-for-like。详见 [docs/zh/models/yolo26-pose.md](docs/zh/models/yolo26-pose.md)。
+E2E 0.572 / 0.833、NMS 0.570 / 0.831。官方 pose checkpoint 是 O365 检测预训练 + COCO-pose
+400 轮；从零训练不是 like-for-like。从零 300 轮 E2E 0.5529 / NMS 0.5541。详见
+[docs/zh/models/yolo26-pose.md](docs/zh/models/yolo26-pose.md)。
 
-Flash-YOLO-pose（flash-yolo backbone/neck + Pose26 头，3.08M / 5.9 GFLOPs）也已接入训练 /
-评估 / 导出 / 推理；目前没有公开权重和正式指标，见
+Flash-YOLO-pose（flash-yolo backbone/neck + Pose26 头，3.08M / 5.9 GFLOPs）从零 300 轮达到
+E2E **0.5004** / NMS **0.5055**，同预算下比 yolo26n-pose 低约 5 AP，参数少 16%。见
 [docs/zh/models/flash-yolo-pose.md](docs/zh/models/flash-yolo-pose.md)。
 
 ## 安装

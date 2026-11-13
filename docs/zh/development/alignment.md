@@ -96,9 +96,10 @@ keypoints，OKS，maxDets=20）；`ultralytics` 行使用同一批图、同一�
   端到端对齐验证。
 - 这是**管线 parity 检查，不是收敛精度**：从已收敛的官方权重以 lr0 0.005 再训 10 轮，
   两边都回落到 ~0.548（官方起点 0.5687）；不作为模型能力上界。
-- 训练中 validator 的 pose AP 与 pycocotools 差距明显（本仓库 FastPose 0.4367、
-  ultralytics PoseMetrics 0.3676 vs 正式 0.5476 / 0.5477）；训练日志只用于趋势与 best，
-  跨实现不可直接比较。
+- 训练中 validator 的 pose AP 曾与 pycocotools 差距明显（本仓库 FastPose 0.4367、
+  ultralytics PoseMetrics 0.3676 vs 正式 0.5476 / 0.5477）；2026-11 已修正本仓库侧的
+  `num_keypoints==0` 与 OKS `area` 口径，300 轮 best 复算与正式 AP 差约 0.02（AR@20
+  一致，见 §3.2）。训练日志只用于趋势与 best，跨实现不可直接比较。
 
 ```bash
 # 本仓库侧；ultralytics 侧用同一数据与有效超参（dev-time）
@@ -111,7 +112,24 @@ python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --dat
 python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --data coco-pose --nms
 ```
 
-- **尚无完整 400 轮 / 从零全长 pose 结果**；上表覆盖官方权重复现与 10 轮微调对齐。
+- 400 轮官方配方尚未在本仓库完整复现；300 轮从零基线见 §3.2。
+
+### 3.2 300 轮从零基线（2026-11）
+
+口径：default 配方、batch 32、nbs 64、fp32、640、单卡；同预算对照（两条 run 并发各占一卡）。
+正式评估仍为 `scripts/eval.py`，COCO-pose val2017 2,346 图 / maxDets=20。
+
+| 模型 | 路径 | AP | AP50 | AP75 | AP(M) | AP(L) | AR |
+|---|---|---:|---:|---:|---:|---:|---:|
+| yolo26n-pose | E2E | **0.5529** | 0.8200 | 0.5947 | 0.4686 | 0.6748 | 0.6193 |
+| yolo26n-pose | NMS | **0.5541** | 0.8249 | 0.5984 | 0.4704 | 0.6747 | 0.6166 |
+| flash-yolo-pose | E2E | **0.5004** | 0.7832 | 0.5285 | 0.4024 | 0.6390 | 0.5681 |
+| flash-yolo-pose | NMS | **0.5055** | 0.7884 | 0.5380 | 0.4051 | 0.6450 | 0.5669 |
+
+- 同预算差距 5.25 AP（E2E）/ 4.86 AP（NMS）；flash 参数少 16.3%、GFLOPs 少 22.4%。
+- 从 10 轮（3.54 AP）到 300 轮（5.25 AP）差距扩大，说明差距来自架构容量而非训练不足。
+- 官方 `yolo26n-pose` 是 O365 检测预训练 + 400 轮，仍不是 like-for-like；本仓库从零
+  300 轮 E2E 0.5529 与其 0.5687 的差为 1.58 AP。
 
 ## 4. 训练内部对齐
 

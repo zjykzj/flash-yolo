@@ -4,7 +4,8 @@
 > 5.9 GFLOPs**。姿态头与 [yolo26-pose.md](yolo26-pose.md) 完全同构（关键点 + 可见性 +
 > 训练期 RLE），检测/分割结构见 [flash-yolo.md](flash-yolo.md) /
 > [flash-yolo-seg.md](flash-yolo-seg.md)。
-> 当前状态：结构 / 训练 / 评估 / 导出 / 推理链路已接入；**尚无公开权重与正式指标**。
+> 当前状态：结构 / 训练 / 评估 / 导出 / 推理链路已接入；**从零 300 轮正式结果 E2E
+> 0.5004 / NMS 0.5055**（COCO-pose val2017，2,346 图）。
 
 ## 1. 结构
 
@@ -28,10 +29,30 @@
 - 训练中验证同时算 Box + Pose；best fitness = box mAP50-95 + pose mAP50-95；正式数字仍以
   `scripts/eval.py` 为准。
 
-## 3. 训练
+## 3. 正式指标（从零 300 轮）
 
-从零训练用内置 `default` 配方（100 轮）——`yolo26-pose-coco` 是官方 pose 权重的 400 轮
-微调配方，依赖 O365 预训练起点，不适合直接拿来从零训 flash 结构：
+口径：COCO-pose val2017 2,346 图，pycocotools OKS，maxDets=20；default 配方、batch 32、
+nbs 64、fp32、单卡；best = ep300。
+
+| 训练 / 路径 | AP | AP50 | AP75 | AP(M) | AP(L) | AR |
+|---|---:|---:|---:|---:|---:|---:|
+| 从零 300 轮 · E2E | **0.5004** | 0.7832 | 0.5285 | 0.4024 | 0.6390 | 0.5681 |
+| 从零 300 轮 · NMS | **0.5055** | 0.7884 | 0.5380 | 0.4051 | 0.6450 | 0.5669 |
+| 参考：yolo26n-pose 从零 300 轮 E2E | 0.5529 | 0.8200 | 0.5947 | 0.4686 | 0.6748 | 0.6193 |
+| 参考：yolo26n-pose 从零 300 轮 NMS | 0.5541 | 0.8249 | 0.5984 | 0.4704 | 0.6747 | 0.6166 |
+
+- 同预算下 flash 比 yolo26n-pose 低 **5.25 AP（E2E）/ 4.86 AP（NMS）**，相对约 −9%；代价是
+  参数少 16.3%（3.08M vs 3.68M）、GFLOPs 少 22.4%（5.9 vs 7.6）。
+- 10 轮从零时差距为 3.54 AP（E2E：0.2719 vs 0.3073），300 轮扩大到 5.25 AP；差距主要来自
+  架构容量，训练预算拉长不会自动收窄。
+- 训练中 FastPoseMetrics 已按 COCO keypoint 口径修正（忽略 `num_keypoints==0`、OKS 用标注
+  `area`）；同一 best 复算为 0.4791，与正式 0.5004 差约 0.02，AR@20 与正式一致。
+
+## 4. 训练
+
+从零训练用内置 `default` 配方（默认 100 轮；本次正式 run 用 300 轮）——
+`yolo26-pose-coco` 是官方 pose 权重的 400 轮微调配方，依赖 O365 预训练起点，不适合直接
+拿来从零训 flash 结构：
 
 ```bash
 # 结构自检（无需数据）
@@ -39,7 +60,8 @@ python model/summary.py --model flash-yolo-pose
 
 # 从零训练（COCO-pose；从零默认 fp32）
 python scripts/train.py --data coco-pose --model flash-yolo-pose \
-    --name flash-pose --batch 32 --workers 8 --no-amp
+    --epochs 300 --batch 32 --workers 12 --no-amp \
+    --name flash-pose-scratch-300ep
 
 # 可选：从 flash-yolo 检测权重初始化 backbone/neck；pose 头随机初始化
 python scripts/train.py --data coco-pose --model flash-yolo-pose \
@@ -51,10 +73,10 @@ python scripts/train.py --data coco-pose --model flash-yolo-pose \
   `load_weights_finetune(..., allow_missing_head=True)` 会随机初始化它们，backbone/neck
   逐位加载（见 `tests/test_finetune_load.py`）。
 - pose 下 `copy_paste > 0` 会直接报错；`fliplr` 使用描述符里的 `flip_idx`。
-- 训练中 FastPoseMetrics 与 pycocotools 可差约 0.1 AP；训练日志只用于趋势与 best 选取，
-  正式数字用 `scripts/eval.py`（与 [yolo26-pose.md](yolo26-pose.md) 同口径）。
+- FastPoseMetrics 的口径修正与复算见 §3；训练日志只用于趋势与 best 选取，正式数字用
+  `scripts/eval.py`（与 [yolo26-pose.md](yolo26-pose.md) 同口径）。
 
-## 4. 评估 / 导出 / 推理
+## 5. 评估 / 导出 / 推理
 
 ```bash
 python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --data coco-pose
@@ -72,10 +94,11 @@ python scripts/infer.py --weights runs/train/<run>/weights/best.safetensors \
   infer/eval 不再需要原 `.safetensors`。
 - `--nms` 支持（pose 的 o2m 分支）；`--single-cls` 对 pose 不适用。
 
-## 5. 注意
+## 6. 注意
 
 - 只有 `flash` 单档，不要传 `--scale`。
-- 官方 `yolo26n-pose` 的参考指标（0.5687 / 0.8250 E2E）**不适用于**本结构；本页不发布
-  未完成的 flash-yolo-pose 训练数字，等有完整 run 后再补正式指标。
+- 官方 `yolo26n-pose` 的参考指标（0.5687 / 0.8250 E2E）**不适用于**本结构；本页的 300 轮
+  从零数字见 §3，与 yolo26n-pose 同预算对照也已列出。
 - 结构参数：3,081,432 参数、5.9 GFLOPs @640；与 `flash-yolo` 检测版共用前 24 行结构。
+- 300 轮从零权重为本地训练产物，未随 Release 分发。
 - 训练中 `val_rle` 恒 0（验证前向不返回 sigma），不代表 RLE 未训练。

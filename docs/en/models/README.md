@@ -124,10 +124,9 @@ whose filename cannot reveal the scale skip `--model/--scale`; custom-dataset ar
   COCO(-pose) finetuning**, not from-scratch training; comparing from-scratch numbers against
   the official ones is not like-for-like. The pose COCO stage runs 400 epochs and initializes
   from O365 **detection** weights.
-- Each model page gives the available final results (mostly 300-epoch from scratch;
-  `yolo26-pose` currently has official-weight reproduction only, and `flash-yolo-pose` has no
-  public checkpoint or formal metrics yet — neither has a full from-scratch run), weight
-  downloads and latency; the same-budget cross-model comparison lives in the root README's
-  Results.
+- Each model page gives the available final results (detection / segmentation / pose all have
+  300-epoch from-scratch numbers; pose additionally has the official-weight reproduction),
+  weight downloads and latency; the same-budget cross-model comparison lives in the root
+  README's Results.
 - Formal metrics always come from `scripts/eval.py` (pycocotools); in-training FastMetrics are
   for trends and best-picking only.

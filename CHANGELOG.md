@@ -16,10 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Pose documentation**: bilingual YOLO26-pose model pages and task-specific train/eval/export/infer/dataset/model-matrix/alignment/FAQ sections document the new pipeline and its 2,346-image COCO-pose protocol.
-- **Pose training parity evidence**: a 10-epoch official-weight finetune matches ultralytics 8.4.173 (E2E AP 0.5476 vs 0.5477, NMS 0.5528 vs 0.5508), and the docs flag that pose training-time metrics sit well below pycocotools (0.4367 / 0.3676 vs 0.5476 / 0.5477).
+- **Pose training parity evidence**: a 10-epoch official-weight finetune matches ultralytics 8.4.173 (E2E AP 0.5476 vs 0.5477, NMS 0.5528 vs 0.5508); the training-time metric offset was later fixed (see Fixed).
+- **Pose 300-epoch from-scratch baselines**: yolo26n-pose reaches E2E 0.5529 / NMS 0.5541 AP and flash-yolo-pose reaches E2E 0.5004 / NMS 0.5055 on COCO-pose val2017 (2,346 images), giving a same-budget architecture comparison.
 
 ### Fixed
 
+- **Pose training metrics**: FastPoseMetrics now ignores `num_keypoints==0` annotations and uses the COCO annotation `area` for OKS, matching pycocotools to ~0.02 AP with identical AR@20 on the same checkpoint.
 - **Fixed-scale export metadata**: ONNX/TRT deploy metadata records the architecture default scale (`flash` / `tiny`) instead of the JSON `null` string for fixed-scale models.
 - **Pose DDP**: pose training disables `find_unused_parameters` because `flow_model` is used by both the o2m and o2o losses (the flag raised `marked as ready twice`); a 2-rank pose smoke gate now covers `yolo26-pose` and `flash-yolo-pose`.
 

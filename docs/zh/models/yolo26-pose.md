@@ -3,6 +3,7 @@
 > 复现对象：官方 `yolo26n-pose` 权重经本仓库管线 **0.5687** pose AP / **0.8250** AP50
 > （COCO-pose val2017，2,346 图，pycocotools OKS）；同数据 ultralytics 默认 val（NMS）
 > 为 0.570 / 0.831，E2E 为 0.572 / 0.833。
+> 从零 300 轮：E2E **0.5529** / NMS **0.5541**（同协议；与官方 O365+400 轮不是 like-for-like）。
 > 结构定义：`config/models/yolo26-pose.yaml`；检测/分割共享结构见 [yolo26.md](yolo26.md) /
 > [yolo26-seg.md](yolo26-seg.md)。
 
@@ -72,6 +73,8 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
 |---|---:|---:|---:|---:|---:|---:|
 | 官方权重 · 本仓库 E2E | **0.5687** | 0.8250 | 0.6176 | 0.4814 | 0.6924 | 0.6350 |
 | 官方权重 · 本仓库 NMS | **0.5670** | 0.8280 | 0.6116 | 0.4774 | 0.6923 | 0.6303 |
+| 从零 300 轮 · 本仓库 E2E | **0.5529** | 0.8200 | 0.5947 | 0.4686 | 0.6748 | 0.6193 |
+| 从零 300 轮 · 本仓库 NMS | **0.5541** | 0.8249 | 0.5984 | 0.4704 | 0.6747 | 0.6166 |
 | 官方权重 · ultralytics E2E（同 2,346 图） | 0.572 | 0.833 | 0.618 | 0.499 | 0.689 | 0.635 |
 | 官方权重 · ultralytics NMS（默认 val） | 0.570 | 0.831 | 0.614 | 0.496 | 0.686 | 0.631 |
 
@@ -79,10 +82,15 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
   噪声；同输入 forward 本身逐位一致（见
   [../development/alignment.md](../development/alignment.md)）。
 - 官方训练期 validator 记录 pose 0.5717 / AP50 0.8332；与本管线同量级。
-- 训练中 FastPoseMetrics 与 pycocotools 的 pose AP 可差约 0.1（10 轮微调实测 0.4367 vs
-  0.5476）；训练日志只用于趋势与 best 选取，正式数字用 `scripts/eval.py`。
-- **尚无完整 400 轮 / 从零全长 pose 结果**；本页不把短跑数字当正式指标；10 轮训练管线
-  对齐见 [../development/alignment.md](../development/alignment.md) §3.1。
+- 从零 300 轮（default 配方、batch 32、nbs 64、fp32、单卡）达到 E2E **0.5529** /
+  NMS **0.5541**；官方是 O365 + 400 轮，仍不是 like-for-like。
+- FastPoseMetrics 已按 COCO keypoint 口径修正：忽略 `num_keypoints==0` 标注、OKS 使用标注
+  `area`。修复后同一 checkpoint 复算与正式 AP 差约 0.02，AR@20 与正式一致；训练日志只用于
+  趋势与 best 选取，正式数字用 `scripts/eval.py`。
+- 400 轮官方配方尚未在本仓库完整复现；300 轮从零基线与 10 轮管线对齐见
+  [../development/alignment.md](../development/alignment.md) §3.1 / §3.2。
+- 300 轮从零权重是本地训练产物，未随 Release 分发；Release 只提供权重下载/转换脚本
+  （官方权重不随附）。
 
 ## 6. 推理延迟（model-only，b1，640）
 
@@ -128,9 +136,9 @@ python scripts/train.py --data coco-pose --model yolo26-pose \
     --weights weights/yolo26n-pose.safetensors \
     --recipe yolo26-pose-coco --epochs 10 --batch 32 --device 0
 
-# 从零（不与官方 like-for-like；先关 AMP）
+# 从零 300 轮（default 配方；不与官方 like-for-like；先关 AMP）
 python scripts/train.py --data coco-pose --model yolo26-pose \
-    --recipe yolo26-pose-coco --no-amp --epochs 100 --batch 32 --device 0,1
+    --epochs 300 --batch 32 --workers 12 --device 0 --no-amp
 ```
 
 ## 8. 用法

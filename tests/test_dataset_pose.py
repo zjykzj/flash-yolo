@@ -70,6 +70,7 @@ def test_pose_dataset_alignment_and_filter(tmp_path):
     eval_ds = CocoDataset(ann, imgs, require_keypoints=True, kpt_shape=(K, 3))
     assert len(eval_ds) == 2 and eval_ds.keypoints(0).shape == (1, K, 3)
     assert len(eval_ds.targets(0, include_crowd=False)) == 1
+    assert np.allclose(eval_ds.areas(0, include_crowd=False), [2500.0])
 
 
 def test_pose_flip_lr_uses_flip_idx():

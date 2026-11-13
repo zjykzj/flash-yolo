@@ -49,6 +49,20 @@ NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO fi
   model details in [docs/models/flash-yolo-seg.md](docs/en/models/flash-yolo-seg.md).
 - Deployment artifacts and provenance: [docs/models/README.md](docs/en/models/README.md).
 
+Pose uses the COCO-pose val2017 protocol (**2,346 images with valid keypoints**, pycocotools
+OKS, maxDets=20):
+
+| Model | Training | E2E AP | E2E AP50 | NMS AP | NMS AP50 | Params | GFLOPs |
+|---|---|---:|---:|---:|---:|---:|---:|
+| YOLO26n-pose · official weights | O365 + 400 COCO-pose | **0.5687** | **0.8250** | **0.5670** | **0.8280** | 3.68M | 7.6 |
+| YOLO26n-pose · this repo | 300 ep from scratch | **0.5529** | **0.8200** | **0.5541** | **0.8249** | 3.68M | 7.6 |
+| Flash-YOLO-pose · this repo | 300 ep from scratch | **0.5004** | **0.7832** | **0.5055** | **0.7884** | 3.08M | 5.9 |
+| **Δ (Flash-YOLO-pose vs YOLO26n-pose, same budget)** | | **−5.25 (−9.5%)** | **−3.68 (−4.5%)** | **−4.86 (−8.8%)** | **−3.65 (−4.4%)** | **−0.60M (−16%)** | **−1.7 (−22%)** |
+
+- COCO-pose val2017 uses **2,346 images with valid keypoints** (not the 5,000-image detection
+  split); pycocotools OKS with maxDets=20. The official pose checkpoint is O365 pretraining +
+  400 COCO-pose epochs, so the from-scratch rows are not like-for-like with it.
+
 **Inference latency** — model-only, 640 input (ORT-CPU = Xeon 8470Q · fp32; TRT = RTX 5090 · fp16;
 b8 = batch-8 per-image). Full protocol and per-model tables:
 [docs/models/README.md](docs/en/models/README.md).
@@ -82,10 +96,10 @@ b8 = batch-8 per-image). Full protocol and per-model tables:
 |---|---|---|---:|---:|---|
 | YOLO26 | detection | n / s / m / l / x | 2.57M (n) | 5.48 (n) | official n checkpoint + from-scratch n validated |
 | YOLO26-seg | segmentation | n / s / m / l / x | 3.13M (n) | 9.3 (n) | Box + Mask, COCO polygons / YOLO-seg txt |
-| YOLO26-pose | pose estimation (COCO 17 keypoints) | n / s / m / l / x | 3.68M (n) | 7.6 (n) | official checkpoints, bit-identical forward; training / eval / export / infer wired |
+| YOLO26-pose | pose estimation (COCO 17 keypoints) | n / s / m / l / x | 3.68M (n) | 7.6 (n) | official checkpoints, bit-identical forward; 300-epoch from-scratch validated |
 | Flash-YOLO | detection | flash | 1.97M | 3.80 | this repo's lightweight design |
 | Flash-YOLO-seg | segmentation | flash | 2.53M | 7.6 | same backbone/neck, Segment26 head |
-| Flash-YOLO-pose | pose estimation (COCO 17 keypoints) | flash | 3.08M | 5.9 | same backbone/neck, Pose26 head; no public checkpoint/metrics yet |
+| Flash-YOLO-pose | pose estimation (COCO 17 keypoints) | flash | 3.08M | 5.9 | same backbone/neck, Pose26 head; 300-epoch from-scratch E2E 0.5004 |
 | YOLOv3-tiny / -SiLU | detection | tiny | 8.85M | 5.56 @416 | darknet-compatible; official `.weights` for the original variant |
 | YOLOE-26 | open-vocab segmentation (pf / text / visual prompts) | n / s / m / l / x | 7.84M (n) | 16.0 (n) | official checkpoints (pf + text/visual modes), bit-identical forward |
 
@@ -100,12 +114,14 @@ current default recipe (SiLU + `--obj-iou-target`). See
 
 YOLO26-pose reference: official `yolo26n-pose` weights through this pipeline reach pose AP
 **0.5687** / AP50 **0.8250** on COCO-pose val2017 (2,346 images; E2E; NMS 0.5670 / 0.8280),
-against E2E 0.572 / 0.833 and NMS 0.570 / 0.831 for Ultralytics on the same data. The official pose checkpoint is
-O365 detection pretraining + 400 COCO-pose epochs; from-scratch runs are not like-for-like.
-See [docs/en/models/yolo26-pose.md](docs/en/models/yolo26-pose.md).
+against E2E 0.572 / 0.833 and NMS 0.570 / 0.831 for Ultralytics on the same data. The official
+pose checkpoint is O365 detection pretraining + 400 COCO-pose epochs; from-scratch runs are not
+like-for-like. The 300-epoch from-scratch baseline reaches E2E 0.5529 / NMS 0.5541. See
+[docs/en/models/yolo26-pose.md](docs/en/models/yolo26-pose.md).
 
-Flash-YOLO-pose (flash-yolo backbone/neck + Pose26 head, 3.08M / 5.9 GFLOPs) is also wired for
-training / eval / export / infer; it has no public checkpoint or formal metrics yet. See
+Flash-YOLO-pose (flash-yolo backbone/neck + Pose26 head, 3.08M / 5.9 GFLOPs) reaches E2E
+**0.5004** / NMS **0.5055** after 300 epochs from scratch, about 5 AP below yolo26n-pose at the
+same budget with 16% fewer parameters. See
 [docs/en/models/flash-yolo-pose.md](docs/en/models/flash-yolo-pose.md).
 
 ## Installation

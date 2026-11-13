@@ -107,9 +107,11 @@ are then re-scored by the same `scripts/eval.py --data coco-pose`.
 - This is a **pipeline parity check, not a convergence result**: finetuning the converged
   official weights for 10 epochs at lr0 0.005 drops both to ~0.548 (official start 0.5687);
   it is not a model-capability ceiling.
-- Training-time validator pose AP differs strongly from pycocotools (this repo FastPose
-  0.4367, ultralytics PoseMetrics 0.3676 vs formal 0.5476 / 0.5477); training logs are
-  trend/best-picking only and are not comparable across implementations.
+- Training-time validator pose AP previously differed strongly from pycocotools (this repo
+  FastPose 0.4367, ultralytics PoseMetrics 0.3676 vs formal 0.5476 / 0.5477). The repo side was
+  corrected in 2026-11 for `num_keypoints==0` and OKS `area`; on the 300-epoch best checkpoint
+  it is now within ~0.02 AP of the formal number, with AR@20 matching (see §3.2). Training logs
+  remain trend/best-picking only and are not comparable across implementations.
 
 ```bash
 # this repo; the ultralytics side uses the same data and effective hyperparameters (dev-time)
@@ -122,8 +124,28 @@ python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --dat
 python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --data coco-pose --nms
 ```
 
-- **No full 400-epoch / from-scratch pose result yet**; the table covers official-weight
-  reproduction and the 10-epoch finetune parity run.
+- The full 400-epoch official recipe has not been reproduced here; the 300-epoch from-scratch
+  baseline is in §3.2.
+
+### 3.2 300-epoch from-scratch baseline (2026-11)
+
+Protocol: `default` recipe, batch 32, nbs 64, fp32, 640, one GPU per run; the two runs below
+were executed concurrently on separate GPUs. Formal evaluation is still `scripts/eval.py` on
+the 2,346-image COCO-pose val2017 split with maxDets=20.
+
+| Model | Path | AP | AP50 | AP75 | AP(M) | AP(L) | AR |
+|---|---|---:|---:|---:|---:|---:|---:|
+| yolo26n-pose | E2E | **0.5529** | 0.8200 | 0.5947 | 0.4686 | 0.6748 | 0.6193 |
+| yolo26n-pose | NMS | **0.5541** | 0.8249 | 0.5984 | 0.4704 | 0.6747 | 0.6166 |
+| flash-yolo-pose | E2E | **0.5004** | 0.7832 | 0.5285 | 0.4024 | 0.6390 | 0.5681 |
+| flash-yolo-pose | NMS | **0.5055** | 0.7884 | 0.5380 | 0.4051 | 0.6450 | 0.5669 |
+
+- Same-budget gap: 5.25 AP (E2E) / 4.86 AP (NMS); flash uses 16.3% fewer parameters and 22.4%
+  fewer GFLOPs.
+- The gap widened from 3.54 AP at 10 epochs to 5.25 AP at 300 epochs, so it is driven by
+  architecture capacity rather than an undertrained schedule.
+- Official `yolo26n-pose` is O365 detection pretraining + 400 COCO-pose epochs, so this is still
+  not like-for-like; the from-scratch 0.5529 is 1.58 AP below the official-weight 0.5687.
 
 ## 4. Training-internal alignment
 

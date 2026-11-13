@@ -291,6 +291,21 @@ class CocoDataset:
             out.append(np.asarray(raw, np.float32).reshape(self.kpt_shape))
         return np.stack(out) if out else np.zeros((0, *self.kpt_shape), np.float32)
 
+    def areas(self, idx, include_crowd=False):
+        """第 idx 张图的 GT 面积 (M,)，与 targets/keypoints 逐行对齐
+
+        COCO OKS 使用标注的 `area`（分割面积），不是框面积——两者在 person 上可差 2×，
+        训练中 pose 指标要按同一口径才能与 pycocotools 对齐。缺失时回退到框面积。
+        """
+        info = self.images[idx]
+        out = []
+        for a in self.annotations[info["id"]]:
+            if not include_crowd and a.get("iscrowd", 0):
+                continue
+            x, y, w, h = a["bbox"]
+            out.append(float(a.get("area", w * h)))
+        return np.asarray(out, np.float32)
+
     def _seg_polys(self, idx, imgsz, ratio, pad, include_crowd):
         """第 idx 张图 -> (labels (M,5), polygons)；框由多边形包围盒导出（与训练侧同口径）
 

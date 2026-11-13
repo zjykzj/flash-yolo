@@ -197,8 +197,13 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
                     gt_boxes_lb = (gt[:, :4] * np.array([ratio, ratio, ratio, ratio], np.float32)
                                    + np.array([pad[1], pad[0], pad[1], pad[0]], np.float32)
                                    if len(gt) else np.zeros((0, 4), np.float32))
+                    # COCO OKS 用标注面积（分割面积），不是框面积；换到 letterbox 尺度
+                    # （面积乘 ratio²，与关键点同尺度，OKS 才保持尺度不变）。
+                    gt_areas = (dataset.areas(j, include_crowd=False) * (ratio * ratio)
+                                if hasattr(dataset, "areas") else None)
                     pose_metrics.update(kpts_lb, scores, cls, gt_k, gt_boxes_lb,
-                                        gt[:, 4].astype(np.int64) if len(gt) else np.zeros(0, np.int64))
+                                        gt[:, 4].astype(np.int64) if len(gt) else np.zeros(0, np.int64),
+                                        gt_areas=gt_areas)
         pending.clear()
         if (i + 1) % 10 == 0 or i == n - 1:
             speed = (i + 1) / max(time.monotonic() - t0, 1e-6)
