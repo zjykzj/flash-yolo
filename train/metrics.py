@@ -16,7 +16,7 @@ import numpy as np
 
 from utils.iou import box_iou_matrix, mask_iou_matrix
 
-__all__ = ["FastMetrics", "FastPoseMetrics"]
+__all__ = ["FastMetrics", "FastPoseMetrics", "FastLvisMetrics"]
 
 _IOU_THRESHOLDS = np.arange(0.5, 0.95 + 1e-9, 0.05)  # 10 个阈值
 _RECALL_POINTS = np.linspace(0, 1, 101)  # 101 点插值
@@ -445,3 +445,163 @@ class FastMetrics:
                 "mAP@[.5:.95](M)": round(float(np.mean(aps_m)), 4) if aps_m else 0.0,
             })
         return out
+
+
+_LVIS_MAX_DETS = 300  # LVIS 官方 maxDets
+
+
+class FastLvisMetrics(FastMetrics):
+    """LVIS 训练中快速指标（federated valid-class + maxDets=300 + APr/APc/APf）
+
+    与 FastMetrics 的区别：
+      - 每图 `valid_cls` = GT 正类（含 crowd）∪ `neg_category_ids`；检测类别不在其中时
+        直接忽略（不记 FP）；`not_exhaustive` 与未标注类默认不在 valid_cls；
+      - 每图检测按分数全局取 top-300（LVIS maxDets），不是每类 top-100；
+      - 额外输出 APr/APc/APf（按 LVIS category frequency 分组）。
+    GT 仍由 validator 传入（当前 LVIS minival 没有 crowd 标注；若有，按现有 include_crowd
+    口径处理）。匹配/插值复用 FastMetrics 的 `_greedy_match_all_thr` /
+    `_class_stats_from_records`。
+    """
+
+    def __init__(self, nc=1203, task="detect", frequencies=None):
+        super().__init__(nc=nc, task=task)
+        self.frequencies = dict(frequencies or {})
+
+    def _valid(self, det_cls, valid_cls):
+        det_cls = np.asarray(det_cls, np.int64).reshape(-1)
+        if valid_cls is None or len(det_cls) == 0:
+            return np.ones(len(det_cls), bool)
+        valid = np.asarray(valid_cls, bool).reshape(-1)
+        if len(valid) != self.nc:
+            raise ValueError(f"valid_cls length {len(valid)} != nc {self.nc}")
+        return valid[det_cls]
+
+    def update(self, det_boxes, det_scores, det_cls, gt_boxes, gt_cls, valid_cls=None):
+        """累积一张图的检测/GT；valid_cls 为 None 时等价于只看 GT 类"""
+        self.n_images += 1
+        det_boxes = np.asarray(det_boxes, np.float32).reshape(-1, 4)
+        det_scores = np.asarray(det_scores, np.float32).reshape(-1)
+        det_cls = np.asarray(det_cls, np.int64).reshape(-1)
+        keep = self._valid(det_cls, valid_cls)
+        self.det_boxes.append(det_boxes[keep])
+        self.det_scores.append(det_scores[keep])
+        self.det_cls.append(det_cls[keep])
+        gt_boxes = np.asarray(gt_boxes, np.float32).reshape(-1, 4)
+        gt_cls = np.asarray(gt_cls, np.int64).reshape(-1)
+        self.gt_boxes.append(gt_boxes)
+        self.gt_cls.append(gt_cls)
+        self.n_instances += len(gt_cls)
+
+    def update_mask(self, det_masks, det_scores, det_cls, gt_masks, gt_cls, valid_cls=None):
+        """累积一张图的掩码匹配（先按 valid_cls 过滤，再取每图全局 top-300）"""
+        det_masks = np.asarray(det_masks, np.uint8)
+        det_scores = np.asarray(det_scores, np.float32).reshape(-1)
+        det_cls = np.asarray(det_cls, np.int64).reshape(-1)
+        keep = self._valid(det_cls, valid_cls)
+        det_masks, det_scores, det_cls = det_masks[keep], det_scores[keep], det_cls[keep]
+        if len(det_scores):
+            order = np.argsort(-det_scores)[:_LVIS_MAX_DETS]
+            det_masks, det_scores, det_cls = det_masks[order], det_scores[order], det_cls[order]
+        gt_masks = np.asarray(gt_masks, np.uint8)
+        gt_cls = np.asarray(gt_cls, np.int64).reshape(-1)
+        self.n_gt_mask += np.bincount(gt_cls, minlength=self.nc)
+        for c in np.unique(det_cls):
+            c = int(c)
+            m = det_cls == c
+            m_gt = gt_cls == c
+            if m_gt.any():
+                tp = _greedy_match_all_thr(mask_iou_matrix(det_masks[m], gt_masks[m_gt]),
+                                           det_scores[m])
+            else:
+                tp = np.zeros((int(m.sum()), len(_IOU_THRESHOLDS)), bool)
+            self.mask_by_class[c].append((det_scores[m], tp))
+
+    def compute(self):
+        """按 LVIS maxDets=300 计算 box/mask AP 与 frequency 分组"""
+        if self.n_images == 0:
+            out = {"mAP@50": 0.0, "mAP@[.5:.95]": 0.0, "AR@100": 0.0, "AR@300": 0.0,
+                   "P": 0.0, "R": 0.0, "APr": 0.0, "APc": 0.0, "APf": 0.0,
+                   "images": 0, "instances": 0}
+            if self.task == "segment":
+                out.update({"P(M)": 0.0, "R(M)": 0.0, "mAP@50(M)": 0.0,
+                            "mAP@[.5:.95](M)": 0.0, "APr(M)": 0.0,
+                            "APc(M)": 0.0, "APf(M)": 0.0})
+            return out
+
+        # box：每图先全局 top-300，再按类累积
+        per_class = [[] for _ in range(self.nc)]
+        for i in range(self.n_images):
+            boxes, scores, cls = self.det_boxes[i], self.det_scores[i], self.det_cls[i]
+            if not len(boxes):
+                continue
+            order = np.argsort(-scores)[:_LVIS_MAX_DETS]
+            boxes, scores, cls = boxes[order], scores[order], cls[order]
+            for c in np.unique(cls):
+                c = int(c)
+                m = cls == c
+                m_gt = self.gt_cls[i] == c
+                per_class[c].append((scores[m], boxes[m], self.gt_boxes[i][m_gt]))
+
+        def _stats(records, n_gt_c):
+            """records: [(scores, boxes, gt_boxes)] -> (ap50, ap, ar, pr, rc)"""
+            out = []
+            for scores, boxes, gt_boxes in records:
+                if len(gt_boxes):
+                    tp = _greedy_match_all_thr(box_iou_matrix(boxes, gt_boxes), scores)
+                else:
+                    tp = np.zeros((len(scores), len(_IOU_THRESHOLDS)), bool)
+                out.append((scores, tp))
+            return _class_stats_from_records(out, n_gt_c)
+
+        ap50s, aps, ars, prs, rcs = [], [], [], [], []
+        cls_aps = []
+        gt_all = np.concatenate(self.gt_cls) if self.gt_cls else np.zeros(0, np.int64)
+        n_gt_by_cls = np.bincount(gt_all, minlength=self.nc)
+        for c in range(self.nc):
+            n_gt_c = int(n_gt_by_cls[c])
+            if n_gt_c == 0:
+                continue
+            ap50, ap, ar, pr, rc = _stats(per_class[c], n_gt_c)
+            ap50s.append(ap50); aps.append(ap); ars.append(ar); prs.append(pr); rcs.append(rc)
+            cls_aps.append((c, ap))
+
+        # trainer 的 CSV 固定列名是 AR@100；LVIS 用 maxDets=300，故 AR@100 与 AR@300 同值。
+        out = {
+            "mAP@50": round(float(np.mean(ap50s)), 4) if ap50s else 0.0,
+            "mAP@[.5:.95]": round(float(np.mean(aps)), 4) if aps else 0.0,
+            "AR@100": round(float(np.mean(ars)), 4) if ars else 0.0,
+            "AR@300": round(float(np.mean(ars)), 4) if ars else 0.0,
+            "P": round(float(np.mean(prs)), 4) if prs else 0.0,
+            "R": round(float(np.mean(rcs)), 4) if rcs else 0.0,
+            "images": self.n_images,
+            "instances": self.n_instances,
+        }
+        out.update(self._frequency_means(cls_aps, ""))
+        if self.task == "segment":
+            ap50s_m, aps_m, ars_m, prs_m, rcs_m = [], [], [], [], []
+            cls_aps_m = []
+            for c in range(self.nc):
+                n_gt_c = int(self.n_gt_mask[c])
+                if n_gt_c == 0:
+                    continue
+                ap50, ap, ar, pr, rc = _class_stats_from_records(self.mask_by_class[c], n_gt_c)
+                ap50s_m.append(ap50); aps_m.append(ap); ars_m.append(ar)
+                prs_m.append(pr); rcs_m.append(rc)
+                cls_aps_m.append((c, ap))
+            out.update({
+                "P(M)": round(float(np.mean(prs_m)), 4) if prs_m else 0.0,
+                "R(M)": round(float(np.mean(rcs_m)), 4) if rcs_m else 0.0,
+                "mAP@50(M)": round(float(np.mean(ap50s_m)), 4) if ap50s_m else 0.0,
+                "mAP@[.5:.95](M)": round(float(np.mean(aps_m)), 4) if aps_m else 0.0,
+            })
+            out.update(self._frequency_means(cls_aps_m, "(M)"))
+        return out
+
+    def _frequency_means(self, class_aps, suffix):
+        groups = {"r": [], "c": [], "f": []}
+        for c, ap in class_aps:
+            freq = self.frequencies.get(c)
+            if freq in groups:
+                groups[freq].append(ap)
+        return {f"AP{k}{suffix}": round(float(np.mean(v)), 4) if v else 0.0
+                for k, v in groups.items()}

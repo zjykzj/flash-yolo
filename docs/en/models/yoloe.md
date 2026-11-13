@@ -246,6 +246,10 @@ python scripts/export.py --weights runs/train/train-yoloe-ft-coco/weights/best.s
   APr/APc/APf. Pycocotools on LVIS does not produce the LVIS metric; add
   `--eval-max-dets 100` for a literal match with ultralytics' current val (it leaves
   faster_coco_eval's default maxDets untouched).
+- LVIS training (`eval_style: lvis`) automatically uses `FastLvisMetrics`: detections are
+  filtered by each image's GT ∪ `neg_category_ids`, maxDets=300, and APr/APc/APf are reported;
+  on the same checkpoint it is within ~0.005–0.009 AP of the formal LVIS evaluator. Training
+  logs remain trend/best-picking only.
 - Official weights (ultralytics assets):
   `https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26n-seg-pf.pt` (etc.).
 

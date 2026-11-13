@@ -41,7 +41,8 @@ from train.ema import ModelEMA
 from train.loss import build_loss
 from train.lr import cosine_lr, linear_lr, set_epoch_lr, step_lr, warmup_momentum
 from train.optimizer import MuSGD, build_param_groups
-from train.validator import VAL_HEADER, VAL_HEADER_POSE, VAL_HEADER_SEG, format_val_row, validate
+from train.validator import (VAL_HEADER, VAL_HEADER_LVIS, VAL_HEADER_POSE, VAL_HEADER_SEG,
+                             format_val_row, validate)
 from utils.logger import bold, log_file_only
 from utils.paths import write_run_meta
 from utils.progress import ProgressBar, fmt_elapsed, fmt_num
@@ -359,9 +360,13 @@ class Trainer:
                                if self.task == "segment" else
                                ["P(P)", "R(P)", "mAP50(P)", "mAP@[.5:.95](P)"]
                                if self.task == "pose" else [])
+        self.is_lvis = getattr(self.data_spec, "eval_style", "coco") == "lvis"
+        lvis_fields = (["APr", "APc", "APf"]
+                       + (["APr(M)", "APc(M)", "APf(M)"] if self.task == "segment" else [])
+                       if self.is_lvis else [])
         self.csv_fields = ["epoch", "time_s", *self.loss_keys, "loss", "lr",
                            "mAP", "mAP50", "P", "R", "AR@100", *extra_metric_fields,
-                           *(f"val_{k}" for k in self.loss_keys)]
+                           *lvis_fields, *(f"val_{k}" for k in self.loss_keys)]
         # close_mosaic 自动适配短跑：官方语义 = 最后 N 个 epoch 关 mosaic，但不超过总轮数的 1/5
         # （缩放结果在 _print_components 的 mosaic 行体现）
         self.close_mosaic = min(cfg.close_mosaic, cfg.epochs // 5)
@@ -970,13 +975,14 @@ class Trainer:
                 metrics = None
                 if self.val_enabled and ((epoch + 1) % self.cfg.val_epochs == 0 or epoch == self.cfg.epochs - 1):
                     t_val = time.monotonic()
-                    logger.info(VAL_HEADER_POSE if self.task == "pose" else
+                    logger.info(VAL_HEADER_LVIS if self.is_lvis else
+                                VAL_HEADER_POSE if self.task == "pose" else
                                 VAL_HEADER_SEG if self.task == "segment" else VAL_HEADER)
                     metrics = self._validate()
                     val_elapsed = time.monotonic() - t_val
                     # 控制台定格行=进度条行；文件日志另落一行（带评估耗时）
                     log_file_only(format_val_row(metrics, seg=self.task == "segment",
-                                                 pose=self.task == "pose")
+                                                 pose=self.task == "pose", lvis=self.is_lvis)
                                   + f" · {fmt_elapsed(val_elapsed)}", name=logger.name)
                     fitness = metrics["mAP@[.5:.95]"]
                     if self.task == "segment":  # 官方 SegmentMetrics.fitness = box + mask mAP50-95
@@ -1038,6 +1044,12 @@ class Trainer:
                 row.update({"P(P)": metrics["P(P)"], "R(P)": metrics["R(P)"],
                             "mAP50(P)": metrics["mAP@50(P)"],
                             "mAP@[.5:.95](P)": metrics["mAP@[.5:.95](P)"]})
+            if self.is_lvis:
+                row.update({"APr": metrics["APr"], "APc": metrics["APc"],
+                            "APf": metrics["APf"]})
+                if self.task == "segment":
+                    row.update({"APr(M)": metrics["APr(M)"], "APc(M)": metrics["APc(M)"],
+                                "APf(M)": metrics["APf(M)"]})
             if metrics.get("loss"):
                 row.update({f"val_{k}": round(v, 4) for k, v in metrics["loss"].items()})
         new_file = not self.results_csv.exists()

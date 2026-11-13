@@ -223,7 +223,8 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
    eps=0.001). Default is fp32; finetuning may try `--amp`.
 2. **`--close-mosaic` means "last N epochs"**, not "starting at epoch N"; short runs get it
    scaled down by `min(N, epochs//5)`.
-3. `best.safetensors` is picked by FastMetrics; external numbers go through `scripts/eval.py`.
+3. `best.safetensors` is picked by FastMetrics (COCO / pose) or FastLvisMetrics
+   (`eval_style: lvis`); external numbers go through `scripts/eval.py`.
 4. **Pose**: COCO-pose val only evaluates the 2,346 images with valid keypoints; `val_rle` is
    always 0 (the val forward does not return sigma; training still computes it); `copy_paste > 0`
    errors out; `--single-cls` is not applicable. `fliplr` needs the descriptor's `flip_idx`,

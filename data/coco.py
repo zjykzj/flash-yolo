@@ -218,6 +218,8 @@ class CocoDataset:
         self.scan_time = stats.scan_time
         self.first_missing = stats.first_missing
         self.n_corrupt = 0  # 验证在父进程单进程内跑，普通计数即可（见 load_image）
+        self.eval_style = "coco"  # 由 data/build.py 按描述符覆盖（lvis -> FastLvisMetrics）
+        self._frequencies = None  # LVIS category frequency（lazy，仅 lvis 指标读取）
 
     def gt_source(self):
         """pycocotools 的 GT 来源：COCO 直接给 ann json 路径；single_cls 时返回重映射后的 callable"""
@@ -305,6 +307,39 @@ class CocoDataset:
             x, y, w, h = a["bbox"]
             out.append(float(a.get("area", w * h)))
         return np.asarray(out, np.float32)
+
+    def valid_classes(self, idx):
+        """LVIS federated 标注的每图有效类别掩码 (nc,)
+
+        valid = GT 正类（含 crowd）∪ `neg_category_ids`；`not_exhaustive_category_ids`
+        中仅未出现在 GT 的类保持 False（GT 类本身仍有效，与 LVIS 的 drop 规则一致）。
+        COCO 没有 federated 字段时退化为“本图 GT 类”。
+        """
+        info = self.images[idx]
+        valid = np.zeros(len(self.names), bool)
+        for a in self.annotations.get(info["id"], []):
+            c = self.cat_id_to_idx.get(a["category_id"])
+            if c is not None:
+                valid[c] = True
+        for cid in info.get("neg_category_ids") or []:
+            c = self.cat_id_to_idx.get(cid)
+            if c is not None:
+                valid[c] = True
+        return valid
+
+    def frequencies(self):
+        """LVIS category frequency（class index -> r/c/f）；非 LVIS 返回空 dict
+
+        lazy 读取 ann json 的 categories；只由 FastLvisMetrics 在 LVIS 训练验证时调用。
+        """
+        if self._frequencies is None:
+            with open(self.ann_file) as f:
+                data = json.load(f)
+            self._frequencies = {
+                self.cat_id_to_idx[c["id"]]: c.get("frequency")
+                for c in data["categories"] if c["id"] in self.cat_id_to_idx
+            }
+        return self._frequencies
 
     def _seg_polys(self, idx, imgsz, ratio, pad, include_crowd):
         """第 idx 张图 -> (labels (M,5), polygons)；框由多边形包围盒导出（与训练侧同口径）

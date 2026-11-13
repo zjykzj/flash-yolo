@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **YOLO26-pose**: official `yolo26*-pose` checkpoints convert, strict-load and run bit-identically; pt/ONNX/TensorRT inference, COCO keypoint (OKS) evaluation and export are wired, with skeleton drawing and YOLO-pose labels.
 - **YOLO26-pose training**: COCO keypoint data/augmentation, pose + keypoint-objectness + RLE loss, OKS training metrics, the official 400-epoch COCO-pose recipe, and single-GPU/DDP Trainer support.
 - **Flash-YOLO-pose**: the flash-yolo backbone/neck with a Pose26 head (3.08M params / 5.9 GFLOPs @640); training, OKS eval, E2E/raw export and inference are wired, including `kpt_shape` metadata and initialization from flash-yolo detection weights with a random pose head.
+- **FastLvisMetrics**: LVIS training validation now filters detections by each image's GT ∪ `neg_category_ids`, uses maxDets=300, and reports AP / APr / APc / APf; the COCO and pose FastMetrics paths are unchanged.
 
 ### Changed
 

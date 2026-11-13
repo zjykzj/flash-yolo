@@ -203,7 +203,8 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
 1. **`--amp` 从零训练必炸**（fp16 在 640² + BN eps=0.001 下第 1 轮内 NaN）。默认 fp32；
    微调可试 `--amp`。
 2. **`--close-mosaic` 是“最后 N 轮”**，不是“从第 N 轮开始”；短跑会被 `min(N, epochs//5)` 缩小。
-3. `best.safetensors` 由 FastMetrics 选取；对外数字走 `scripts/eval.py`。
+3. `best.safetensors` 由 FastMetrics（COCO / pose）或 FastLvisMetrics（`eval_style: lvis`）
+   选取；对外数字走 `scripts/eval.py`。
 4. val 损失不可与训练损失直接比（增强分布 / EMA vs raw / BN 模式）。
 5. **pose**：COCO-pose val 只评估 2,346 张有有效关键点的图；`val_rle` 恒 0（验证前向不返回
    sigma，训练仍在算）；`copy_paste > 0` 直接报错；`--single-cls` 不适用。

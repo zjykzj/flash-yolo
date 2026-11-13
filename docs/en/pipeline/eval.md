@@ -2,8 +2,8 @@
 
 > Entry point: `python scripts/eval.py --weights <w> --data <name|.yaml>`.
 > **This script is the only source of external numbers**: COCO protocol runs on pycocotools,
-> LVIS protocol on faster_coco_eval (`lvis_style`); the FastMetrics printed during training are
-> for trends and best-picking only.
+> LVIS protocol on faster_coco_eval (`lvis_style`); the FastMetrics / FastLvisMetrics printed
+> during training are for trends and best-picking only.
 
 ## 1. Usage
 
@@ -53,7 +53,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 |---|---|---|---|
 | **Formal · COCO protocol** (default) | pycocotools | COCO external numbers, acceptance | — |
 | **Formal · LVIS protocol** | faster_coco_eval (`lvis_style=True`) | LVIS / YOLOE open-vocabulary comparisons | — |
-| In-training | pure-numpy FastMetrics / FastPoseMetrics | per-epoch trends + picking `best.safetensors` | ignores crowd, maxDets=100 (pose 20), no area grouping; pose ignores `num_keypoints==0` annotations and uses the annotation `area`; greedy matching + 101-point interpolation |
+| In-training | pure-numpy FastMetrics / FastPoseMetrics / FastLvisMetrics | per-epoch trends + picking `best.safetensors` | COCO: ignores crowd, maxDets=100 (pose 20), no area grouping; pose ignores `num_keypoints==0` annotations and uses the annotation `area`; LVIS: valid classes + maxDets=300 + APr/APc/APf; greedy matching + 101-point interpolation |
 
 FastMetrics tracks the formal convention well, but **cross-run comparisons and external
 references always use the formal convention**.
@@ -81,6 +81,10 @@ predictions can differ by several times) and must not be compared with published
   (same schema as `config/datasets/lvis.yaml`) and use `--data lvis-minival`.
 - `lvis_style` requires a `frequency` (r/c/f) on every category; the evaluator errors out
   clearly when it is missing.
+- Training (`eval_style: lvis`) switches to `FastLvisMetrics`: detections are filtered by each
+  image's GT ∪ `neg_category_ids`, maxDets=300, and AP / APr / APc / APf are reported. On the
+  same checkpoint it is within ~0.005–0.009 AP of the formal LVIS evaluator; training logs
+  remain trend/best-picking only. The COCO path keeps using `FastMetrics`.
 
 ## 3. Reading the output
 

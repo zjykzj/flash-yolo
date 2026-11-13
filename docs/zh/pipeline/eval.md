@@ -2,7 +2,7 @@
 
 > 入口：`python scripts/eval.py --weights <w> --data <name|.yaml>`。
 > **对外数字只有一个来源就是本脚本**：COCO 协议走 pycocotools，LVIS 协议走 faster_coco_eval
-> （`lvis_style`）；训练中打印的 FastMetrics 只用于趋势与选 best。
+> （`lvis_style`）；训练中打印的 FastMetrics / FastLvisMetrics 只用于趋势与选 best。
 
 ## 1. 用法
 
@@ -52,7 +52,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 |---|---|---|---|
 | **正式 · COCO 协议**（默认） | pycocotools | COCO 对外数字、验收 | — |
 | **正式 · LVIS 协议** | faster_coco_eval（`lvis_style=True`） | LVIS / YOLOE 开放词汇对比 | — |
-| 训练中 | 纯 numpy FastMetrics / FastPoseMetrics | 每轮趋势 + 选 `best.safetensors` | 忽略 crowd、maxDets=100（pose 20）、无面积分组；pose 忽略 `num_keypoints==0` 标注、OKS 用标注 `area`；贪婪匹配 + 101 点插值 |
+| 训练中 | 纯 numpy FastMetrics / FastPoseMetrics / FastLvisMetrics | 每轮趋势 + 选 `best.safetensors` | COCO：忽略 crowd、maxDets=100（pose 20）、无面积分组；pose 忽略 `num_keypoints==0` 标注、OKS 用标注 `area`；LVIS：valid-class + maxDets=300 + APr/APc/APf；均为贪婪匹配 + 101 点插值 |
 
 FastMetrics 与正式口径贴合良好，但**跨 run 比较/对外引用一律用正式口径**。
 
@@ -74,6 +74,9 @@ LVIS 的标注不是穷举的，评估必须处理两个图级字段，pycocotoo
   `config/datasets/local/lvis-minival.yaml`（结构同 `config/datasets/lvis.yaml`），
   `--data lvis-minival` 即可使用。
 - `lvis_style` 要求 categories 带 `frequency`（r/c/f），缺失会在构造评估器时报错。
+- 训练中（`eval_style: lvis`）自动改用 `FastLvisMetrics`：按每图 GT ∪ `neg_category_ids`
+  过滤检测，maxDets=300，输出 AP / APr / APc / APf；同一 checkpoint 与正式 LVIS AP 差约
+  0.005–0.009，训练日志仍只用于趋势与 best 选取。COCO 路径继续使用 `FastMetrics`。
 
 ## 3. 输出解读
 

@@ -216,6 +216,9 @@ python scripts/export.py --weights runs/train/train-yoloe-ft-coco/weights/best.s
   `neg_category_ids` / `not_exhaustive_category_ids`、maxDets=300，并输出 APr/APc/APf。
   用 pycocotools 评 LVIS 得到的不是 LVIS 指标；与 ultralytics 代码逐字对齐时加
   `--eval-max-dets 100`（它没有覆盖 faster_coco_eval 的默认 maxDets）。
+- LVIS 训练中（`eval_style: lvis`）自动使用 `FastLvisMetrics`：按每图 GT ∪
+  `neg_category_ids` 过滤检测、maxDets=300，并输出 APr/APc/APf；同一 checkpoint 与正式
+  LVIS AP 差约 0.005–0.009，训练日志仍只用于趋势与 best 选取。
 - 官方权重下载（ultralytics assets）：`yoloe-26n-seg-pf.pt` 等见
   `https://github.com/ultralytics/assets/releases/download/v8.4.0/`。
 

@@ -81,6 +81,7 @@ def build_eval_dataset(spec, role="val", progress=False, progress_file=None, tas
         ds = CocoDataset(r.ann, r.images, label=role, progress=progress, progress_file=progress_file,
                          single_cls=single_cls, require_keypoints=(task == "pose"),
                          kpt_shape=spec.kpt_shape if task == "pose" else None)
+        ds.eval_style = spec.eval_style  # 训练中 lvis -> FastLvisMetrics
         if not single_cls:
             _check_names(spec, ds)
         return ds

@@ -1,4 +1,4 @@
-"""训练中验证：EMA 模型快速评估（FastMetrics，COCO 口径近似，无 pycocotools 依赖）
+"""训练中验证：EMA 模型快速评估（FastMetrics / FastLvisMetrics，无 pycocotools 依赖）
 
 趋势指标与 best 选取用；正式数字以 scripts/eval.py（pycocotools）为准。
 
@@ -21,12 +21,13 @@ import torch
 
 from config.inference import CONF_THRES, IMGSZ
 from data.preprocess import preprocess
-from train.metrics import FastMetrics, FastPoseMetrics
+from train.metrics import FastLvisMetrics, FastMetrics, FastPoseMetrics
 from utils.engines import Detections
 from utils.postprocess import process_mask_lowres, scale_boxes
 from utils.progress import ProgressBar
 
-__all__ = ["validate", "VAL_HEADER", "VAL_HEADER_SEG", "VAL_HEADER_POSE", "format_val_row"]
+__all__ = ["validate", "VAL_HEADER", "VAL_HEADER_SEG", "VAL_HEADER_POSE", "VAL_HEADER_LVIS",
+           "format_val_row"]
 
 VAL_HEADER = "      " + "%11s" * 7 % ("Class", "Images", "Instances", "P", "R", "mAP50", "mAP50-95")
 VAL_HEADER_SEG = "      " + "%11s" * 11 % (
@@ -35,25 +36,30 @@ VAL_HEADER_SEG = "      " + "%11s" * 11 % (
 VAL_HEADER_POSE = "      " + "%11s" * 11 % (
     "Class", "Images", "Instances", "P", "R", "mAP50", "mAP50-95",
     "P(P)", "R(P)", "mAP50(P)", "mAP50-95(P)")
+VAL_HEADER_LVIS = "      " + "%11s" * 11 % (
+    "Class", "Images", "Instances", "P", "R", "mAP50", "mAP50-95",
+    "APr", "APc", "APf", "AR")
 
 _LOSS_KEYS = ("box", "cls", "l1", "o2m", "o2o")  # 无 loss_fn 时的兜底键（正常路径由 item_keys 派生）
 _LOSS_KEYS_SEG = ("box", "seg", "cls", "l1", "o2m", "o2o")
 _LOSS_KEYS_POSE = ("box", "pose", "kobj", "rle", "cls", "l1", "o2m", "o2o")
 
 
-def format_val_row(metrics=None, images=0, instances=0, seg=False, pose=False):
+def format_val_row(metrics=None, images=0, instances=0, seg=False, pose=False, lvis=False):
     """val 数据行（与表头同构 11 宽右对齐）——进度条实时行与定格行共用"""
     if metrics is not None:
         images, instances = metrics["images"], metrics["instances"]
         tail = "%11.4f" * 4 % (metrics["P"], metrics["R"], metrics["mAP@50"], metrics["mAP@[.5:.95]"])
-        if seg:
+        if lvis:
+            tail += "%11.4f" * 4 % (metrics["APr"], metrics["APc"], metrics["APf"], metrics["AR@100"])
+        elif seg:
             tail += "%11.4f" * 4 % (metrics["P(M)"], metrics["R(M)"],
                                     metrics["mAP@50(M)"], metrics["mAP@[.5:.95](M)"])
         elif pose:
             tail += "%11.4f" * 4 % (metrics["P(P)"], metrics["R(P)"],
                                     metrics["mAP@50(P)"], metrics["mAP@[.5:.95](P)"])
     else:
-        tail = "".join(f"{'-':>11}" for _ in range(8 if (seg or pose) else 4))
+        tail = "".join(f"{'-':>11}" for _ in range(8 if (seg or pose or lvis) else 4))
     return "      " + "%11s" % "all" + "%11d" * 2 % (images, instances) + tail
 
 
@@ -84,8 +90,12 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
         head.end2end = True  # YOLO26 走 E2E 解码；V3Detect 无此开关
     is_seg = task == "segment"
     is_pose = task == "pose"
+    is_lvis = (getattr(dataset, "eval_style", "coco") == "lvis"
+               and task in ("detect", "segment"))
     kpt_shape = tuple(getattr(head, "kpt_shape", (17, 3))) if is_pose else None
-    metrics = FastMetrics(nc=len(dataset.names), task=task)
+    metrics = (FastLvisMetrics(nc=len(dataset.names), task=task,
+                               frequencies=dataset.frequencies() if hasattr(dataset, "frequencies") else None)
+               if is_lvis else FastMetrics(nc=len(dataset.names), task=task))
     pose_metrics = FastPoseMetrics(nc=len(dataset.names), kpt_shape=kpt_shape) if is_pose else None
     loss_keys = tuple(loss_fn.item_keys) if loss_fn is not None else (
         _LOSS_KEYS_SEG if is_seg else _LOSS_KEYS_POSE if is_pose else _LOSS_KEYS)
@@ -99,7 +109,7 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
             result["loss"] = dict.fromkeys(loss_keys, 0.0)
         return (result, metrics) if return_metrics else result
 
-    bar = ProgressBar(n, desc=format_val_row(seg=is_seg, pose=is_pose))
+    bar = ProgressBar(n, desc=format_val_row(seg=is_seg, pose=is_pose, lvis=is_lvis))
     t0 = time.monotonic()
     n_inst_seen = 0
     speed = None
@@ -168,6 +178,8 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
             cls = out[keep][:, 5].astype(np.int64)
             boxes = scale_boxes(boxes_lb, ratio, pad, *img_j.shape[:2])
             dets = Detections(boxes, scores, cls)
+            valid_cls = dataset.valid_classes(j) if is_lvis else None
+            metric_kwargs = {"valid_cls": valid_cls} if is_lvis else {}
             if is_seg:
                 coeff = out[keep][:, 6:]
                 det_masks = process_mask_lowres(
@@ -175,8 +187,10 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
                 gt_lb_m, gt_masks = extra[2], extra[3]
                 gt_cls = gt_lb_m[:, 0].astype(np.int64)
                 gt_boxes = _gt_boxes_letterbox_to_original(gt_lb_m, ratio, pad, *img_j.shape[:2])
-                metrics.update(dets.boxes, dets.scores, dets.class_ids, gt_boxes, gt_cls)
-                metrics.update_mask(det_masks, dets.scores, dets.class_ids, gt_masks, gt_cls)
+                metrics.update(dets.boxes, dets.scores, dets.class_ids, gt_boxes, gt_cls,
+                               **metric_kwargs)
+                metrics.update_mask(det_masks, dets.scores, dets.class_ids, gt_masks, gt_cls,
+                                    **metric_kwargs)
                 n_inst_seen += len(gt_cls)
             else:
                 gt_pairs = dataset.targets(j, include_crowd=False)
@@ -187,6 +201,7 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
                     dets.boxes, dets.scores, dets.class_ids,
                     gt[:, :4] if len(gt) else np.zeros((0, 4), np.float32),
                     gt[:, 4].astype(np.int64) if len(gt) else np.zeros(0, np.int64),
+                    **metric_kwargs,
                 )
                 if is_pose:
                     k, d = kpt_shape
@@ -208,13 +223,13 @@ def validate(model, dataset, device, conf=CONF_THRES, limit=0, batch=16, loss_fn
         if (i + 1) % 10 == 0 or i == n - 1:
             speed = (i + 1) / max(time.monotonic() - t0, 1e-6)
             bar.update(i + 1, speed, desc=format_val_row(images=i + 1, instances=n_inst_seen,
-                                                         seg=is_seg, pose=is_pose))
+                                                         seg=is_seg, pose=is_pose, lvis=is_lvis))
     result = metrics.compute()
     if is_pose:
         pr = pose_metrics.compute()
         result.update({k: v for k, v in pr.items() if k not in ("images", "instances")})
     # 定格：末次刷新换成真实指标行（保留末段速度），换行保留（与训练行同机制）
-    bar.update(n, speed, desc=format_val_row(result, seg=is_seg, pose=is_pose))
+    bar.update(n, speed, desc=format_val_row(result, seg=is_seg, pose=is_pose, lvis=is_lvis))
     bar.close()
     if loss_fn is not None:
         result["loss"] = {k: v / max(n_batches, 1) for k, v in loss_sums.items()}
