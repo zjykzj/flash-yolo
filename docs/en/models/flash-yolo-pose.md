@@ -82,7 +82,44 @@ python scripts/train.py --data coco-pose --model flash-yolo-pose \
   trend/best-picking only — formal numbers come from `scripts/eval.py` (same protocol as
   [yolo26-pose.md](yolo26-pose.md)).
 
-## 5. Evaluate / export / infer
+## 5. Inference latency (model-only, 640)
+
+> Protocol: the inference segment of `engine.predict_timed`, median of 30 consecutive calls
+> per round x 5 rounds, best-case min; engines are warmed up at init. b1 = single image,
+> b8 = per-image average of batch 8 (batch-8 engines); b1 is a per-run overhead floor and does
+> not extrapolate to b8. Weights = the 300-epoch from-scratch `best.safetensors` (latency is the
+> same across different weights of one architecture).
+
+### Cloud server / workstation
+
+| Platform | Runtime / precision | b1 | b8 (per image) |
+|---|---|---:|---:|
+| RTX 5090 | TensorRT 11.4 · fp32 | — | — |
+| RTX 5090 | TensorRT 11.4 · fp16 | — | — |
+| Xeon 8470Q (25-core quota) | ONNX Runtime 1.30 · fp32 | — | — |
+
+- The 5090 / 8470Q rows are placeholders to be filled after server measurements (ORT conditions
+  as in [yolo26.md](yolo26.md) §5).
+
+### Local laptop
+
+| Platform | Runtime / precision | b1 | b8 (per image) |
+|---|---|---:|---:|
+| RTX 4060 Laptop | TensorRT 11.4 · fp32 | 3.61 ms | 2.08 ms |
+| RTX 4060 Laptop | TensorRT 11.4 · fp16 | 4.37 ms | 1.22 ms |
+| RTX 4060 Laptop | PyTorch · CUDA fp32 | 13.8 ms | — |
+| Ultra 9 185H (22 threads) | PyTorch · CPU fp32 | 54.9 ms | — |
+
+- b1 is a multi-round best-case min (laptop GPU dynamic clocks make single shots drift);
+  b8 is stable.
+- fp16 is slower than fp32 at b1 (small graphs are scheduling-overhead-bound, the same
+  phenomenon as in [yolov3-tiny.md](yolov3-tiny.md)); b8 reflects the compute difference.
+- TensorRT engines are bound to the build machine's GPU and TRT version; rebuild with
+  `scripts/export.py --trt` on another machine.
+- Build commands: `scripts/export.py --weights <best.safetensors> --trt [--fp16]` (E2E single
+  output (B,300,57)); batch-8 engines are built separately per the b8 protocol.
+
+## 6. Evaluate / export / infer
 
 ```bash
 python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --data coco-pose
@@ -100,7 +137,7 @@ python scripts/infer.py --weights runs/train/<run>/weights/best.safetensors \
   end2end`; infer/eval no longer need the original `.safetensors`.
 - `--nms` is supported (pose o2m branch); `--single-cls` is not applicable to pose.
 
-## 6. Notes
+## 7. Notes
 
 - Only the `flash` scale exists; do not pass `--scale`.
 - The official `yolo26n-pose` reference numbers (E2E 0.5687 / 0.8250) do **not** apply to this

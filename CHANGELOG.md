@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pose documentation**: bilingual YOLO26-pose model pages and task-specific train/eval/export/infer/dataset/model-matrix/alignment/FAQ sections document the new pipeline and its 2,346-image COCO-pose protocol.
 - **Pose training parity evidence**: a 10-epoch official-weight finetune matches ultralytics 8.4.173 (E2E AP 0.5476 vs 0.5477, NMS 0.5528 vs 0.5508); the training-time metric offset was later fixed (see Fixed).
 - **Pose 300-epoch from-scratch baselines**: yolo26n-pose reaches E2E 0.5529 / NMS 0.5541 AP and flash-yolo-pose reaches E2E 0.5004 / NMS 0.5055 on COCO-pose val2017 (2,346 images), giving a same-budget architecture comparison.
+- **YOLOE and pose latency tables**: YOLOE (pf / text / PE / full-FT) and pose (flash-yolo-pose / yolo26n-pose) model pages document model-only b1/b8 latency for PyTorch and TensorRT on the RTX 4060 Laptop, with RTX 5090 / Xeon 8470Q rows left as placeholders; pf's TRT batch-8 engine is recorded as unbuildable on TRT 11.4.
 
 ### Fixed
 

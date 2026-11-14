@@ -363,7 +363,59 @@ lr0 0.001 / batch 32 / 640；单卡 3090 4 h 40 min）。正式评估（pycocoto
   --warmup-epochs 3 --val-limit 5000`；评估用 `--data lvis-minival --eval-max-dets 100
   --text-encoder weights/mobileclip2_b.safetensors`（E2E / `--nms` 两口径）。
 
-## 5. 已知边界
+## 5. 推理延迟（model-only，640）
+
+> 口径：`engine.predict_timed` 的 inference 段，每轮连续 30 次取中位数、共 5 轮取 best-case
+> min；引擎 init 已 warmup（文本模式的 tpe 编码发生在 `set_classes` 期，不进入每次前向）。
+> b1 = 单图，b8 = batch 8 每图平均（batch-8 引擎）；b1 是 per-run 开销地板，不能直接外推到 b8。
+> **模式即图**：pf 与文本是两套前向图（lrpc 提案过滤 vs BNContrastiveHead 相似度），延迟按模式
+> 分行，"同一架构不同权重延迟相同"只在同模式内成立。
+
+### 云服务器 / 工作站
+
+| 模式 | 平台 | 运行时 / 精度 | b1 | b8（每图） |
+|---|---|---|---:|---:|
+| pf | RTX 5090 | TensorRT 11.4 · fp32 | — | — |
+| pf | RTX 5090 | TensorRT 11.4 · fp16 | — | — |
+| 文本（80 类，类锁定） | RTX 5090 | TensorRT 11.4 · fp32 | — | — |
+| 文本（80 类，类锁定） | RTX 5090 | TensorRT 11.4 · fp16 | — | — |
+| pf / 文本 | Xeon 8470Q（25 核配额） | ONNX Runtime 1.30 · fp32 | — | — |
+
+- 5090 / 8470Q 行待服务器测量后回填（pf 用 `yoloe-26n-seg-pf.onnx`、文本用 `--classes`
+  类锁定导出的 onnx；ORT 条件同 [yolo26.md](yolo26.md) §5）。
+
+### 本地笔记本
+
+| 模式 | 平台 | 运行时 / 精度 | b1 | b8（每图） |
+|---|---|---|---:|---:|
+| pf | RTX 4060 Laptop | TensorRT 11.4 · fp32 | 27.9 ms | 不可构建 |
+| pf | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 20.7 ms | 不可构建 |
+| pf | RTX 4060 Laptop | PyTorch · CUDA fp32 | 26.6 ms | — |
+| pf | Ultra 9 185H（22 线程） | PyTorch · CPU fp32 | 315 ms | — |
+| 文本（80 类，类锁定） | RTX 4060 Laptop | TensorRT 11.4 · fp32 | 4.60 ms | 2.72 ms |
+| 文本（80 类，类锁定） | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 5.61 ms | 1.79 ms |
+| 文本（80 类，未 fused） | RTX 4060 Laptop | PyTorch · CUDA fp32 | 16.7 ms | — |
+| 文本（80 类，未 fused） | Ultra 9 185H（22 线程） | PyTorch · CPU fp32 | 69.2 ms | — |
+| PE 产物（类锁定 = 文本 fused 图） | RTX 4060 Laptop | PyTorch · CUDA fp32 | 16.8 ms | — |
+| PE 产物 | Ultra 9 185H（22 线程） | PyTorch · CPU fp32 | 61.2 ms | — |
+| 全量微调产物（未 fused） | RTX 4060 Laptop | PyTorch · CUDA fp32 | 16.6 ms | — |
+| 全量微调产物 | Ultra 9 185H（22 线程） | PyTorch · CPU fp32 | 69.8 ms | — |
+
+- b1 为多轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
+- **pf 的 TRT b8 引擎不可构建**：TRT 11.4 对 lrpc 相似度 MatMul+Broadcast 在 batch>1 无实现
+  （fp32 / fp16 均报 "Could not find any implementation"）；b1 固定引擎不受影响。
+- pf 的 TRT b1 ≈ PyTorch b1（lrpc 提案过滤对 TRT 不友好）；文本类锁定的 TRT 提速明显。
+- PE 产物是类锁定权重（BN/reprta 已折叠进尾卷积），前向图与文本类锁定导出一致、略快于
+  未 fused 文本——其 TRT/ONNX 行同"文本（类锁定）"；全量微调产物未 fused，与文本未 fused 同图。
+- fp16 的 b1 慢于 fp32（笔记本小图调度开销主导，与 [yolov3-tiny.md](yolov3-tiny.md) 同现象）；
+  b8 才反映算力差。
+- 测量权重：pf = `weights/yoloe-26n-seg-pf.safetensors`；文本 = `weights/yoloe-26n-seg.safetensors`
+  + `mobileclip2_b.safetensors`（`--classes` 80 COCO 类）；PE / 全量微调产物 =
+  `weights/unreleased/train-yoloe-pe-coco/weights/best.safetensors` /
+  `train-yolo-ft-coco-e10/weights/best.safetensors`。
+- 引擎构建：`scripts/export.py --weights ... --trt [--fp16]`；batch-8 引擎按 b8 口径另行构建。
+
+## 6. 已知边界
 
 - 视觉 prompt 的 mask 必须与 refer 图同尺寸（二值 PNG）；bbox/mask 二选一，同类多示例 OR。
 - 文本+视觉混合：infer/export 直接支持；eval 用 `--classes` 指定文本类名（子集，其余零

@@ -92,23 +92,37 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
 - 300 轮从零权重是本地训练产物，未随 Release 分发；Release 只提供权重下载/转换脚本
   （官方权重不随附）。
 
-## 6. 推理延迟（model-only，b1，640）
+## 6. 推理延迟（model-only，640）
 
-> 口径：`engine.predict_timed` 的 inference 段，连续 30 次取中位数；引擎 init 已 warmup。
-> GPU / TensorRT 为 RTX 3090 + TensorRT 11.4；CPU 行为 Xeon 8470Q（25 核配额）。
-> b1 是 per-run 开销地板，不能直接外推到 b8。
+> 口径：`engine.predict_timed` 的 inference 段，每轮连续 30 次取中位数、共 5 轮取 best-case
+> min；引擎 init 已 warmup。b1 = 单图，b8 = batch 8 每图平均（batch-8 引擎）；b1 是 per-run
+> 开销地板，不能直接外推到 b8。同一架构不同权重的延迟相同（从零 300 轮产物与官方权重同构）。
 
-| 运行时 / 精度 | b1 |
-|---|---:|
-| TensorRT 11.4 · fp16 | 1.65 ms |
-| TensorRT 11.4 · fp32 | 2.22 ms |
-| ONNX Runtime 1.30 · CPU fp32 | 12.4 ms |
-| PyTorch · CUDA fp32 | 10.5 ms |
-| PyTorch · CPU fp32 | 47.3 ms |
+### 云服务器 / 工作站
 
+| 平台 | 运行时 / 精度 | b1 | b8（每图） |
+|---|---|---:|---:|
+| RTX 5090 | TensorRT 11.4 · fp32 | — | — |
+| RTX 5090 | TensorRT 11.4 · fp16 | — | — |
+| Xeon 8470Q（25 核配额） | ONNX Runtime 1.30 · fp32 | 12.4 ms | — |
+| Xeon 8470Q（25 核配额） | PyTorch · CPU fp32 | 47.3 ms | — |
+
+- 5090 TRT 行待服务器测量后回填；ORT / PT CPU 行沿用本页旧表（8470Q 同机、连续 30 次
+  中位数口径），ORT 条件同 [yolo26.md](yolo26.md) §5。
+
+### 本地笔记本
+
+| 平台 | 运行时 / 精度 | b1 | b8（每图） |
+|---|---|---:|---:|
+| RTX 4060 Laptop | TensorRT 11.4 · fp32 | 3.61 ms | 2.25 ms |
+| RTX 4060 Laptop | TensorRT 11.4 · fp16 | 4.59 ms | 1.26 ms |
+| RTX 4060 Laptop | PyTorch · CUDA fp32 | 14.5 ms | — |
+| Ultra 9 185H（22 线程） | PyTorch · CPU fp32 | 55.4 ms | — |
+
+- b1 为多轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
+- fp16 的 b1 慢于 fp32（笔记本小图调度开销主导，与 [yolov3-tiny.md](yolov3-tiny.md) 同现象）；
+  b8 才反映算力差。
 - TensorRT 引擎与构建机 GPU/TRT 版本绑定；换机需重跑 `scripts/export.py --trt`。
-- b8 表尚未发布；同一架构的 batch 缩放规律与 [yolo26.md](yolo26.md) 的检测版一致
-  （额外成本来自关键点分支）。
 
 ## 7. 训练
 

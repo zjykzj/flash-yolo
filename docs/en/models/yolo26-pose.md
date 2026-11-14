@@ -103,25 +103,42 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
 - The 300-epoch from-scratch weights are local training artifacts and are not distributed with
   the Release; the Release ships download/conversion scripts for the official weights.
 
-## 6. Inference latency (model-only, b1, 640)
+## 6. Inference latency (model-only, 640)
 
-> Protocol: the inference segment of `engine.predict_timed`, median of 30 consecutive calls;
-> engines are warmed up at init. GPU/TensorRT rows use an RTX 3090 with TensorRT 11.4; CPU rows
-> use a Xeon 8470Q (25-core quota). b1 is a per-run overhead floor and does not extrapolate
-> to b8.
+> Protocol: the inference segment of `engine.predict_timed`, median of 30 consecutive calls
+> per round x 5 rounds, best-case min; engines are warmed up at init. b1 = single image,
+> b8 = per-image average of batch 8 (batch-8 engines); b1 is a per-run overhead floor and does
+> not extrapolate to b8. Latency is the same across different weights of one architecture
+> (the 300-epoch from-scratch artifact is structurally identical to the official weights).
 
-| Runtime / precision | b1 |
-|---|---:|
-| TensorRT 11.4 · fp16 | 1.65 ms |
-| TensorRT 11.4 · fp32 | 2.22 ms |
-| ONNX Runtime 1.30 · CPU fp32 | 12.4 ms |
-| PyTorch · CUDA fp32 | 10.5 ms |
-| PyTorch · CPU fp32 | 47.3 ms |
+### Cloud server / workstation
 
+| Platform | Runtime / precision | b1 | b8 (per image) |
+|---|---|---:|---:|
+| RTX 5090 | TensorRT 11.4 · fp32 | — | — |
+| RTX 5090 | TensorRT 11.4 · fp16 | — | — |
+| Xeon 8470Q (25-core quota) | ONNX Runtime 1.30 · fp32 | 12.4 ms | — |
+| Xeon 8470Q (25-core quota) | PyTorch · CPU fp32 | 47.3 ms | — |
+
+- The 5090 TRT rows are placeholders to be filled after server measurements; the ORT / PT CPU
+  rows carry over from the previous table on this page (same 8470Q machine, median-of-30
+  protocol), ORT conditions as in [yolo26.md](yolo26.md) §5.
+
+### Local laptop
+
+| Platform | Runtime / precision | b1 | b8 (per image) |
+|---|---|---:|---:|
+| RTX 4060 Laptop | TensorRT 11.4 · fp32 | 3.61 ms | 2.25 ms |
+| RTX 4060 Laptop | TensorRT 11.4 · fp16 | 4.59 ms | 1.26 ms |
+| RTX 4060 Laptop | PyTorch · CUDA fp32 | 14.5 ms | — |
+| Ultra 9 185H (22 threads) | PyTorch · CPU fp32 | 55.4 ms | — |
+
+- b1 is a multi-round best-case min (laptop GPU dynamic clocks make single shots drift);
+  b8 is stable.
+- fp16 is slower than fp32 at b1 (small graphs are scheduling-overhead-bound, the same
+  phenomenon as in [yolov3-tiny.md](yolov3-tiny.md)); b8 reflects the compute difference.
 - TensorRT engines are bound to the build machine's GPU and TRT version; rebuild with
   `scripts/export.py --trt` on another machine.
-- The b8 table is not published yet; batch scaling follows the detection variant in
-  [yolo26.md](yolo26.md), with the keypoint branch as the extra cost.
 
 ## 7. Training
 

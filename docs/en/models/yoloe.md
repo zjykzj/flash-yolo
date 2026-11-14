@@ -420,7 +420,68 @@ evaluation (pycocotools, all 5,000 images):
   --eval-max-dets 100 --text-encoder weights/mobileclip2_b.safetensors`
   (E2E / `--nms`).
 
-## 5. Known limits
+## 5. Inference latency (model-only, 640)
+
+> Protocol: the inference segment of `engine.predict_timed`, median of 30 consecutive calls
+> per round x 5 rounds, best-case min; engines are warmed up at init (text-mode tpe encoding
+> happens at `set_classes` time and is not part of the per-forward cost). b1 = single image,
+> b8 = per-image average of batch 8 (batch-8 engines); b1 is a per-run overhead floor and does
+> not extrapolate to b8. **Mode = graph**: pf and text are two different forward graphs (lrpc
+> proposal filtering vs BNContrastiveHead similarity), so latency is listed per mode — "same
+> latency across different weights of one architecture" only holds within a mode.
+
+### Cloud server / workstation
+
+| Mode | Platform | Runtime / precision | b1 | b8 (per image) |
+|---|---|---|---:|---:|
+| pf | RTX 5090 | TensorRT 11.4 · fp32 | — | — |
+| pf | RTX 5090 | TensorRT 11.4 · fp16 | — | — |
+| text (80 classes, class-locked) | RTX 5090 | TensorRT 11.4 · fp32 | — | — |
+| text (80 classes, class-locked) | RTX 5090 | TensorRT 11.4 · fp16 | — | — |
+| pf / text | Xeon 8470Q (25-core quota) | ONNX Runtime 1.30 · fp32 | — | — |
+
+- The 5090 / 8470Q rows are placeholders to be filled after server measurements (pf uses
+  `yoloe-26n-seg-pf.onnx`, text uses the `--classes` class-locked export; ORT conditions as in
+  [yolo26.md](yolo26.md) §5).
+
+### Local laptop
+
+| Mode | Platform | Runtime / precision | b1 | b8 (per image) |
+|---|---|---|---:|---:|
+| pf | RTX 4060 Laptop | TensorRT 11.4 · fp32 | 27.9 ms | not buildable |
+| pf | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 20.7 ms | not buildable |
+| pf | RTX 4060 Laptop | PyTorch · CUDA fp32 | 26.6 ms | — |
+| pf | Ultra 9 185H (22 threads) | PyTorch · CPU fp32 | 315 ms | — |
+| text (80 classes, class-locked) | RTX 4060 Laptop | TensorRT 11.4 · fp32 | 4.60 ms | 2.72 ms |
+| text (80 classes, class-locked) | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 5.61 ms | 1.79 ms |
+| text (80 classes, unfused) | RTX 4060 Laptop | PyTorch · CUDA fp32 | 16.7 ms | — |
+| text (80 classes, unfused) | Ultra 9 185H (22 threads) | PyTorch · CPU fp32 | 69.2 ms | — |
+| PE output (class-locked = text fused graph) | RTX 4060 Laptop | PyTorch · CUDA fp32 | 16.8 ms | — |
+| PE output | Ultra 9 185H (22 threads) | PyTorch · CPU fp32 | 61.2 ms | — |
+| full-FT output (unfused) | RTX 4060 Laptop | PyTorch · CUDA fp32 | 16.6 ms | — |
+| full-FT output | Ultra 9 185H (22 threads) | PyTorch · CPU fp32 | 69.8 ms | — |
+
+- b1 is a multi-round best-case min (laptop GPU dynamic clocks make single shots drift);
+  b8 is stable.
+- **The pf b8 TRT engine is not buildable**: TRT 11.4 has no implementation for the lrpc
+  similarity MatMul+Broadcast at batch>1 (fp32 and fp16 both report "Could not find any
+  implementation"); fixed b1 engines are unaffected.
+- pf's TRT b1 ≈ PyTorch b1 (lrpc proposal filtering is TRT-unfriendly); class-locked text mode
+  speeds up substantially on TRT.
+- PE outputs are class-locked weights (BN/reprta folded into the tail convs): the forward graph
+  equals the class-locked text export and is slightly faster than unfused text — its TRT/ONNX
+  rows are the "text (class-locked)" rows; full-FT outputs are unfused and share the unfused
+  text graph.
+- fp16 is slower than fp32 at b1 (small graphs are scheduling-overhead-bound, the same
+  phenomenon as in [yolov3-tiny.md](yolov3-tiny.md)); b8 reflects the compute difference.
+- Measured weights: pf = `weights/yoloe-26n-seg-pf.safetensors`; text = `weights/yoloe-26n-seg.safetensors`
+  + `mobileclip2_b.safetensors` (`--classes` with the 80 COCO classes); PE / full-FT outputs =
+  `weights/unreleased/train-yoloe-pe-coco/weights/best.safetensors` /
+  `train-yolo-ft-coco-e10/weights/best.safetensors`.
+- Engine builds: `scripts/export.py --weights ... --trt [--fp16]`; batch-8 engines are built
+  separately per the b8 protocol.
+
+## 6. Known limits
 
 - Visual-prompt masks must match the refer image size (binary PNG); each prompt uses exactly
   one of bbox/mask, and multiple prompts of one class are OR'ed.

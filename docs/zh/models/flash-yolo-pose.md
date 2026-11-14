@@ -76,7 +76,40 @@ python scripts/train.py --data coco-pose --model flash-yolo-pose \
 - FastPoseMetrics 的口径修正与复算见 §3；训练日志只用于趋势与 best 选取，正式数字用
   `scripts/eval.py`（与 [yolo26-pose.md](yolo26-pose.md) 同口径）。
 
-## 5. 评估 / 导出 / 推理
+## 5. 推理延迟（model-only，640）
+
+> 口径：`engine.predict_timed` 的 inference 段，每轮连续 30 次取中位数、共 5 轮取 best-case
+> min；引擎 init 已 warmup。b1 = 单图，b8 = batch 8 每图平均（batch-8 引擎）；b1 是 per-run
+> 开销地板，不能直接外推到 b8。权重 = 从零 300 轮产物 `best.safetensors`（同一架构不同权重
+> 延迟相同）。
+
+### 云服务器 / 工作站
+
+| 平台 | 运行时 / 精度 | b1 | b8（每图） |
+|---|---|---:|---:|
+| RTX 5090 | TensorRT 11.4 · fp32 | — | — |
+| RTX 5090 | TensorRT 11.4 · fp16 | — | — |
+| Xeon 8470Q（25 核配额） | ONNX Runtime 1.30 · fp32 | — | — |
+
+- 5090 / 8470Q 行待服务器测量后回填（ORT 条件同 [yolo26.md](yolo26.md) §5）。
+
+### 本地笔记本
+
+| 平台 | 运行时 / 精度 | b1 | b8（每图） |
+|---|---|---:|---:|
+| RTX 4060 Laptop | TensorRT 11.4 · fp32 | 3.61 ms | 2.08 ms |
+| RTX 4060 Laptop | TensorRT 11.4 · fp16 | 4.37 ms | 1.22 ms |
+| RTX 4060 Laptop | PyTorch · CUDA fp32 | 13.8 ms | — |
+| Ultra 9 185H（22 线程） | PyTorch · CPU fp32 | 54.9 ms | — |
+
+- b1 为多轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
+- fp16 的 b1 慢于 fp32（笔记本小图调度开销主导，与 [yolov3-tiny.md](yolov3-tiny.md) 同现象）；
+  b8 才反映算力差。
+- TensorRT 引擎与构建机 GPU/TRT 版本绑定；换机需重跑 `scripts/export.py --trt`。
+- 构建命令：`scripts/export.py --weights <best.safetensors> --trt [--fp16]`（E2E 单输出
+  (B,300,57)）；batch-8 引擎按 b8 口径另行构建。
+
+## 6. 评估 / 导出 / 推理
 
 ```bash
 python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --data coco-pose
@@ -94,7 +127,7 @@ python scripts/infer.py --weights runs/train/<run>/weights/best.safetensors \
   infer/eval 不再需要原 `.safetensors`。
 - `--nms` 支持（pose 的 o2m 分支）；`--single-cls` 对 pose 不适用。
 
-## 6. 注意
+## 7. 注意
 
 - 只有 `flash` 单档，不要传 `--scale`。
 - 官方 `yolo26n-pose` 的参考指标（0.5687 / 0.8250 E2E）**不适用于**本结构；本页的 300 轮
