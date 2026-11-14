@@ -81,7 +81,8 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data coco
 ## 5. 推理延迟
 
 > 口径：**model-only**（不含前后处理），输入 640；b1 = 单图，b8 = batch 8 每图平均。
-> 引擎 init 已做 warmup，数字为重复测量的稳态值；同一架构不同权重的延迟相同。
+> 引擎 init 已做 warmup，数字为重复测量的稳态值；同一架构同一档位下不同权重的延迟相同。
+> 表中以 n 档为代表性数字；n/s/m/l/x 档位不同，延迟随模型宽度/深度变化。
 
 ### 云服务器 / 工作站
 

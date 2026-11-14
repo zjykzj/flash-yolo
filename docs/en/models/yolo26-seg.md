@@ -89,7 +89,9 @@ The official O365 seg init is **365-class**, while COCO training builds an 80-cl
 
 > Protocol: **model-only** (no mask decode / pre/postprocessing), 640 input; b1 = single image,
 > b8 = per-image average of batch 8. Engines warm up at init. b1 is single-shot (with H2D and
-> output readback), b8 is pipelined (per image).
+> output readback), b8 is pipelined (per image). The table uses n as the representative scale;
+> latency is the same across different weights of one architecture and scale, while n/s/m/l/x
+> differ in width/depth and therefore latency.
 
 ### Cloud server / workstation
 

@@ -428,7 +428,9 @@ evaluation (pycocotools, all 5,000 images):
 > b8 = per-image average of batch 8 (batch-8 engines); b1 is a per-run overhead floor and does
 > not extrapolate to b8. **Mode = graph**: pf and text are two different forward graphs (lrpc
 > proposal filtering vs BNContrastiveHead similarity), so latency is listed per mode — "same
-> latency across different weights of one architecture" only holds within a mode.
+> latency across different weights of one architecture and scale" only holds within a mode.
+> The table uses n as the representative scale; n/s/m/l/x differ in width/depth, so latency
+> changes with the scale.
 
 ### Cloud server / workstation
 

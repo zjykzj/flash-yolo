@@ -89,7 +89,8 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data coco
 
 > Protocol: **model-only** (no pre/postprocessing), 640 input; b1 = single image, b8 = per-image
 > average of batch 8. Engines warm up at init; numbers are steady-state repeats. Latency is the
-> same across different weights of one architecture.
+> same across different weights of one architecture and scale. The table uses n as the
+> representative scale; n/s/m/l/x differ in width/depth, so latency changes with the scale.
 
 ### Cloud server / workstation
 

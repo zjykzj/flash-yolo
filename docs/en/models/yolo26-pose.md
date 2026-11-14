@@ -108,8 +108,10 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
 > Protocol: the inference segment of `engine.predict_timed`, median of 30 consecutive calls
 > per round x 5 rounds, best-case min; engines are warmed up at init. b1 = single image,
 > b8 = per-image average of batch 8 (batch-8 engines); b1 is a per-run overhead floor and does
-> not extrapolate to b8. Latency is the same across different weights of one architecture
-> (the 300-epoch from-scratch artifact is structurally identical to the official weights).
+> not extrapolate to b8. Latency is the same across different weights of one architecture and
+> scale (the 300-epoch from-scratch artifact is structurally identical to the official weights).
+> The table uses n as the representative scale; n/s/m/l/x differ in width/depth, so latency
+> changes with the scale.
 
 ### Cloud server / workstation
 

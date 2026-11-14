@@ -96,7 +96,8 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
 
 > 口径：`engine.predict_timed` 的 inference 段，每轮连续 30 次取中位数、共 5 轮取 best-case
 > min；引擎 init 已 warmup。b1 = 单图，b8 = batch 8 每图平均（batch-8 引擎）；b1 是 per-run
-> 开销地板，不能直接外推到 b8。同一架构不同权重的延迟相同（从零 300 轮产物与官方权重同构）。
+> 开销地板，不能直接外推到 b8。同一架构同一档位下不同权重的延迟相同（从零 300 轮产物与
+> 官方权重同构）。表中以 n 档为代表性数字；n/s/m/l/x 档位不同，延迟随模型宽度/深度变化。
 
 ### 云服务器 / 工作站
 

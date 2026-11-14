@@ -84,6 +84,8 @@ python scripts/convert_weights.py --src weights/yolo26n-objv1-seg.pt \
 
 > 口径：**model-only**（不含掩码解码/前后处理），输入 640；b1 = 单图，b8 = batch 8 每图平均。
 > 引擎 init 已做 warmup。b1 为单发（含 H2D 与输出读回），b8 为流水线（每图）。
+> 表中以 n 档为代表性数字；同一架构同一档位下不同权重的延迟相同，n/s/m/l/x 档位不同则
+> 延迟随模型宽度/深度变化。
 
 ### 云服务器 / 工作站
 
