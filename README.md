@@ -63,6 +63,20 @@ OKS, maxDets=20):
   split); pycocotools OKS with maxDets=20. The official pose checkpoint is O365 pretraining +
   400 COCO-pose epochs, so the from-scratch rows are not like-for-like with it.
 
+YOLOE-26 (open-vocabulary, text prompts) evaluates on COCO val2017 and LVIS minival with the
+released `yoloe-26n-seg` checkpoint — 640 input, same scoring protocol on both sides (Non-E2E =
+o2m + NMS; the fp32 forward is bit-identical):
+
+| Dataset (Non-E2E) | Ours Box | Ours Mask | Ultralytics Box | Ultralytics Mask |
+|---|---|---:|---:|---:|
+| COCO val2017 | **0.2952** | **0.2407** | 0.2952 | 0.2407 |
+| LVIS minival | **0.2218** | **0.1817** | 0.2228 | 0.1826 |
+
+- The official LVIS paper numbers (detection configuration) are n-pf **16.6 E2E / 17.7
+  Non-E2E**, text **24.7**, visual **21.9**; the released segmentation checkpoint evaluates at
+  0.2228 — a configuration difference, not an implementation gap
+  ([docs/en/models/yoloe.md](docs/en/models/yoloe.md) §4).
+
 **Inference latency** — model-only, 640 input (ORT-CPU = Xeon 8470Q · fp32; TRT = RTX 5090 · fp16;
 b8 = batch-8 per-image). Full protocol and per-model tables:
 [docs/models/README.md](docs/en/models/README.md).
@@ -75,6 +89,12 @@ b8 = batch-8 per-image). Full protocol and per-model tables:
 | YOLO26n-seg | 16.8 ms | 12.0 ms | 0.148 ms |
 | Flash-YOLO-seg | 14.9 ms | 10.8 ms | 0.136 ms |
 | Δ | −11% | −10% | −8% |
+| YOLO26n-pose | 12.4 ms | — | — |
+| Flash-YOLO-pose | — | — | — |
+| Δ | — | — | — |
+
+- Pose rows are pending server measurement: the 8470Q ORT b1 for YOLO26n-pose carries over from
+  the model page, the remaining cells stay as placeholders until the server runs complete.
 
 ## Table of Contents
 
@@ -318,12 +338,19 @@ Full engine and output notes: [docs/pipeline/infer.md](docs/en/pipeline/infer.md
 ### Pose
 
 Supported architectures: **YOLO26-pose** (n/s/m/l/x) and **Flash-YOLO-pose** (single
-`flash`); data is COCO keypoints JSON (`person_keypoints_*.json`, 17 points, `nc=1`) with the
-`config/datasets/coco-pose.yaml` descriptor template. The COCO-pose val protocol is **2,346
-images with valid keypoints**, not the 5,000-image detection split.
+`flash`).
+
+**Data**
+
+COCO keypoints JSON (`person_keypoints_*.json`, 17 points, `nc=1`) with the
+`config/datasets/coco-pose.yaml` descriptor template; keypoint descriptor fields (`kpt_shape`,
+`flip_idx`, `skeleton`): [docs/datasets/README.md](docs/en/datasets/README.md). The COCO-pose
+val protocol is **2,346 images with valid keypoints**, not the 5,000-image detection split.
+
+**Train**
 
 ```bash
-# train (official 400-epoch recipe; finetune from the official pose weights)
+# official 400-epoch recipe; finetune from the official pose weights
 python scripts/train.py --data coco-pose --model yolo26-pose \
     --weights weights/yolo26n-pose.safetensors \
     --recipe yolo26-pose-coco --epochs 10 --batch 32 --device 0
@@ -331,17 +358,34 @@ python scripts/train.py --data coco-pose --model yolo26-pose \
 # Flash-YOLO-pose from scratch (default recipe)
 python scripts/train.py --data coco-pose --model flash-yolo-pose \
     --name flash-pose --batch 32 --device 0 --no-amp
-
-# evaluate (E2E / NMS), export, infer
-python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
-python scripts/export.py --weights weights/yolo26n-pose.safetensors --trt --fp16
-python scripts/infer.py --weights weights/yolo26n-pose.safetensors \
-    --image /path/to/person.jpg --data coco-pose
 ```
 
-Structure, metrics, training details and caveats:
+Pose losses (keypoint / kobj / RLE), the official recipe and caveats:
 [docs/en/models/yolo26-pose.md](docs/en/models/yolo26-pose.md).
-Flash-YOLO-pose structure: [docs/en/models/flash-yolo-pose.md](docs/en/models/flash-yolo-pose.md).
+
+**Evaluate**
+
+```bash
+python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
+# E2E (NMS-free) by default; add --nms for the one-to-many + NMS path.
+```
+
+**Export**
+
+```bash
+python scripts/export.py --weights weights/yolo26n-pose.safetensors --trt --fp16
+# default E2E single output (B,300,57); --raw emits the decoded (B,56,8400) graph.
+```
+
+**Infer**
+
+```bash
+python scripts/infer.py --weights weights/yolo26n-pose.safetensors \
+    --image /path/to/person.jpg --data coco-pose
+# draws the skeleton and writes YOLO-pose labels
+```
+
+Flash-YOLO-pose structure and metrics: [docs/en/models/flash-yolo-pose.md](docs/en/models/flash-yolo-pose.md).
 
 <p align="center">
   <img src="assets/traffic_pose.jpg" width="49%" alt="flash-yolo-pose keypoint estimation — street traffic">
@@ -353,35 +397,54 @@ Flash-YOLO-pose structure: [docs/en/models/flash-yolo-pose.md](docs/en/models/fl
 ### Open-Vocabulary (YOLOE-26)
 
 Supported architecture: **YOLOE-26** (n/s/m/l/x) — detection and instance segmentation with
-three prompt modes: **prompt-free (pf)**, **text** and **visual prompts**. Text/visual modes
-encode prompts with MobileCLIP2-B (`mobileclip2_b.safetensors` must sit next to the weights).
+three prompt modes: **prompt-free (pf)**, **text** and **visual prompts**.
+
+**Weights**
+
+Convert the official checkpoints once (vocab / mode metadata travel with the weights);
+text/visual modes encode prompts with MobileCLIP2-B (`mobileclip2_b.safetensors` must sit
+next to the weights):
 
 ```bash
-# convert official checkpoints once (vocab / mode metadata travel with the weights)
-python scripts/convert_weights.py weights/yoloe-26n-seg-pf.pt    # prompt-free
-python scripts/convert_weights.py weights/yoloe-26n-seg.pt       # text / visual mode
+python scripts/convert_weights.py --src yoloe-26n-seg-pf.pt \
+    --dst weights/yoloe-26n-seg-pf.safetensors                  # prompt-free
+python scripts/convert_weights.py --src yoloe-26n-seg.pt \
+    --dst weights/yoloe-26n-seg.safetensors                     # text / visual mode
+```
 
-# infer: prompt-free E2E
-python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors \
-    --image assets/traffic.jpg
+**Train** — PE linear probing / full fine-tuning (text mode, from the official text weights):
 
-# infer: text prompts (arbitrary class names)
-python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
-    --image assets/traffic.jpg --classes "person, bicycle, car"
-
-# evaluate: pf uses the vocab mapping; text mode uses the dataset names as prompts
-python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco
-python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco
-
-# export: prompts fused into the cls conv — class-locked single-input ONNX / TensorRT
-python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
-    --classes "person, bicycle, car" --trt [--fp16]
-
-# train: PE linear probing / full fine-tuning (text mode, from the official text weights)
+```bash
 python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
     --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.1
 python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
     --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
+```
+
+**Evaluate** — pf uses the vocab mapping; text mode uses the dataset names as prompts:
+
+```bash
+python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco
+```
+
+**Export** — prompts fused into the cls conv — class-locked single-input ONNX / TensorRT:
+
+```bash
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car" --trt [--fp16]
+```
+
+**Infer**:
+
+```bash
+# prompt-free E2E
+python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors \
+    --image assets/traffic.jpg
+
+# text prompts (arbitrary class names)
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
+    --image assets/traffic.jpg --classes "person, bicycle, car"
 ```
 
 Visual prompts, PE / full-FT details, LVIS protocol and latency:
@@ -421,6 +484,7 @@ Some suites are gated by environment variables:
 FLASH_YOLO_SMOKE=1 pytest tests/test_train_smoke.py -q   # end-to-end train/export smoke, CPU ~2-5 min
 FLASH_YOLO_REPRO=1 pytest tests/test_train_repro.py -q   # bit-reproducible training (GPU recommended)
 FLASH_YOLO_DDP=1   pytest tests/test_distributed.py -q   # 2-process CPU gloo DDP
+FLASH_YOLO_TRT=1   pytest tests/test_yoloe_trt.py -q      # YOLOE-26 TensorRT acceptance (4 engine builds @320)
 ```
 
 Please keep the independent-module structure and add tests for behavior changes. Do not copy code

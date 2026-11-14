@@ -61,6 +61,18 @@ maxDets=20）：
   OKS，maxDets=20。官方 pose checkpoint 是 O365 预训练 + 400 轮 COCO-pose，从零行与其
   不是 like-for-like。
 
+YOLOE-26（开放词汇，文本 prompt）用发布的 `yoloe-26n-seg` checkpoint 评估 COCO val2017 与
+LVIS minival——640 输入，两侧同一打分协议（Non-E2E = o2m + NMS；fp32 前向逐位一致）：
+
+| 数据集（Non-E2E） | 本仓库 Box | 本仓库 Mask | Ultralytics Box | Ultralytics Mask |
+|---|---|---:|---:|---:|
+| COCO val2017 | **0.2952** | **0.2407** | 0.2952 | 0.2407 |
+| LVIS minival | **0.2218** | **0.1817** | 0.2228 | 0.1826 |
+
+- 官方论文 LVIS 数字（检测配置）为 n-pf **16.6 E2E / 17.7 Non-E2E**、文本 **24.7**、视觉
+  **21.9**；发布的 seg checkpoint 评分为 0.2228——是配置差异而非实现差距
+  （[docs/zh/models/yoloe.md](docs/zh/models/yoloe.md) §4）。
+
 **推理延迟**——model-only，640 输入（ORT-CPU = Xeon 8470Q · fp32；TRT = RTX 5090 · fp16；
 b8 = batch 8 每图平均）。完整口径与逐模型表格：
 [docs/zh/models/README.md](docs/zh/models/README.md)。
@@ -73,6 +85,12 @@ b8 = batch 8 每图平均）。完整口径与逐模型表格：
 | YOLO26n-seg | 16.8 ms | 12.0 ms | 0.148 ms |
 | Flash-YOLO-seg | 14.9 ms | 10.8 ms | 0.136 ms |
 | Δ | −11% | −10% | −8% |
+| YOLO26n-pose | 12.4 ms | — | — |
+| Flash-YOLO-pose | — | — | — |
+| Δ | — | — | — |
+
+- Pose 两行待服务器测量回填：YOLO26n-pose 的 8470Q ORT b1 沿用模型页旧表，其余单元格在
+  服务器跑完前保持占位。
 
 ## 目录
 
@@ -310,13 +328,19 @@ python scripts/infer.py --weights flash-yolo-seg-e300-640.safetensors \
 
 ### 姿态估计
 
-支持的架构：**YOLO26-pose**（n/s/m/l/x）与 **Flash-YOLO-pose**（flash 单档）；数据用
+支持的架构：**YOLO26-pose**（n/s/m/l/x）与 **Flash-YOLO-pose**（flash 单档）。
+
+**数据**
+
 COCO keypoints json（`person_keypoints_*.json`，17 点，`nc=1`），描述符模板
-`config/datasets/coco-pose.yaml`。COCO-pose 的 val 协议是 **2,346 张有有效关键点的图**，
-不是检测的 5,000 张。
+`config/datasets/coco-pose.yaml`；关键点描述符字段（`kpt_shape`、`flip_idx`、`skeleton`）见
+[docs/zh/datasets/README.md](docs/zh/datasets/README.md)。COCO-pose 的 val 协议是
+**2,346 张有有效关键点的图**，不是检测的 5,000 张。
+
+**训练**
 
 ```bash
-# 训练（官方 400 轮配方；微调从官方 pose 权重开始）
+# 官方 400 轮配方；微调从官方 pose 权重开始
 python scripts/train.py --data coco-pose --model yolo26-pose \
     --weights weights/yolo26n-pose.safetensors \
     --recipe yolo26-pose-coco --epochs 10 --batch 32 --device 0
@@ -324,16 +348,34 @@ python scripts/train.py --data coco-pose --model yolo26-pose \
 # Flash-YOLO-pose 从零训练（default 配方）
 python scripts/train.py --data coco-pose --model flash-yolo-pose \
     --name flash-pose --batch 32 --device 0 --no-amp
-
-# 评估（E2E / NMS）、导出、推理
-python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
-python scripts/export.py --weights weights/yolo26n-pose.safetensors --trt --fp16
-python scripts/infer.py --weights weights/yolo26n-pose.safetensors \
-    --image /path/to/person.jpg --data coco-pose
 ```
 
-完整结构、指标、训练细节与注意事项：[docs/zh/models/yolo26-pose.md](docs/zh/models/yolo26-pose.md)。
-Flash-YOLO-pose 结构见 [docs/zh/models/flash-yolo-pose.md](docs/zh/models/flash-yolo-pose.md)。
+Pose 损失（keypoint / kobj / RLE）、官方配方与注意事项：
+[docs/zh/models/yolo26-pose.md](docs/zh/models/yolo26-pose.md)。
+
+**评估**
+
+```bash
+python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
+# 默认 E2E（NMS-free）；加 --nms 走 one-to-many + NMS 路径。
+```
+
+**导出**
+
+```bash
+python scripts/export.py --weights weights/yolo26n-pose.safetensors --trt --fp16
+# 默认 E2E 单输出 (B,300,57)；--raw 出 (B,56,8400) 解码输出。
+```
+
+**推理**
+
+```bash
+python scripts/infer.py --weights weights/yolo26n-pose.safetensors \
+    --image /path/to/person.jpg --data coco-pose
+# 画骨架 + 写 YOLO-pose 标签
+```
+
+Flash-YOLO-pose 结构与指标：[docs/zh/models/flash-yolo-pose.md](docs/zh/models/flash-yolo-pose.md)。
 
 <p align="center">
   <img src="assets/traffic_pose.jpg" width="49%" alt="flash-yolo-pose keypoint estimation — street traffic">
@@ -345,35 +387,53 @@ Flash-YOLO-pose 结构见 [docs/zh/models/flash-yolo-pose.md](docs/zh/models/fla
 ### 开放词汇（YOLOE-26）
 
 支持的架构：**YOLOE-26**（n/s/m/l/x）——检测与实例分割一体，三种 prompt 模式：
-**prompt-free（pf）**、**文本**与**视觉 prompt**。文本/视觉模式用 MobileCLIP2-B 编码
-prompt（`mobileclip2_b.safetensors` 需放在权重同目录）。
+**prompt-free（pf）**、**文本**与**视觉 prompt**。
+
+**权重**
+
+转换官方 checkpoint（一次性；词汇 / 模式 metadata 随权重走）；文本/视觉模式用
+MobileCLIP2-B 编码 prompt（`mobileclip2_b.safetensors` 需放在权重同目录）：
 
 ```bash
-# 转换官方 checkpoint（一次性；词汇 / 模式 metadata 随权重走）
-python scripts/convert_weights.py weights/yoloe-26n-seg-pf.pt    # prompt-free
-python scripts/convert_weights.py weights/yoloe-26n-seg.pt       # 文本 / 视觉模式
+python scripts/convert_weights.py --src yoloe-26n-seg-pf.pt \
+    --dst weights/yoloe-26n-seg-pf.safetensors                  # prompt-free
+python scripts/convert_weights.py --src yoloe-26n-seg.pt \
+    --dst weights/yoloe-26n-seg.safetensors                     # 文本 / 视觉模式
+```
 
-# 推理：prompt-free E2E
-python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors \
-    --image assets/traffic.jpg
+**训练**——PE 线性探测 / 全量微调（文本模式，从官方文本权重出发）：
 
-# 推理：文本 prompt（任意类别名）
-python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
-    --image assets/traffic.jpg --classes "person, bicycle, car"
-
-# 评估：pf 走词汇映射；文本模式用数据集类别名作 prompt
-python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco
-python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco
-
-# 导出：prompt 融合进分类卷积——类锁定、单输入 ONNX / TensorRT
-python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
-    --classes "person, bicycle, car" --trt [--fp16]
-
-# 训练：PE 线性探测 / 全量微调（文本模式，从官方文本权重出发）
+```bash
 python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
     --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.1
 python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
     --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
+```
+
+**评估**——pf 走词汇映射；文本模式用数据集类别名作 prompt：
+
+```bash
+python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco
+```
+
+**导出**——prompt 融合进分类卷积——类锁定、单输入 ONNX / TensorRT：
+
+```bash
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car" --trt [--fp16]
+```
+
+**推理**：
+
+```bash
+# prompt-free E2E
+python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors \
+    --image assets/traffic.jpg
+
+# 文本 prompt（任意类别名）
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
+    --image assets/traffic.jpg --classes "person, bicycle, car"
 ```
 
 视觉 prompt、PE / 全量微调细节、LVIS 协议与延迟：
@@ -410,6 +470,7 @@ pytest tests/ -q                      # CPU 核心套件——CI 跑的同一条
 FLASH_YOLO_SMOKE=1 pytest tests/test_train_smoke.py -q   # 端到端训练/导出冒烟，CPU ~2-5 min
 FLASH_YOLO_REPRO=1 pytest tests/test_train_repro.py -q   # 逐位可复现训练（建议 GPU）
 FLASH_YOLO_DDP=1   pytest tests/test_distributed.py -q   # 2 进程 CPU gloo DDP
+FLASH_YOLO_TRT=1   pytest tests/test_yoloe_trt.py -q      # YOLOE-26 TensorRT 验收（@320 构建 4 个引擎）
 ```
 
 请保持独立模块结构，并为行为变更补测试。不要从上游仓库复制代码（AGPL-3.0）——
