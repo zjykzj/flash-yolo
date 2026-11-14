@@ -85,6 +85,7 @@ b8 = batch-8 per-image). Full protocol and per-model tables:
   - [Detection](#detection)
   - [Segmentation](#segmentation)
   - [Pose](#pose)
+  - [Open-Vocabulary (YOLOE-26)](#open-vocabulary-yoloe-26)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [Citation](#citation)
@@ -342,12 +343,64 @@ Structure, metrics, training details and caveats:
 [docs/en/models/yolo26-pose.md](docs/en/models/yolo26-pose.md).
 Flash-YOLO-pose structure: [docs/en/models/flash-yolo-pose.md](docs/en/models/flash-yolo-pose.md).
 
+<p align="center">
+  <img src="assets/traffic_pose.jpg" width="49%" alt="flash-yolo-pose keypoint estimation — street traffic">
+  <img src="assets/baseball_pose.jpg" width="49%" alt="flash-yolo-pose keypoint estimation — baseball">
+  <br>
+  <em>Pose estimation by the 300-epoch Flash-YOLO-pose checkpoint — same COCO val2017 samples, 640 input</em>
+</p>
+
+### Open-Vocabulary (YOLOE-26)
+
+Supported architecture: **YOLOE-26** (n/s/m/l/x) — detection and instance segmentation with
+three prompt modes: **prompt-free (pf)**, **text** and **visual prompts**. Text/visual modes
+encode prompts with MobileCLIP2-B (`mobileclip2_b.safetensors` must sit next to the weights).
+
+```bash
+# convert official checkpoints once (vocab / mode metadata travel with the weights)
+python scripts/convert_weights.py weights/yoloe-26n-seg-pf.pt    # prompt-free
+python scripts/convert_weights.py weights/yoloe-26n-seg.pt       # text / visual mode
+
+# infer: prompt-free E2E
+python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors \
+    --image assets/traffic.jpg
+
+# infer: text prompts (arbitrary class names)
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
+    --image assets/traffic.jpg --classes "person, bicycle, car"
+
+# evaluate: pf uses the vocab mapping; text mode uses the dataset names as prompts
+python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco
+
+# export: prompts fused into the cls conv — class-locked single-input ONNX / TensorRT
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car" --trt [--fp16]
+
+# train: PE linear probing / full fine-tuning (text mode, from the official text weights)
+python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
+    --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.1
+python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
+    --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
+```
+
+Visual prompts, PE / full-FT details, LVIS protocol and latency:
+[docs/en/models/yoloe.md](docs/en/models/yoloe.md).
+
+<p align="center">
+  <img src="assets/traffic_yoloe.jpg" width="49%" alt="yoloe-26 open-vocabulary detection and instance segmentation — street traffic">
+  <img src="assets/baseball_yoloe.jpg" width="49%" alt="yoloe-26 open-vocabulary detection and instance segmentation — baseball">
+  <br>
+  <em>Open-vocabulary detection + instance masks by the YOLOE-26 PE output (COCO 80 classes,
+  class-locked) — same COCO val2017 samples, 640 input</em>
+</p>
+
 ## Documentation
 
 The full manual starts at [docs/README.md](docs/en/README.md): train / val / export / infer / dataset /
 docker / FAQ, released weights and latency ([docs/models/README.md](docs/en/models/README.md)),
-per-architecture specs (YOLO26 / -seg / -pose, Flash-YOLO / -seg / -pose, YOLOv3-tiny), and the
-verification evidence against the official implementation
+per-architecture specs (YOLO26 / -seg / -pose, Flash-YOLO / -seg / -pose, YOLOv3-tiny,
+YOLOE-26), and the verification evidence against the official implementation
 ([docs/development/alignment.md](docs/en/development/alignment.md)).
 
 ## Contributing
@@ -377,8 +430,10 @@ the full workflow and review expectations.
 ## Citation
 
 If you use the YOLO26 architecture or its training recipe in your work, please cite the YOLO26
-paper. The YOLOv3-tiny variant follows the original YOLOv3 design (darknet cfg / `.weights`) —
-cite the YOLOv3 paper when referring to that architecture.
+paper. The YOLOE-26 variant is the open-vocabulary extension (text / visual / prompt-free
+prompts) — cite the YOLOE paper when using it. The YOLOv3-tiny variant follows the original
+YOLOv3 design (darknet cfg / `.weights`) — cite the YOLOv3 paper when referring to that
+architecture.
 
 ```bibtex
 @article{jocher2026yolo26,
@@ -388,6 +443,17 @@ cite the YOLOv3 paper when referring to that architecture.
   year    = {2026},
   doi     = {10.48550/arXiv.2606.03748},
   url     = {https://arxiv.org/abs/2606.03748}
+}
+```
+
+```bibtex
+@article{wang2025yoloe,
+  title   = {YOLOE: Real-Time Seeing Anything},
+  author  = {Wang, Ao and Liu, Lihao and Chen, Hui and Lin, Zijia and Han, Jungong and Ding, Guiguang},
+  journal = {arXiv preprint arXiv:2503.07465},
+  year    = {2025},
+  doi     = {10.48550/arXiv.2503.07465},
+  url     = {https://arxiv.org/abs/2503.07465}
 }
 ```
 

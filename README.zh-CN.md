@@ -83,6 +83,7 @@ b8 = batch 8 每图平均）。完整口径与逐模型表格：
   - [检测](#检测)
   - [分割](#分割)
   - [姿态估计](#姿态估计)
+  - [开放词汇（YOLOE-26）](#开放词汇yoloe-26)
 - [文档](#文档)
 - [贡献](#贡献)
 - [引用](#引用)
@@ -334,12 +335,63 @@ python scripts/infer.py --weights weights/yolo26n-pose.safetensors \
 完整结构、指标、训练细节与注意事项：[docs/zh/models/yolo26-pose.md](docs/zh/models/yolo26-pose.md)。
 Flash-YOLO-pose 结构见 [docs/zh/models/flash-yolo-pose.md](docs/zh/models/flash-yolo-pose.md)。
 
+<p align="center">
+  <img src="assets/traffic_pose.jpg" width="49%" alt="flash-yolo-pose keypoint estimation — street traffic">
+  <img src="assets/baseball_pose.jpg" width="49%" alt="flash-yolo-pose keypoint estimation — baseball">
+  <br>
+  <em>300 轮 Flash-YOLO-pose checkpoint 的姿态估计——同一批 COCO val2017 样例，640 输入</em>
+</p>
+
+### 开放词汇（YOLOE-26）
+
+支持的架构：**YOLOE-26**（n/s/m/l/x）——检测与实例分割一体，三种 prompt 模式：
+**prompt-free（pf）**、**文本**与**视觉 prompt**。文本/视觉模式用 MobileCLIP2-B 编码
+prompt（`mobileclip2_b.safetensors` 需放在权重同目录）。
+
+```bash
+# 转换官方 checkpoint（一次性；词汇 / 模式 metadata 随权重走）
+python scripts/convert_weights.py weights/yoloe-26n-seg-pf.pt    # prompt-free
+python scripts/convert_weights.py weights/yoloe-26n-seg.pt       # 文本 / 视觉模式
+
+# 推理：prompt-free E2E
+python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors \
+    --image assets/traffic.jpg
+
+# 推理：文本 prompt（任意类别名）
+python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
+    --image assets/traffic.jpg --classes "person, bicycle, car"
+
+# 评估：pf 走词汇映射；文本模式用数据集类别名作 prompt
+python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco
+python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco
+
+# 导出：prompt 融合进分类卷积——类锁定、单输入 ONNX / TensorRT
+python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+    --classes "person, bicycle, car" --trt [--fp16]
+
+# 训练：PE 线性探测 / 全量微调（文本模式，从官方文本权重出发）
+python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
+    --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.1
+python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
+    --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
+```
+
+视觉 prompt、PE / 全量微调细节、LVIS 协议与延迟：
+[docs/zh/models/yoloe.md](docs/zh/models/yoloe.md)。
+
+<p align="center">
+  <img src="assets/traffic_yoloe.jpg" width="49%" alt="yoloe-26 open-vocabulary detection and instance segmentation — street traffic">
+  <img src="assets/baseball_yoloe.jpg" width="49%" alt="yoloe-26 open-vocabulary detection and instance segmentation — baseball">
+  <br>
+  <em>YOLOE-26 PE 产物的开放词汇检测 + 实例掩码（COCO 80 类，类锁定）——同一批 COCO val2017 样例，640 输入</em>
+</p>
+
 ## 文档
 
 完整手册从 [docs/zh/README.md](docs/zh/README.md) 开始：训练 / 评估 / 导出 / 推理 / 数据集 /
 Docker / FAQ、已发布权重与延迟（[docs/zh/models/README.md](docs/zh/models/README.md)）、
-各架构规格（YOLO26 / -seg / -pose、Flash-YOLO / -seg / -pose、YOLOv3-tiny），以及与官方实现的对齐证据
-（[docs/zh/development/alignment.md](docs/zh/development/alignment.md)）。
+各架构规格（YOLO26 / -seg / -pose、Flash-YOLO / -seg / -pose、YOLOv3-tiny、YOLOE-26），
+以及与官方实现的对齐证据（[docs/zh/development/alignment.md](docs/zh/development/alignment.md)）。
 
 ## 贡献
 
@@ -365,8 +417,10 @@ FLASH_YOLO_DDP=1   pytest tests/test_distributed.py -q   # 2 进程 CPU gloo DDP
 
 ## 引用
 
-如果你在工作中使用了 YOLO26 架构或其训练配方，请引用 YOLO26 论文。YOLOv3-tiny 变体沿袭
-YOLOv3 原始设计（darknet cfg / `.weights`）——引用该架构时请引 YOLOv3 论文。
+如果你在工作中使用了 YOLO26 架构或其训练配方，请引用 YOLO26 论文。YOLOE-26 变体是开放
+词汇扩展（文本 / 视觉 / prompt-free 三种 prompt）——使用该架构时请引 YOLOE 论文。
+YOLOv3-tiny 变体沿袭 YOLOv3 原始设计（darknet cfg / `.weights`）——引用该架构时请引
+YOLOv3 论文。
 
 ```bibtex
 @article{jocher2026yolo26,
@@ -376,6 +430,17 @@ YOLOv3 原始设计（darknet cfg / `.weights`）——引用该架构时请引 
   year    = {2026},
   doi     = {10.48550/arXiv.2606.03748},
   url     = {https://arxiv.org/abs/2606.03748}
+}
+```
+
+```bibtex
+@article{wang2025yoloe,
+  title   = {YOLOE: Real-Time Seeing Anything},
+  author  = {Wang, Ao and Liu, Lihao and Chen, Hui and Lin, Zijia and Han, Jungong and Ding, Guiguang},
+  journal = {arXiv preprint arXiv:2503.07465},
+  year    = {2025},
+  doi     = {10.48550/arXiv.2503.07465},
+  url     = {https://arxiv.org/abs/2503.07465}
 }
 ```
 
