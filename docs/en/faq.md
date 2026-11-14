@@ -27,15 +27,18 @@ against the official one.
 
 ### Flash-YOLO is 2.68 points below YOLO26n — why is it worth using?
 
-What you buy is compute: −31% GFLOPs (3.80 vs 5.48), −23% params, b8 latency −14% (TensorRT
-fp32) / −26% (ORT-CPU b8). The accuracy-per-compute ratio is this repo's core lightweighting
-metric; the structural conclusions are in [models/flash-yolo.md](models/flash-yolo.md).
+What you buy is compute: −31% GFLOPs (3.80 vs 5.48), −23% params, b8 latency −11~−12%
+(TensorRT fp32, RTX 4090 / 4060 Laptop) / −26% (ORT-CPU b8). The accuracy-per-compute ratio is
+this repo's core lightweighting metric; the structural conclusions are in
+[models/flash-yolo.md](models/flash-yolo.md).
 
-### b1 is nearly tied in the latency table while b8 clearly favors Flash-YOLO — why?
+### b1 is nearly tied on the server while b8 clearly favors Flash-YOLO — why?
 
-batch 1 is the **floor** dominated by per-run overhead (startup/binding/launch): TRT fp32 1.32 vs
-1.38 ms (−4%), the two architectures are barely distinguishable; batch 8 reflects the compute
-difference: 0.213 vs 0.248 ms/img (−14%, the same magnitude as the 1.44 GFLOP ratio).
+batch 1 is the **floor** dominated by per-run overhead (startup/binding/launch): on the 4090,
+TRT fp32 1.71 vs 1.71 ms (tied); on the 4060, 3.07 vs 3.63 ms (Flash is ~15% faster, laptop
+scheduling/clocks dominate) — the two architectures are barely distinguishable on the server.
+Batch 8 reflects the compute difference: 4090 0.281 vs 0.316 ms/img (−11%), 4060 1.25 vs
+1.40 ms/img (−11%), the same magnitude as the 1.44 GFLOP ratio.
 **GFLOPs ≠ latency** — pick by the target batch's convention.
 
 ### Why chase numeric alignment down to 0.1 / per-pixel?
@@ -218,7 +221,8 @@ different machine/version must rerun `scripts/export.py --trt [--fp16]` on the t
 TRT 11 removed `BuilderFlag.FP16` and has no precision-constraint flags — precision is decided
 entirely by the network's tensor types. `--fp16` first exports a half-precision onnx via
 `model.half()`, then builds `<stem>.fp16.engine` with a strongly-typed network (coexisting with
-the fp32 engine). The gain is in batch: b8 −41~44% per image; no measurable accuracy loss.
+the fp32 engine). The gain is in batch: detection b8 −49~57% per image (4090 / 4060); no
+measurable accuracy loss.
 
 ### Can onnxruntime run the half-precision onnx?
 

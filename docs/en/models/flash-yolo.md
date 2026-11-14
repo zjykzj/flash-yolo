@@ -59,8 +59,6 @@ Download links point to the **v1.0.0** release assets.
 
 | Platform | Runtime / precision | b1 | b8 (per image) |
 |---|---|---:|---:|
-| RTX 5090 | TensorRT 11.4 · fp32 | 1.31 ms | 0.210 ms |
-| RTX 5090 | TensorRT 11.4 · fp16 | 1.27 ms | 0.123 ms |
 | RTX 4090 | TensorRT 11.4 · fp32 | 1.71 ms | 0.281 ms |
 | RTX 4090 | TensorRT 11.4 · fp16 | 1.44 ms | 0.142 ms |
 | Xeon 8470Q (25-core quota) | ONNX Runtime 1.30 · fp32 | 13.2 ms | 5.84 ms |
@@ -68,7 +66,7 @@ Download links point to the **v1.0.0** release assets.
 - ORT conditions: intra_op=16 / inter_op=1; b1 fixed graph, b8 dynamic graph; best-case min over
   300 samples.
 - TRT conditions: b1 fixed engine, b8 batch-8 engine; 30 single shots + 100 pipelined runs
-  (RTX 5090 / RTX 4090 share the same protocol).
+  (RTX 4090 / RTX 4060 Laptop share the same protocol).
 - RTX 4090 rows: TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes H2D and
   readback, b8 is 100 back-to-back pipelined runs.
 - b1 hugs the launch-overhead floor; b8 reflects the compute difference. ORT absolute values are

@@ -52,14 +52,12 @@
 
 | 平台 | 运行时 / 精度 | b1 | b8（每图） |
 |---|---|---:|---:|
-| RTX 5090 | TensorRT 11.4 · fp32 | 1.31 ms | 0.210 ms |
-| RTX 5090 | TensorRT 11.4 · fp16 | 1.27 ms | 0.123 ms |
 | RTX 4090 | TensorRT 11.4 · fp32 | 1.71 ms | 0.281 ms |
 | RTX 4090 | TensorRT 11.4 · fp16 | 1.44 ms | 0.142 ms |
 | Xeon 8470Q（25 核配额） | ONNX Runtime 1.30 · fp32 | 13.2 ms | 5.84 ms |
 
 - ORT 条件：intra_op=16 / inter_op=1；b1 固定图、b8 动态图；300 样本取 best-case min。
-- TRT 条件：b1 固定引擎、b8 batch-8 引擎；30 次单发 + 100 次流水线（RTX 5090 / RTX 4090 同协议）。
+- TRT 条件：b1 固定引擎、b8 batch-8 引擎；30 次单发 + 100 次流水线（RTX 4090 / RTX 4060 Laptop 同协议）。
 - RTX 4090 行：TensorRT 11.4.0.106 · 驱动 580.76.05 · 24 GB；b1 含 H2D/读回，
   b8 为 100 次背靠背流水线吞吐。
 - b1 贴近启动开销地板，b8 才能反映算力差；ORT 绝对值受宿主邻居负载影响。

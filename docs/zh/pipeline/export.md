@@ -91,14 +91,16 @@ python scripts/export.py --weights weights/yolo26n.safetensors --trt --fp16    #
 - **引擎绑定构建机 GPU 架构 + TRT 版本**：换机器/换版本必须重建。
 - TensorRT 是可选依赖，不进 `requirements.txt`；本仓库按 TRT 11.4 / onnxruntime 1.30 构建与实测。
 
-### fp16 实测（RTX 5090，E2E 推理段）
+### fp16 实测（RTX 4090 / RTX 4060 Laptop，E2E 推理段）
 
-| Model | b1 fp32 | b1 fp16 | b8 fp32 | b8 fp16 |
-|---|---|---|---|---|
-| YOLO26n @640 | 1.38 ms | 1.22 ms | 0.248 ms/img | **0.139 ms/img** |
-| Flash-YOLO @640 | 1.32 ms | 1.23 ms | 0.213 ms/img | **0.126 ms/img** |
+| 平台 | Model | b1 fp32 | b1 fp16 | b8 fp32 | b8 fp16 |
+|---|---|---|---|---|---|
+| RTX 4090 | YOLO26n @640 | 1.71 ms | 1.33 ms | 0.316 ms/img | **0.161 ms/img** |
+| RTX 4090 | Flash-YOLO @640 | 1.71 ms | 1.44 ms | 0.281 ms/img | **0.142 ms/img** |
+| RTX 4060 Laptop | YOLO26n @640 | 3.63 ms | 3.41 ms | 1.40 ms/img | **0.606 ms/img** |
+| RTX 4060 Laptop | Flash-YOLO @640 | 3.07 ms | 3.32 ms | 1.25 ms/img | **0.535 ms/img** |
 
-- b1 贴着启动开销地板；fp16 收益在 batch（b8 −41~44%）。
+- b1 贴着启动开销地板；fp16 收益在 batch（检测 b8：4090 −49~50%，4060 −56~57%）。
 - 精度无可测损失；逐框对照要按 IoU 匹配，不要按分数序逐位比（近分框会换位）。
 
 ## 3. 三个运行时

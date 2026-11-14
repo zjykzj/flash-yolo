@@ -143,10 +143,6 @@ python scripts/convert_weights.py --src weights/yolov3-tiny.weights --dst weight
 
 | Weights | Platform / runtime | Precision | b1 | b8 (per image) |
 |---|---|---|---:|---:|
-| v3-SiLU + objectness | RTX 5090 · TensorRT 11.4 | fp32 | 0.68 ms | 0.133 ms |
-| v3-SiLU + objectness | RTX 5090 · TensorRT 11.4 | fp16 | 1.19 ms | 0.048 ms |
-| v3 original + objectness | RTX 5090 · TensorRT 11.4 | fp32 | 0.68 ms | 0.133 ms |
-| v3 original + objectness | RTX 5090 · TensorRT 11.4 | fp16 | 1.15 ms | 0.049 ms |
 | v3-SiLU + objectness | RTX 4090 · TensorRT 11.4 | fp32 | 0.72 ms | 0.188 ms |
 | v3-SiLU + objectness | RTX 4090 · TensorRT 11.4 | fp16 | 0.89 ms | 0.060 ms |
 | v3 original + objectness | RTX 4090 · TensorRT 11.4 | fp32 | 0.71 ms | 0.188 ms |
@@ -157,11 +153,11 @@ python scripts/convert_weights.py --src weights/yolov3-tiny.weights --dst weight
 - ORT conditions: intra_op=16 / inter_op=1; b1 fixed graph, b8 dynamic graph; best-case min over
   300 samples.
 - TRT conditions: b1 fixed engine, b8 batch-8 engine; 30 single shots + 100 pipelined runs
-  (RTX 5090 / RTX 4090 share the same protocol).
+  (RTX 4090 / RTX 4060 Laptop share the same protocol).
 - RTX 4090 rows: TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes H2D and
   readback, b8 is 100 back-to-back pipelined runs.
-- **v3's fp16 is slower than fp32 at b1** (small graphs are scheduling-overhead-bound; ~+70%
-  on the 5090, +14–24% on the 4090) → fp32 at b1, fp16 at b8.
+- **v3's fp16 is slower than fp32 at b1** (small graphs are scheduling-overhead-bound;
+  +29–35% on the 4060, +14–24% on the 4090) → fp32 at b1, fp16 at b8.
 - b1 hugs the launch-overhead floor, b8 reflects the compute difference; ORT absolute values are
   affected by neighbor load on the host.
 
@@ -176,8 +172,8 @@ python scripts/convert_weights.py --src weights/yolov3-tiny.weights --dst weight
 
 - b1 is the best-case min of three rounds (single shots drift noticeably under laptop GPU
   dynamic clocks); b8 is stable.
-- fp16 is slower at b1 (1.99 vs 1.47 ms, the same phenomenon as on the 5090) → fp32 at b1, fp16
-  at b8.
+- fp16 is slower at b1 (1.99 vs 1.47 ms, small graphs are scheduling-overhead-bound) → fp32 at
+  b1, fp16 at b8.
 
 ## 9. Usage
 

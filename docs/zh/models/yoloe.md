@@ -376,17 +376,13 @@ lr0 0.001 / batch 32 / 640；单卡 3090 4 h 40 min）。正式评估（pycocoto
 
 | 模式 | 平台 | 运行时 / 精度 | b1 | b8（每图） |
 |---|---|---|---:|---:|
-| pf | RTX 5090 | TensorRT 11.4 · fp32 | — | — |
-| pf | RTX 5090 | TensorRT 11.4 · fp16 | — | — |
-| 文本（80 类，类锁定） | RTX 5090 | TensorRT 11.4 · fp32 | — | — |
-| 文本（80 类，类锁定） | RTX 5090 | TensorRT 11.4 · fp16 | — | — |
 | pf | RTX 4090 | TensorRT 11.4 · fp32 | 19.73 ms | 不可构建 |
 | pf | RTX 4090 | TensorRT 11.4 · fp16 | 12.36 ms | 不可构建 |
 | 文本（80 类，类锁定） | RTX 4090 | TensorRT 11.4 · fp32 | 2.41 ms | 0.454 ms |
 | 文本（80 类，类锁定） | RTX 4090 | TensorRT 11.4 · fp16 | 3.12 ms | 0.208 ms |
 | pf / 文本 | Xeon 8470Q（25 核配额） | ONNX Runtime 1.30 · fp32 | — | — |
 
-- 5090 / 8470Q 行待服务器测量后回填；4090 行已实测（TensorRT 11.4.0.106 · 驱动 580.76.05 ·
+- 8470Q 行待服务器测量后回填；4090 行已实测（TensorRT 11.4.0.106 · 驱动 580.76.05 ·
   24 GB；b1 含 H2D/读回，b8 为 100 次背靠背流水线吞吐）。pf 用 `yoloe-26n-seg-pf.onnx`、
   文本用 `--classes` 类锁定导出的 onnx；ORT 条件同 [yolo26.md](yolo26.md) §5。
 

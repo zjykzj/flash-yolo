@@ -126,10 +126,6 @@ python scripts/convert_weights.py --src weights/yolov3-tiny.weights --dst weight
 
 | 权重 | 平台 / 运行时 | 精度 | b1 | b8（每图） |
 |---|---|---|---:|---:|
-| v3-SiLU + objectness | RTX 5090 · TensorRT 11.4 | fp32 | 0.68 ms | 0.133 ms |
-| v3-SiLU + objectness | RTX 5090 · TensorRT 11.4 | fp16 | 1.19 ms | 0.048 ms |
-| v3 原版 + objectness | RTX 5090 · TensorRT 11.4 | fp32 | 0.68 ms | 0.133 ms |
-| v3 原版 + objectness | RTX 5090 · TensorRT 11.4 | fp16 | 1.15 ms | 0.049 ms |
 | v3-SiLU + objectness | RTX 4090 · TensorRT 11.4 | fp32 | 0.72 ms | 0.188 ms |
 | v3-SiLU + objectness | RTX 4090 · TensorRT 11.4 | fp16 | 0.89 ms | 0.060 ms |
 | v3 原版 + objectness | RTX 4090 · TensorRT 11.4 | fp32 | 0.71 ms | 0.188 ms |
@@ -138,10 +134,10 @@ python scripts/convert_weights.py --src weights/yolov3-tiny.weights --dst weight
 | v3 原版 + objectness | Xeon 8470Q（25 核配额） · ONNX Runtime 1.30 | fp32 | 4.52 ms | 3.61 ms |
 
 - ORT 条件：intra_op=16 / inter_op=1；b1 固定图、b8 动态图；300 样本取 best-case min。
-- TRT 条件：b1 固定引擎、b8 batch-8 引擎；30 次单发 + 100 次流水线（RTX 5090 / RTX 4090 同协议）。
+- TRT 条件：b1 固定引擎、b8 batch-8 引擎；30 次单发 + 100 次流水线（RTX 4090 / RTX 4060 Laptop 同协议）。
 - RTX 4090 行：TensorRT 11.4.0.106 · 驱动 580.76.05 · 24 GB；b1 含 H2D/读回，
   b8 为 100 次背靠背流水线吞吐。
-- **v3 的 fp16 在 b1 反而慢于 fp32**（小图由调度开销主导；5090 上约 +70%，4090 上 +14~24%）
+- **v3 的 fp16 在 b1 反而慢于 fp32**（小图由调度开销主导；4060 上 +29~35%，4090 上 +14~24%）
   → b1 用 fp32、b8 用 fp16。
 - b1 贴近启动开销地板，b8 才能反映算力差；ORT 绝对值受宿主邻居负载影响。
 
@@ -155,7 +151,7 @@ python scripts/convert_weights.py --src weights/yolov3-tiny.weights --dst weight
 | v3 原版 + objectness | RTX 4060 Laptop · TensorRT 11.4 | fp16 | 1.99 ms | 0.193 ms |
 
 - b1 为三轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
-- fp16 在 b1 反而慢（1.99 vs 1.47 ms，与 5090 同现象）→ b1 用 fp32、b8 用 fp16。
+- fp16 在 b1 反而慢（1.99 vs 1.47 ms，小图由调度开销主导）→ b1 用 fp32、b8 用 fp16。
 
 ## 9. 用法
 

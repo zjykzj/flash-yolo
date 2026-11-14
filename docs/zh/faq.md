@@ -23,15 +23,16 @@ val2017）——**从零数字和官方数字放在一起比较不是 like for l
 
 ### Flash-YOLO 比 YOLO26n 低 2.68 点，为什么还值得用？
 
-买的是算力：−31% GFLOPs（3.80 vs 5.48）、−23% 参数、b8 延迟 −14%（TensorRT fp32）/
-−26%（ORT-CPU b8）。精度-算力比是本仓库轻量化的核心指标；结构取舍的结论见
-[models/flash-yolo.md](models/flash-yolo.md)。
+买的是算力：−31% GFLOPs（3.80 vs 5.48）、−23% 参数、b8 延迟 −11~−12%（TensorRT fp32，
+RTX 4090 / 4060 Laptop）/ −26%（ORT-CPU b8）。精度-算力比是本仓库轻量化的核心指标；结构
+取舍的结论见 [models/flash-yolo.md](models/flash-yolo.md)。
 
-### 延迟表里 b1 几乎打平、b8 优势明显，为什么？
+### 延迟表里 b1 在服务器上几乎打平、b8 优势明显，为什么？
 
-batch 1 是 per-run 开销（启动/绑定/发射）主导的**地板**：TRT fp32 1.32 vs 1.38 ms（−4%），
-两个架构几乎分不出来；batch 8 才反映算力差：0.213 vs 0.248 ms/img（−14%，与 GFLOP 比 1.44
-同量级）。**GFLOPs ≠ 延迟**——选型时看目标 batch 的口径。
+batch 1 是 per-run 开销（启动/绑定/发射）主导的**地板**：4090 TRT fp32 1.71 vs 1.71 ms（打平），
+4060 3.07 vs 3.63 ms（Flash 反而快 ~15%，笔记本调度/频率主导），两个架构在服务器上几乎分不
+出来；batch 8 才稳定反映算力差：4090 0.281 vs 0.316 ms/img（−11%）、4060 1.25 vs 1.40
+ms/img（−11%），与 GFLOP 比 1.44 同量级。**GFLOPs ≠ 延迟**——选型时看目标 batch 的口径。
 
 ### 数值对齐为什么要抠到 0.1 / 像素级？
 
@@ -191,7 +192,8 @@ torch 2.9 起 `torch.onnx.export` 默认走 dynamo 导出器，其 `external_dat
 
 TRT 11 移除了 `BuilderFlag.FP16`，也没有 precision-constraint 类标志——精度完全由网络
 张量类型决定。`--fp16` 先 `model.half()` 另导半精度 onnx，再用 strongly-typed 网络构建
-`<stem>.fp16.engine`（与 fp32 引擎共存）。收益在 batch：b8 每图 −41~44%；精度无可测损失。
+`<stem>.fp16.engine`（与 fp32 引擎共存）。收益在 batch：检测 b8 每图 −49~57%（4090 / 4060）；
+精度无可测损失。
 
 ### onnxruntime 能跑半精度 onnx 吗？
 

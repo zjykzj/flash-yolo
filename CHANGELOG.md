@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Latency scale semantics**: the scalable-model latency sections now state that the tables use n as the representative scale and that n/s/m/l/x scales differ in latency; fixed-scale pages are unchanged.
-- **RTX 4090 latency rows**: model pages report TensorRT fp32/fp16 b1/b8 for every architecture, and both READMEs add an RTX 4090 fp16 b8 column; measured on a 24 GB RTX 4090 with TensorRT 11.4.0.106.
+- **Inference latency platforms**: public model pages, READMEs, FAQ and export notes now report RTX 4090 (server) and RTX 4060 Laptop only; the RTX 5090 rows were retired from the public tables.
 - **Pose documentation**: bilingual YOLO26-pose model pages and task-specific train/eval/export/infer/dataset/model-matrix/alignment/FAQ sections document the new pipeline and its 2,346-image COCO-pose protocol.
 - **Pose training parity evidence**: a 10-epoch official-weight finetune matches ultralytics 8.4.173 (E2E AP 0.5476 vs 0.5477, NMS 0.5528 vs 0.5508); the training-time metric offset was later fixed (see Fixed).
 - **Pose 300-epoch from-scratch baselines**: yolo26n-pose reaches E2E 0.5529 / NMS 0.5541 AP and flash-yolo-pose reaches E2E 0.5004 / NMS 0.5055 on COCO-pose val2017 (2,346 images), giving a same-budget architecture comparison.

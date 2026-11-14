@@ -98,14 +98,16 @@ python scripts/export.py --weights weights/yolo26n.safetensors --trt --fp16    #
 - TensorRT is an optional dependency, not in `requirements.txt`; this repo builds and measures
   against TRT 11.4 / onnxruntime 1.30.
 
-### fp16 measurements (RTX 5090, E2E inference segment)
+### fp16 measurements (RTX 4090 / RTX 4060 Laptop, E2E inference segment)
 
-| Model | b1 fp32 | b1 fp16 | b8 fp32 | b8 fp16 |
-|---|---|---|---|---|
-| YOLO26n @640 | 1.38 ms | 1.22 ms | 0.248 ms/img | **0.139 ms/img** |
-| Flash-YOLO @640 | 1.32 ms | 1.23 ms | 0.213 ms/img | **0.126 ms/img** |
+| Platform | Model | b1 fp32 | b1 fp16 | b8 fp32 | b8 fp16 |
+|---|---|---|---|---|---|
+| RTX 4090 | YOLO26n @640 | 1.71 ms | 1.33 ms | 0.316 ms/img | **0.161 ms/img** |
+| RTX 4090 | Flash-YOLO @640 | 1.71 ms | 1.44 ms | 0.281 ms/img | **0.142 ms/img** |
+| RTX 4060 Laptop | YOLO26n @640 | 3.63 ms | 3.41 ms | 1.40 ms/img | **0.606 ms/img** |
+| RTX 4060 Laptop | Flash-YOLO @640 | 3.07 ms | 3.32 ms | 1.25 ms/img | **0.535 ms/img** |
 
-- b1 hugs the launch-overhead floor; fp16 gains live in batch (b8 −41~44%).
+- b1 hugs the launch-overhead floor; fp16 gains live in batch (detection b8: 4090 −49~50%, 4060 −56~57%).
 - No measurable accuracy loss; per-box comparisons must match by IoU, not bit-compare by score
   order (near-tie boxes swap).
 

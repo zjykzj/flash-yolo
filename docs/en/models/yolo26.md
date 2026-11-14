@@ -96,8 +96,6 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data coco
 
 | Platform | Runtime / precision | b1 | b8 (per image) |
 |---|---|---:|---:|
-| RTX 5090 | TensorRT 11.4 · fp32 | 1.37 ms | 0.245 ms |
-| RTX 5090 | TensorRT 11.4 · fp16 | 1.28 ms | 0.135 ms |
 | RTX 4090 | TensorRT 11.4 · fp32 | 1.71 ms | 0.316 ms |
 | RTX 4090 | TensorRT 11.4 · fp16 | 1.33 ms | 0.161 ms |
 | Xeon 8470Q (25-core quota) | ONNX Runtime 1.30 · fp32 | 14.6 ms | 6.86 ms |
@@ -105,7 +103,7 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data coco
 - ORT conditions: intra_op=16 / inter_op=1; b1 fixed graph, b8 dynamic graph; best-case min over
   300 samples.
 - TRT conditions: b1 fixed engine, b8 batch-8 engine; 30 single shots + 100 pipelined runs
-  (RTX 5090 / RTX 4090 share the same protocol).
+  (RTX 4090 / RTX 4060 Laptop share the same protocol).
 - RTX 4090 rows: TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes H2D and
   readback, b8 is 100 back-to-back pipelined runs.
 - b1 hugs the launch-overhead floor; b8 reflects the compute difference. ORT absolute values are

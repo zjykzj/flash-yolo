@@ -77,25 +77,26 @@ o2m + NMS; the fp32 forward is bit-identical):
   0.2228 — a configuration difference, not an implementation gap
   ([docs/en/models/yoloe.md](docs/en/models/yoloe.md) §4).
 
-**Inference latency** — model-only, 640 input (ORT-CPU = Xeon 8470Q · fp32; TRT 5090 = RTX 5090 ·
-fp16; TRT 4090 = RTX 4090 · fp16; b8 = batch-8 per-image). Full protocol and per-model tables:
-[docs/models/README.md](docs/en/models/README.md).
+**Inference latency** — model-only, 640 input (ORT-CPU = Xeon 8470Q · fp32; TRT 4090 = RTX 4090 ·
+fp16; TRT 4060 = RTX 4060 Laptop · fp16; b8 = batch-8 per-image). Full protocol and per-model
+tables: [docs/models/README.md](docs/en/models/README.md).
 
-| Model | ORT-CPU b1 | ORT-CPU b8 | TRT 5090 fp16 b8 | TRT 4090 fp16 b8 |
+| Model | ORT-CPU b1 | ORT-CPU b8 | TRT 4090 fp16 b8 | TRT 4060 fp16 b8 |
 |---|---:|---:|---:|---:|
-| YOLO26n | 14.6 ms | 6.86 ms | 0.135 ms | 0.161 ms |
-| Flash-YOLO | 13.2 ms | 5.84 ms | 0.123 ms | 0.142 ms |
-| Δ | −10% | −15% | −9% | −12% |
-| YOLO26n-seg | 16.8 ms | 12.0 ms | 0.148 ms | 0.194 ms |
-| Flash-YOLO-seg | 14.9 ms | 10.8 ms | 0.136 ms | 0.179 ms |
-| Δ | −11% | −10% | −8% | −8% |
-| YOLO26n-pose | 12.4 ms | — | — | 0.177 ms |
-| Flash-YOLO-pose | — | — | — | 0.168 ms |
-| Δ | — | — | — | −5% |
+| YOLO26n | 14.6 ms | 6.86 ms | 0.161 ms | 0.606 ms |
+| Flash-YOLO | 13.2 ms | 5.84 ms | 0.142 ms | 0.535 ms |
+| Δ | −10% | −15% | −12% | −12% |
+| YOLO26n-seg | 16.8 ms | 12.0 ms | 0.194 ms | 0.791 ms |
+| Flash-YOLO-seg | 14.9 ms | 10.8 ms | 0.179 ms | 0.702 ms |
+| Δ | −11% | −10% | −8% | −11% |
+| YOLO26n-pose | 12.4 ms | — | 0.177 ms | 1.26 ms |
+| Flash-YOLO-pose | — | — | 0.168 ms | 1.22 ms |
+| Δ | — | — | −5% | −3% |
 
-- Pose: the 8470Q ORT b1 for YOLO26n-pose carries over from the model page; the 5090 TRT cells
-  remain placeholders, while the 4090 TRT cells are measured.
-- RTX 4090 cells: TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; full protocol in the model pages.
+- Pose: the 8470Q ORT b1 for YOLO26n-pose carries over from the model page; remaining cells are
+  4090 / 4060 TRT measurements.
+- RTX 4090 cells: TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; 4060 cells are laptop TRT 11.4
+  fp16. Full protocol in the model pages.
 
 ## Table of Contents
 
