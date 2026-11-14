@@ -77,24 +77,25 @@ o2m + NMS; the fp32 forward is bit-identical):
   0.2228 — a configuration difference, not an implementation gap
   ([docs/en/models/yoloe.md](docs/en/models/yoloe.md) §4).
 
-**Inference latency** — model-only, 640 input (ORT-CPU = Xeon 8470Q · fp32; TRT = RTX 5090 · fp16;
-b8 = batch-8 per-image). Full protocol and per-model tables:
+**Inference latency** — model-only, 640 input (ORT-CPU = Xeon 8470Q · fp32; TRT 5090 = RTX 5090 ·
+fp16; TRT 4090 = RTX 4090 · fp16; b8 = batch-8 per-image). Full protocol and per-model tables:
 [docs/models/README.md](docs/en/models/README.md).
 
-| Model | ORT-CPU b1 | ORT-CPU b8 | TRT fp16 b8 |
-|---|---:|---:|---:|
-| YOLO26n | 14.6 ms | 6.86 ms | 0.135 ms |
-| Flash-YOLO | 13.2 ms | 5.84 ms | 0.123 ms |
-| Δ | −10% | −15% | −9% |
-| YOLO26n-seg | 16.8 ms | 12.0 ms | 0.148 ms |
-| Flash-YOLO-seg | 14.9 ms | 10.8 ms | 0.136 ms |
-| Δ | −11% | −10% | −8% |
-| YOLO26n-pose | 12.4 ms | — | — |
-| Flash-YOLO-pose | — | — | — |
-| Δ | — | — | — |
+| Model | ORT-CPU b1 | ORT-CPU b8 | TRT 5090 fp16 b8 | TRT 4090 fp16 b8 |
+|---|---:|---:|---:|---:|
+| YOLO26n | 14.6 ms | 6.86 ms | 0.135 ms | 0.161 ms |
+| Flash-YOLO | 13.2 ms | 5.84 ms | 0.123 ms | 0.142 ms |
+| Δ | −10% | −15% | −9% | −12% |
+| YOLO26n-seg | 16.8 ms | 12.0 ms | 0.148 ms | 0.194 ms |
+| Flash-YOLO-seg | 14.9 ms | 10.8 ms | 0.136 ms | 0.179 ms |
+| Δ | −11% | −10% | −8% | −8% |
+| YOLO26n-pose | 12.4 ms | — | — | 0.177 ms |
+| Flash-YOLO-pose | — | — | — | 0.168 ms |
+| Δ | — | — | — | −5% |
 
-- Pose rows are pending server measurement: the 8470Q ORT b1 for YOLO26n-pose carries over from
-  the model page, the remaining cells stay as placeholders until the server runs complete.
+- Pose: the 8470Q ORT b1 for YOLO26n-pose carries over from the model page; the 5090 TRT cells
+  remain placeholders, while the 4090 TRT cells are measured.
+- RTX 4090 cells: TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; full protocol in the model pages.
 
 ## Table of Contents
 

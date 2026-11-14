@@ -88,11 +88,16 @@ Download links point to the **v1.0.0** release assets.
 |---|---|---:|---:|
 | RTX 5090 | TensorRT 11.4 · fp32 | 1.57 ms | 0.271 ms |
 | RTX 5090 | TensorRT 11.4 · fp16 | 2.47 ms | 0.136 ms |
+| RTX 4090 | TensorRT 11.4 · fp32 | 2.34 ms | 0.402 ms |
+| RTX 4090 | TensorRT 11.4 · fp16 | 3.10 ms | 0.179 ms |
 | Xeon 8470Q (25-core quota) | ONNX Runtime 1.30 · fp32 | 14.9 ms | 10.8 ms |
 
 - ORT conditions: intra_op=16 / inter_op=1; b1 fixed graph, b8 dynamic graph; best-case min over
   300 samples.
-- TRT conditions: b1 fixed engine, b8 batch-8 engine; 30 single shots + 100 pipelined runs.
+- TRT conditions: b1 fixed engine, b8 batch-8 engine; 30 single shots + 100 pipelined runs
+  (RTX 5090 / RTX 4090 share the same protocol).
+- RTX 4090 rows: TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes H2D and
+  readback, b8 is 100 back-to-back pipelined runs.
 - **fp16 is slower than fp32 at b1**: dominated by the proto output (32×160×160) readback and
   the half→float conversion; pure GPU execution is close (0.73 vs 0.75 ms). b8 is where fp16
   wins (0.136 vs 0.271 ms).

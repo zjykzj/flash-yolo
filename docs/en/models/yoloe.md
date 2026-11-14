@@ -438,11 +438,16 @@ evaluation (pycocotools, all 5,000 images):
 | pf | RTX 5090 | TensorRT 11.4 · fp16 | — | — |
 | text (80 classes, class-locked) | RTX 5090 | TensorRT 11.4 · fp32 | — | — |
 | text (80 classes, class-locked) | RTX 5090 | TensorRT 11.4 · fp16 | — | — |
+| pf | RTX 4090 | TensorRT 11.4 · fp32 | 19.73 ms | not buildable |
+| pf | RTX 4090 | TensorRT 11.4 · fp16 | 12.36 ms | not buildable |
+| text (80 classes, class-locked) | RTX 4090 | TensorRT 11.4 · fp32 | 2.41 ms | 0.454 ms |
+| text (80 classes, class-locked) | RTX 4090 | TensorRT 11.4 · fp16 | 3.12 ms | 0.208 ms |
 | pf / text | Xeon 8470Q (25-core quota) | ONNX Runtime 1.30 · fp32 | — | — |
 
-- The 5090 / 8470Q rows are placeholders to be filled after server measurements (pf uses
-  `yoloe-26n-seg-pf.onnx`, text uses the `--classes` class-locked export; ORT conditions as in
-  [yolo26.md](yolo26.md) §5).
+- The 5090 / 8470Q rows are placeholders to be filled after server measurements; the RTX 4090
+  rows are measured (TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes H2D and
+  readback, b8 is 100 back-to-back pipelined runs). pf uses `yoloe-26n-seg-pf.onnx`, text
+  uses the `--classes` class-locked export; ORT conditions as in [yolo26.md](yolo26.md) §5.
 
 ### Local laptop
 

@@ -89,9 +89,13 @@ python scripts/train.py --data coco-pose --model flash-yolo-pose \
 |---|---|---:|---:|
 | RTX 5090 | TensorRT 11.4 · fp32 | — | — |
 | RTX 5090 | TensorRT 11.4 · fp16 | — | — |
+| RTX 4090 | TensorRT 11.4 · fp32 | 1.73 ms | 0.326 ms |
+| RTX 4090 | TensorRT 11.4 · fp16 | 1.40 ms | 0.168 ms |
 | Xeon 8470Q（25 核配额） | ONNX Runtime 1.30 · fp32 | — | — |
 
-- 5090 / 8470Q 行待服务器测量后回填（ORT 条件同 [yolo26.md](yolo26.md) §5）。
+- 5090 / 8470Q 行待服务器测量后回填；4090 行已实测（TensorRT 11.4.0.106 · 驱动 580.76.05 ·
+  24 GB；b1 含 H2D/读回，b8 为 100 次背靠背流水线吞吐）。ORT 条件同
+  [yolo26.md](yolo26.md) §5。
 
 ### 本地笔记本
 

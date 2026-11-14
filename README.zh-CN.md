@@ -73,24 +73,25 @@ LVIS minival——640 输入，两侧同一打分协议（Non-E2E = o2m + NMS；
   **21.9**；发布的 seg checkpoint 评分为 0.2228——是配置差异而非实现差距
   （[docs/zh/models/yoloe.md](docs/zh/models/yoloe.md) §4）。
 
-**推理延迟**——model-only，640 输入（ORT-CPU = Xeon 8470Q · fp32；TRT = RTX 5090 · fp16；
-b8 = batch 8 每图平均）。完整口径与逐模型表格：
+**推理延迟**——model-only，640 输入（ORT-CPU = Xeon 8470Q · fp32；TRT 5090 = RTX 5090 · fp16；
+TRT 4090 = RTX 4090 · fp16；b8 = batch 8 每图平均）。完整口径与逐模型表格：
 [docs/zh/models/README.md](docs/zh/models/README.md)。
 
-| 模型 | ORT-CPU b1 | ORT-CPU b8 | TRT fp16 b8 |
-|---|---:|---:|---:|
-| YOLO26n | 14.6 ms | 6.86 ms | 0.135 ms |
-| Flash-YOLO | 13.2 ms | 5.84 ms | 0.123 ms |
-| Δ | −10% | −15% | −9% |
-| YOLO26n-seg | 16.8 ms | 12.0 ms | 0.148 ms |
-| Flash-YOLO-seg | 14.9 ms | 10.8 ms | 0.136 ms |
-| Δ | −11% | −10% | −8% |
-| YOLO26n-pose | 12.4 ms | — | — |
-| Flash-YOLO-pose | — | — | — |
-| Δ | — | — | — |
+| 模型 | ORT-CPU b1 | ORT-CPU b8 | TRT 5090 fp16 b8 | TRT 4090 fp16 b8 |
+|---|---:|---:|---:|---:|
+| YOLO26n | 14.6 ms | 6.86 ms | 0.135 ms | 0.161 ms |
+| Flash-YOLO | 13.2 ms | 5.84 ms | 0.123 ms | 0.142 ms |
+| Δ | −10% | −15% | −9% | −12% |
+| YOLO26n-seg | 16.8 ms | 12.0 ms | 0.148 ms | 0.194 ms |
+| Flash-YOLO-seg | 14.9 ms | 10.8 ms | 0.136 ms | 0.179 ms |
+| Δ | −11% | −10% | −8% | −8% |
+| YOLO26n-pose | 12.4 ms | — | — | 0.177 ms |
+| Flash-YOLO-pose | — | — | — | 0.168 ms |
+| Δ | — | — | — | −5% |
 
-- Pose 两行待服务器测量回填：YOLO26n-pose 的 8470Q ORT b1 沿用模型页旧表，其余单元格在
-  服务器跑完前保持占位。
+- Pose：YOLO26n-pose 的 8470Q ORT b1 沿用模型页旧表；5090 的 TRT 单元格仍为占位，
+  4090 的 TRT 单元格已实测。
+- RTX 4090 单元格：TensorRT 11.4.0.106 / 驱动 580.76.05 / 24 GB；完整口径见各模型页。
 
 ## 目录
 

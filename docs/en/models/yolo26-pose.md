@@ -117,12 +117,16 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
 |---|---|---:|---:|
 | RTX 5090 | TensorRT 11.4 · fp32 | — | — |
 | RTX 5090 | TensorRT 11.4 · fp16 | — | — |
+| RTX 4090 | TensorRT 11.4 · fp32 | 1.79 ms | 0.366 ms |
+| RTX 4090 | TensorRT 11.4 · fp16 | 1.55 ms | 0.177 ms |
 | Xeon 8470Q (25-core quota) | ONNX Runtime 1.30 · fp32 | 12.4 ms | — |
 | Xeon 8470Q (25-core quota) | PyTorch · CPU fp32 | 47.3 ms | — |
 
-- The 5090 TRT rows are placeholders to be filled after server measurements; the ORT / PT CPU
-  rows carry over from the previous table on this page (same 8470Q machine, median-of-30
-  protocol), ORT conditions as in [yolo26.md](yolo26.md) §5.
+- The 5090 TRT rows are placeholders to be filled after server measurements; the RTX 4090 rows
+  are measured (TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes H2D and
+  readback, b8 is 100 back-to-back pipelined runs). The ORT / PT CPU rows carry over from
+  the previous table on this page (same 8470Q machine, median-of-30 protocol), ORT
+  conditions as in [yolo26.md](yolo26.md) §5.
 
 ### Local laptop
 

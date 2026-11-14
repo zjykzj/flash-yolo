@@ -80,10 +80,14 @@
 |---|---|---:|---:|
 | RTX 5090 | TensorRT 11.4 · fp32 | 1.57 ms | 0.271 ms |
 | RTX 5090 | TensorRT 11.4 · fp16 | 2.47 ms | 0.136 ms |
+| RTX 4090 | TensorRT 11.4 · fp32 | 2.34 ms | 0.402 ms |
+| RTX 4090 | TensorRT 11.4 · fp16 | 3.10 ms | 0.179 ms |
 | Xeon 8470Q（25 核配额） | ONNX Runtime 1.30 · fp32 | 14.9 ms | 10.8 ms |
 
 - ORT 条件：intra_op=16 / inter_op=1；b1 固定图、b8 动态图；300 样本取 best-case min。
-- TRT 条件：b1 固定引擎、b8 batch-8 引擎；30 次单发 + 100 次流水线。
+- TRT 条件：b1 固定引擎、b8 batch-8 引擎；30 次单发 + 100 次流水线（RTX 5090 / RTX 4090 同协议）。
+- RTX 4090 行：TensorRT 11.4.0.106 · 驱动 580.76.05 · 24 GB；b1 含 H2D/读回，
+  b8 为 100 次背靠背流水线吞吐。
 - **b1 的 fp16 反而慢于 fp32**：proto 输出（32×160×160）的读回与 half→float 转换主导；
   纯 GPU 执行两者接近（0.73 vs 0.75 ms）。b8 才是 fp16 的优势区间（0.136 vs 0.271 ms）。
 - ORT 绝对值受宿主邻居负载影响；b1 贴近启动开销地板，b8 才能反映算力差。

@@ -147,14 +147,21 @@ python scripts/convert_weights.py --src weights/yolov3-tiny.weights --dst weight
 | v3-SiLU + objectness | RTX 5090 · TensorRT 11.4 | fp16 | 1.19 ms | 0.048 ms |
 | v3 original + objectness | RTX 5090 · TensorRT 11.4 | fp32 | 0.68 ms | 0.133 ms |
 | v3 original + objectness | RTX 5090 · TensorRT 11.4 | fp16 | 1.15 ms | 0.049 ms |
+| v3-SiLU + objectness | RTX 4090 · TensorRT 11.4 | fp32 | 0.72 ms | 0.188 ms |
+| v3-SiLU + objectness | RTX 4090 · TensorRT 11.4 | fp16 | 0.89 ms | 0.060 ms |
+| v3 original + objectness | RTX 4090 · TensorRT 11.4 | fp32 | 0.71 ms | 0.188 ms |
+| v3 original + objectness | RTX 4090 · TensorRT 11.4 | fp16 | 0.81 ms | 0.059 ms |
 | v3-SiLU + objectness | Xeon 8470Q (25-core quota) · ONNX Runtime 1.30 | fp32 | 4.82 ms | 3.74 ms |
 | v3 original + objectness | Xeon 8470Q (25-core quota) · ONNX Runtime 1.30 | fp32 | 4.52 ms | 3.61 ms |
 
 - ORT conditions: intra_op=16 / inter_op=1; b1 fixed graph, b8 dynamic graph; best-case min over
   300 samples.
-- TRT conditions: b1 fixed engine, b8 batch-8 engine; 30 single shots + 100 pipelined runs.
-- **v3's fp16 is ~70% slower at b1** (small graphs are scheduling-overhead-bound) → fp32 at b1,
-  fp16 at b8.
+- TRT conditions: b1 fixed engine, b8 batch-8 engine; 30 single shots + 100 pipelined runs
+  (RTX 5090 / RTX 4090 share the same protocol).
+- RTX 4090 rows: TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes H2D and
+  readback, b8 is 100 back-to-back pipelined runs.
+- **v3's fp16 is slower than fp32 at b1** (small graphs are scheduling-overhead-bound; ~+70%
+  on the 5090, +14–24% on the 4090) → fp32 at b1, fp16 at b8.
 - b1 hugs the launch-overhead floor, b8 reflects the compute difference; ORT absolute values are
   affected by neighbor load on the host.
 

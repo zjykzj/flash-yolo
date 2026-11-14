@@ -104,11 +104,14 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
 |---|---|---:|---:|
 | RTX 5090 | TensorRT 11.4 · fp32 | — | — |
 | RTX 5090 | TensorRT 11.4 · fp16 | — | — |
+| RTX 4090 | TensorRT 11.4 · fp32 | 1.79 ms | 0.366 ms |
+| RTX 4090 | TensorRT 11.4 · fp16 | 1.55 ms | 0.177 ms |
 | Xeon 8470Q（25 核配额） | ONNX Runtime 1.30 · fp32 | 12.4 ms | — |
 | Xeon 8470Q（25 核配额） | PyTorch · CPU fp32 | 47.3 ms | — |
 
-- 5090 TRT 行待服务器测量后回填；ORT / PT CPU 行沿用本页旧表（8470Q 同机、连续 30 次
-  中位数口径），ORT 条件同 [yolo26.md](yolo26.md) §5。
+- 5090 TRT 行待服务器测量后回填；4090 行已实测（TensorRT 11.4.0.106 · 驱动 580.76.05 ·
+  24 GB；b1 含 H2D/读回，b8 为 100 次背靠背流水线吞吐）。ORT / PT CPU 行沿用本页旧表
+  （8470Q 同机、连续 30 次中位数口径），ORT 条件同 [yolo26.md](yolo26.md) §5。
 
 ### 本地笔记本
 
