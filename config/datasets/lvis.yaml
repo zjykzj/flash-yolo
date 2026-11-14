@@ -8,7 +8,7 @@ format: coco
 path: ""
 # train/val 均使用 *_compat.json：LVIS 原始 images 没有 file_name、annotations 没有 iscrowd，
 # compat 版本补 file_name / iscrowd=0 并把类别名对齐到上面的 names（train 图片 =
-# COCO train2017 的硬链接，不重复占盘）。
+# COCO train2017 的硬链接，不重复占盘）。生成：scripts/convert_lvis.py（见 docs/*/datasets/lvis.md）。
 eval_style: lvis  # LVIS 协议评估（faster_coco_eval lvis_style；neg/not_exhaustive + maxDets=300）
 train:
   images: images/train2017

@@ -60,6 +60,8 @@ references always use the formal convention**.
 
 ### 2.1 LVIS protocol (`eval_style: lvis`)
 
+Dataset layout, compat conversion and descriptor: [../datasets/lvis.md](../datasets/lvis.md).
+
 LVIS annotations are not exhaustive, so evaluation must honor two image-level fields that
 pycocotools does not understand:
 
@@ -76,9 +78,9 @@ predictions can differ by several times) and must not be compared with published
 - `--eval-max-dets 100`: ultralytics' current val sets only `lvis_style` and leaves
   faster_coco_eval's default `maxDets=[1,10,100]`; use this for a literal code-level match.
   The product default remains the official 300.
-- LVIS minival is the 5,000 COCO val2017 images; place a descriptor with the minival
-  annotations and the same image list at `config/datasets/local/lvis-minival.yaml`
-  (same schema as `config/datasets/lvis.yaml`) and use `--data lvis-minival`.
+- LVIS minival is the 5,000 COCO val2017 images; compat conversion and the `lvis-minival`
+  descriptor are documented in [../datasets/lvis.md](../datasets/lvis.md); use
+  `--data lvis-minival`.
 - `lvis_style` requires a `frequency` (r/c/f) on every category; the evaluator errors out
   clearly when it is missing.
 - Training (`eval_style: lvis`) switches to `FastLvisMetrics`: detections are filtered by each

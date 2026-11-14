@@ -58,6 +58,8 @@ FastMetrics 与正式口径贴合良好，但**跨 run 比较/对外引用一律
 
 ### 2.1 LVIS 协议（`eval_style: lvis`）
 
+数据集目录、compat 转换与描述符见 [../datasets/lvis.md](../datasets/lvis.md)。
+
 LVIS 的标注不是穷举的，评估必须处理两个图级字段，pycocotools 不认识它们：
 
 - `neg_category_ids`：该图**确认不存在**的类别——出现预测记 FP；
@@ -70,9 +72,8 @@ LVIS 的标注不是穷举的，评估必须处理两个图级字段，pycocotoo
 
 - `--eval-max-dets 100`：ultralytics 当前 val 只设置 `lvis_style`，没有改 faster_coco_eval
   的默认 `maxDets=[1,10,100]`；要与其代码逐字对齐时用这个值。产品默认仍是官方 300。
-- LVIS minival = COCO val2017 的 5,000 张图；把 minival 注解 + 同一批图的描述符放到
-  `config/datasets/local/lvis-minival.yaml`（结构同 `config/datasets/lvis.yaml`），
-  `--data lvis-minival` 即可使用。
+- LVIS minival = COCO val2017 的 5,000 张图；compat 转换与 `lvis-minival` 描述符见
+  [../datasets/lvis.md](../datasets/lvis.md)，`--data lvis-minival` 即可使用。
 - `lvis_style` 要求 categories 带 `frequency`（r/c/f），缺失会在构造评估器时报错。
 - 训练中（`eval_style: lvis`）自动改用 `FastLvisMetrics`：按每图 GT ∪ `neg_category_ids`
   过滤检测，maxDets=300，输出 AP / APr / APc / APf；同一 checkpoint 与正式 LVIS AP 差约

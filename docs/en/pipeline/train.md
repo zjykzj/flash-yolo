@@ -222,3 +222,4 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
    mosaic/mixup/cutmix/copy_paste are disabled (the mask is built from the central image).
    Plain COCO has no such fields, so batch shapes and the loss path are unchanged.
    `--no-federated-mask` disables the masks for A/B comparisons or reproducing the old behavior.
+   Data preparation: [../datasets/lvis.md](../datasets/lvis.md).

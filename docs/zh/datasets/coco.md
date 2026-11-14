@@ -3,6 +3,8 @@
 描述符公共字段见 [README.md](README.md)。`--data coco` 解析到
 `config/datasets/local/coco.yaml`（本机路径）或包内模板 `config/datasets/coco.yaml`。
 
+> LVIS 也是 COCO json 的变体，但带 federated 图级字段与独立评估协议；见 [lvis.md](lvis.md)。
+
 ## 1. 目录与描述符
 
 ```text

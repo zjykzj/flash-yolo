@@ -3,17 +3,18 @@
 > 数据入口只有一个：**数据集描述符 yaml**。train / eval / bench_io / infer 都通过
 > `--data <name|.yaml>` 找到它；模型的类别数（nc）也由它决定，不再改模型 yaml。
 
-格式差异见 [coco.md](coco.md) 与 [yolo.md](yolo.md)；训练侧用法见
+格式差异见 [coco.md](coco.md)、[yolo.md](yolo.md) 与 [lvis.md](lvis.md)；训练侧用法见
 [../pipeline/train.md](../pipeline/train.md)。
 
 ## 1. 描述符 schema
 
-模板：`config/datasets/coco.yaml`。
+模板：`config/datasets/coco.yaml`；LVIS 模板：`config/datasets/lvis.yaml`（见 [lvis.md](lvis.md)）。
 
 | 键 | 必填 | 说明 |
 |---|---|---|
 | `format` | ✔ | `coco`（json 标注）或 `yolo`（`labels/*.txt`） |
 | `path` | – | 数据集根；相对路径以描述符 yaml 所在目录为基准；空 = 只用绝对路径 |
+| `eval_style` | – | `coco`（默认）或 `lvis`（LVIS 协议；仅 `format: coco`，见 [lvis.md](lvis.md)）|
 | `names` | ✔ | 类别名列表（或 `{0: name}` 映射，等价）；**index = 类别 id = nc** |
 | `kpt_shape` | pose ✔ | `[K, D]`（COCO `[17, 3]`）；D=2 只有 x/y，D=3 带可见性 |
 | `flip_idx` / `kpt_names` / `skeleton` | pose 可选 | 水平翻转重排 / 每类关键点名 / 骨架点对（0-based，仅可视化） |
@@ -91,6 +92,8 @@ val:   {images: val2017,   ann: annotations/person_keypoints_val2017.json}
    看 verdict，见 [../models/yolov3-tiny.md](../models/yolov3-tiny.md)；
 5. 分割：COCO 多边形 / RLE 或 YOLO-seg 多边形行；`mask_ratio` 必须整除 `imgsz`
    （默认 4；640 -> 160，与 Proto26 同网格）。
+6. LVIS：先跑 `scripts/convert_lvis.py` 生成 `_compat.json`，再在描述符里写
+   `eval_style: lvis`；见 [lvis.md](lvis.md)。
 
 ## 6. 小数据集循环
 

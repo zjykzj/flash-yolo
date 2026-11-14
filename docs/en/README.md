@@ -8,11 +8,11 @@ export / infer), dataset and model specs, and verification conventions.
 
 | I want to… | Read |
 |---|---|
-| Bring in a COCO / YOLO dataset | [datasets/README.md](datasets/README.md) |
+| Bring in a COCO / YOLO / LVIS dataset | [datasets/README.md](datasets/README.md) |
 | Pick or learn about a model | [models/README.md](models/README.md) |
 | Open-vocabulary detection / segmentation (YOLOE-26) | [models/yoloe.md](models/yoloe.md) |
 | Train (from scratch / finetune / resume / DDP / pose) | [pipeline/train.md](pipeline/train.md) |
-| Evaluate (pycocotools / E2E / NMS / Box+Mask / Pose) | [pipeline/eval.md](pipeline/eval.md) |
+| Evaluate (pycocotools / LVIS / E2E / NMS / Box+Mask / Pose) | [pipeline/eval.md](pipeline/eval.md) |
 | Export ONNX / TensorRT | [pipeline/export.md](pipeline/export.md) |
 | Infer on images / video / streams | [pipeline/infer.md](pipeline/infer.md) |
 | Container environment | [docker.md](docker.md) |
@@ -26,7 +26,8 @@ docs/en/
 ├── datasets/
 │   ├── README.md      descriptor schema, --data resolution, shared conventions
 │   ├── coco.md        COCO json (RLE / crowd / missing images)
-│   └── yolo.md        YOLO txt / YOLO-seg polygons
+│   ├── yolo.md        YOLO txt / YOLO-seg polygons
+│   └── lvis.md        LVIS v1 (federated annotations / compat / APr-APc-APf)
 ├── models/
 │   ├── README.md      model matrix, weight metadata, shared structure conventions
 │   ├── yolo26.md

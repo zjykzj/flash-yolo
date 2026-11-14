@@ -25,9 +25,13 @@
   描述符。用于本机快速验证全流程，以及作为 YOLO 格式转换的输入。
 - `convert_coco_seg.py` —— COCO 多边形标注 → YOLO-seg txt。dataflow-cv 的 `coco2yolo`
   即使有 segmentation 也优先写 bbox，多边形要由本脚本按官方 merge 口径生成。
+- `convert_lvis.py` —— 原始 LVIS 注解 → compat COCO json（补 `file_name` / `iscrowd`、
+  类别重编号、`neg_category_ids` 同步重映射；`--minival-ref` 可选过滤/补齐 minival）。
+  LVIS 训练或评估前先跑一次。
 
 文档：[datasets/README.md](../docs/datasets/README.md) §6 小数据集循环 ·
-[datasets/coco.md](../docs/datasets/coco.md) · [datasets/yolo.md](../docs/datasets/yolo.md)
+[datasets/coco.md](../docs/datasets/coco.md) · [datasets/yolo.md](../docs/datasets/yolo.md) ·
+[datasets/lvis.md](../docs/datasets/lvis.md)
 
 ## 3. 官方权重准备
 

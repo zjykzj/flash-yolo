@@ -4,6 +4,9 @@ Shared descriptor fields: [README.md](README.md). `--data coco` resolves to
 `config/datasets/local/coco.yaml` (machine paths) or the packaged template
 `config/datasets/coco.yaml`.
 
+> LVIS is also a COCO-json variant, but with federated image-level fields and its own
+> evaluation protocol; see [lvis.md](lvis.md).
+
 ## 1. Layout and descriptor
 
 ```text

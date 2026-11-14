@@ -7,11 +7,11 @@
 
 | 我想… | 读这里 |
 |---|---|
-| 接入 COCO / YOLO 数据集 | [datasets/README.md](datasets/README.md) |
+| 接入 COCO / YOLO / LVIS 数据集 | [datasets/README.md](datasets/README.md) |
 | 选择或了解某个模型 | [models/README.md](models/README.md) |
 | 开放词汇检测 / 分割（YOLOE-26） | [models/yoloe.md](models/yoloe.md) |
 | 训练（从零 / 微调 / resume / DDP / pose） | [pipeline/train.md](pipeline/train.md) |
-| 评估（pycocotools / E2E / NMS / Box+Mask / Pose） | [pipeline/eval.md](pipeline/eval.md) |
+| 评估（pycocotools / LVIS / E2E / NMS / Box+Mask / Pose） | [pipeline/eval.md](pipeline/eval.md) |
 | 导出 ONNX / TensorRT | [pipeline/export.md](pipeline/export.md) |
 | 图片 / 视频 / 流推理 | [pipeline/infer.md](pipeline/infer.md) |
 | 容器环境 | [docker.md](docker.md) |
@@ -25,7 +25,8 @@ docs/
 ├── datasets/
 │   ├── README.md      描述符 schema、--data 解析、公共约定
 │   ├── coco.md        COCO json（含 RLE / crowd / 缺失图）
-│   └── yolo.md        YOLO txt / YOLO-seg 多边形
+│   ├── yolo.md        YOLO txt / YOLO-seg 多边形
+│   └── lvis.md        LVIS v1（federated 标注 / compat / APr-APc-APf）
 ├── models/
 │   ├── README.md      模型矩阵、权重 metadata、公共结构约定
 │   ├── yolo26.md

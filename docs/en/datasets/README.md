@@ -4,17 +4,19 @@
 > / infer all locate it through `--data <name|.yaml>`; the model's class count (nc) is also
 > decided by it — the model yaml no longer needs editing.
 
-Format differences: [coco.md](coco.md) and [yolo.md](yolo.md); training-side usage:
-[../pipeline/train.md](../pipeline/train.md).
+Format differences: [coco.md](coco.md), [yolo.md](yolo.md) and [lvis.md](lvis.md);
+training-side usage: [../pipeline/train.md](../pipeline/train.md).
 
 ## 1. Descriptor schema
 
-Template: `config/datasets/coco.yaml`.
+Template: `config/datasets/coco.yaml`; LVIS template: `config/datasets/lvis.yaml`
+(see [lvis.md](lvis.md)).
 
 | Key | Required | Description |
 |---|---|---|
 | `format` | ✔ | `coco` (json annotations) or `yolo` (`labels/*.txt`) |
 | `path` | – | dataset root; relative paths are resolved against the descriptor's directory; empty = absolute paths only |
+| `eval_style` | – | `coco` (default) or `lvis` (LVIS protocol; `format: coco` only — see [lvis.md](lvis.md)) |
 | `names` | ✔ | class name list (or a `{0: name}` mapping, equivalent); **index = class id = nc** |
 | `kpt_shape` | pose ✔ | `[K, D]` (COCO `[17, 3]`); D=2 is x/y only, D=3 adds visibility |
 | `flip_idx` / `kpt_names` / `skeleton` | pose optional | horizontal-flip permutation / per-class keypoint names / skeleton pairs (0-based, visualization only) |
@@ -98,6 +100,8 @@ val:   {images: val2017,   ann: annotations/person_keypoints_val2017.json}
    first and read the verdict — see [../models/yolov3-tiny.md](../models/yolov3-tiny.md);
 5. Segmentation: COCO polygons / RLE or YOLO-seg polygon rows; `mask_ratio` must divide `imgsz`
    (default 4; 640 → 160, the same grid as Proto26).
+6. LVIS: run `scripts/convert_lvis.py` to produce the `_compat.json`, then set
+   `eval_style: lvis` in the descriptor; see [lvis.md](lvis.md).
 
 ## 6. Small-dataset loop
 

@@ -369,7 +369,8 @@ evaluation (pycocotools, all 5,000 images):
 - Scales and single-GPU options: all five scales pass the strict-load → fuse → six-tail
   backward contract; a one-epoch GPU smoke passes with
   `--amp --multi-scale --single-cls --channels-last` (PE defaults to fp32; AMP is optional).
-- **LVIS (1,203 classes, federated)**: each image annotates only a subset of classes.
+- **LVIS (1,203 classes, federated; data prep: [../datasets/lvis.md](../datasets/lvis.md))**:
+  each image annotates only a subset of classes.
   Training builds a valid-class mask (`positives ∪ neg_category_ids`); unknown and
   `not_exhaustive_category_ids` classes are ignored by the BCE instead of trained as
   negatives, and mosaic/mixup/cutmix/copy_paste are disabled for federated data. PE for

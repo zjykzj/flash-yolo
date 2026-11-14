@@ -203,4 +203,4 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
    `neg_category_ids`」的分类掩码，`not_exhaustive_category_ids` 与未标注类被忽略
    （不再当负样本），并自动关闭 mosaic/mixup/cutmix/copy_paste（掩码按中心图构造）。
    COCO 没有该字段，批次形状与损失路径逐位不变。`--no-federated-mask` 可关闭掩码，
-   仅用于 A/B 对照或复现旧行为。
+   仅用于 A/B 对照或复现旧行为。数据准备见 [../datasets/lvis.md](../datasets/lvis.md)。
