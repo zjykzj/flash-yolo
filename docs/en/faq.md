@@ -41,13 +41,6 @@ Batch 8 reflects the compute difference: 4090 0.281 vs 0.316 ms/img (−11%), 40
 1.40 ms/img (−11%), the same magnitude as the 1.44 GFLOP ratio.
 **GFLOPs ≠ latency** — pick by the target batch's convention.
 
-### Why chase numeric alignment down to 0.1 / per-pixel?
-
-A 0.1 gap could come from metric-implementation noise (acceptable) or a systematic deviation
-from an implementation error (unacceptable). Two real lessons: BN eps with PyTorch's default
-1e-5 (official: 0.001) diverges activations from layer 0; decoding xywh as xyxy on the o2m path
-yields ~632-scale errors. The alignment tests are the gates against such "0.1-lower illusions".
-
 ### Why doesn't the official YOLOv3-tiny 33.1 match?
 
 Different conventions: the official 33.1 is **test-dev @416 AP50**; the same weights @640 on
@@ -82,16 +75,8 @@ cross-implementation comparisons use `scripts/eval.py`.
 
 ### Can from-scratch training use AMP?
 
-No — measured explosions: fp16 NaNs within epoch 1, bf16 explodes on the first optimizer step
-(BN eps=0.001 amplifies near-constant mosaic gray-border regions in cascade + the fp16 65504
-ceiling). **From-scratch training defaults to fp32**; **finetuning** may try `--amp`.
-
-### Training loss looks fine, but weights explode / NaN after a few epochs?
-
-Gradient clipping `max_norm=10` is part of the official training loop and must run
-unconditionally every step. Without it the o2o classification head enters "BN-masked compound
-growth" — loss stays normal the whole time while non-bias weights compound per step to 1e10+,
-then NaN. Debugging this class of issue: **watch the |W|max of non-bias weights, not just loss**.
+No — fp16/bf16 both NaN or explode early in from-scratch training. **From-scratch training
+defaults to fp32**; **finetuning** may try `--amp`.
 
 ### The first epoch's val mAP is 0 — is that normal?
 
@@ -100,24 +85,15 @@ filtered; it recovers after a training step or two. Don't mistake it for a pipel
 
 ### Why is `val_rle` always 0 in pose training logs?
 
-The validation forward does not return `kpts_sigma` (the sigma branch only runs in training
-mode), so the validation RLE term short-circuits to zero; the training `rle_loss` keeps updating.
-This matches the official training-time validator's `val/rle_loss=0`.
-
-### Training hangs: the process is alive, GPU at 0%, no error?
-
-A known scenario, already fixed in the framework: OpenCV's thread pool is not fork-safe — once
-the parent process has touched cv2, calling `cv2.setNumThreads()` inside a worker blocks forever
-(typical symptom: epoch 1 fine, everything hangs from epoch 2). The contract is **thread counts
-are set by the parent process when `data/loader.py` is imported; workers only inherit** — don't
-break it when editing the data pipeline.
+`val_rle` is 0 by design: the validation forward does not compute the RLE term; the training
+`rle_loss` keeps updating.
 
 ### How long does training take / how to size GPU memory / tune batch?
 
-Reference magnitudes: YOLO26n 300 ep, batch 32 @640, one RTX 5090 ≈63 h; Flash-YOLO same budget
-≈62.7 h. Physical batch is decided by GPU memory — **gradient semantics and lr are guaranteed by
-nbs (default 64); changing batch doesn't require touching lr**. Don't guess throughput — measure
-with `scripts/bench_io.py` (see [pipeline/train.md](pipeline/train.md) §6).
+Training time depends on the GPU, data pipeline and epoch budget — measure it on the target
+machine with `scripts/bench_io.py` (see [pipeline/train.md](pipeline/train.md) §6). Physical
+batch is decided by GPU memory — **gradient semantics and lr are guaranteed by nbs (default 64);
+changing batch doesn't require touching lr**.
 
 ### Is multi-GPU / distributed training supported?
 
@@ -190,12 +166,6 @@ sets. Cross-format comparisons need the full set or aligned subsets.
 `eval.py` uses 0.001 (aligned with the official evaluation convention), `infer.py` uses 0.25
 (cleaner output images). Don't estimate mAP from detection counts on inference images.
 
-### Evaluation of early/untrained models is extremely slow (seconds per image in NMS)?
-
-Reason: at conf 0.001 an untrained model passes almost all of 2535 anchors × 80 classes;
-per-class full NMS measured 7.2 s/image. NMS is now **class-aware + early-stopping** (returns
-once max_det is filled), ~12 ms/image, canonically equivalent to the per-class full version.
-
 ### How far apart are E2E and NMS? Which should I look at?
 
 Same weights usually differ by 0.6~1 points (official 40.89 vs 40.27) — both are reported. E2E is
@@ -252,12 +222,11 @@ Three-level read fallback: **CLI explicit > metadata > filename/default**; a mis
 unknown (never guessed). `version` is the release line, `commit` the exact coordinate — the two
 need not agree, and `describe` spells out the gap.
 
-### The container reports 208 cores via nproc — how many workers should I use?
+### nproc reports more cores than the container can use — how many workers should I use?
 
 A common container CPU lie: the affinity mask reports the host core count while the real quota is
-a cgroup limit (measured 25 cores on this host). Pick workers by **measurement**:
-`scripts/bench_io.py` (two stages: loader-only grid → end-to-end) — **a fast loader ≠ fast
-training**, and more workers is not better.
+a cgroup limit. Pick workers by **measurement**: `scripts/bench_io.py` (two stages: loader-only
+grid → end-to-end) — **a fast loader ≠ fast training**, and more workers is not better.
 
 ### Under WSL2, elapsed times / speeds occasionally look wrong (negative)?
 

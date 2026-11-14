@@ -169,9 +169,6 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 
 ## 8. 坑
 
-- **`--limit` 必须同时限制 GT**：评估器按"本次遍历的全部 image_id"设置 `params.imgIds`
-  （含零检出图）；自己改指标代码时注意不要退回到"只用有预测的图"——那会把漏检排除掉。
-- **空结果**：`loadRes([])` 会 IndexError；评估器对空结果短路返回全 0。
 - **LVIS 的 `frequency`**：`lvis_style=True` 要求每个 category 带 `frequency`（r/c/f）；
   普通 COCO json 用 `eval_style: lvis` 会在构造评估器时报错。
 - **LVIS maxDets 默认值**：faster_coco_eval 的 `Params.maxDets` 默认 `[1,10,100]`；

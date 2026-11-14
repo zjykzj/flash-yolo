@@ -161,9 +161,6 @@ convention):
 
 ## 6. Gotchas
 
-- `utils/anchors.py::make_anchors` must **build the grid in fp32 and cast** — a half-precision
-  `torch.arange` is rejected by the TorchScript ONNX exporter. Regression gate
-  `test_export_parity.py::test_make_anchors_half_dtype_is_export_safe` — don't revert it.
 - Engines with batch > 1 need a `--dynamic` export plus a manual build; the `TRTEngine.predict()`
   contract is batch 1.
 - Edge toolchains prefer `--dynamic` or fixed shapes; **never hand-edit onnx input names**

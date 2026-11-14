@@ -9,6 +9,7 @@
 |---|---|
 | 接入 COCO / YOLO 数据集 | [datasets/README.md](datasets/README.md) |
 | 选择或了解某个模型 | [models/README.md](models/README.md) |
+| 开放词汇检测 / 分割（YOLOE-26） | [models/yoloe.md](models/yoloe.md) |
 | 训练（从零 / 微调 / resume / DDP / pose） | [pipeline/train.md](pipeline/train.md) |
 | 评估（pycocotools / E2E / NMS / Box+Mask / Pose） | [pipeline/eval.md](pipeline/eval.md) |
 | 导出 ONNX / TensorRT | [pipeline/export.md](pipeline/export.md) |
@@ -33,7 +34,8 @@ docs/
 │   ├── flash-yolo.md
 │   ├── flash-yolo-seg.md
 │   ├── flash-yolo-pose.md
-│   └── yolov3-tiny.md 原版 + SiLU 变体
+│   ├── yolov3-tiny.md 原版 + SiLU 变体
+│   └── yoloe.md       开放词汇（pf / 文本 / 视觉）
 ├── pipeline/
 │   ├── README.md      公共 CLI / run 目录 / 引擎约定
 │   ├── train.md

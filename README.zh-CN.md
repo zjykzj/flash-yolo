@@ -172,8 +172,7 @@ docker/run.sh pytest tests/            # 在容器内执行任意命令
 ## 快速开始
 
 从干净 checkout 到带标注的图片——无需准备数据集、无需训练。从
-[Releases](https://github.com/zjykzj/flash-yolo/releases) 下载 `flash-yolo-e300-640.safetensors`
-到仓库根目录。
+[Releases](https://github.com/zjykzj/flash-yolo/releases) 下载 `flash-yolo-e300-640.safetensors`。
 
 ```bash
 # 1) 对内置样例跑推理
@@ -212,7 +211,7 @@ python scripts/export.py --weights flash-yolo-e300-640.safetensors
 
 ## 用法
 
-两种任务通过同一描述符机制读数据。先把 `--data coco` 指到本地数据集根：
+所有任务通过同一描述符机制读数据。先把 `--data coco` 指到本地数据集根：
 
 ```bash
 cp config/datasets/coco.yaml config/datasets/local/coco.yaml   # 然后编辑 `path:`
@@ -248,6 +247,8 @@ python scripts/train.py --data coco --device 0,1 --resume runs/train/train-<name
 
 ```bash
 python scripts/eval.py --weights flash-yolo-e300-640.safetensors --data coco
+# 导出后：评估 ONNX 图
+python scripts/eval.py --weights flash-yolo-e300-640.onnx --engine onnx --data coco
 # 默认 E2E（NMS-free）；加 --nms 走 one-to-many + NMS 路径。
 ```
 
@@ -256,10 +257,16 @@ python scripts/eval.py --weights flash-yolo-e300-640.safetensors --data coco
 **导出**
 
 ```bash
-python scripts/export.py --weights flash-yolo-e300-640.safetensors --trt
+python scripts/export.py --weights flash-yolo-e300-640.safetensors --out flash-yolo-e300-640.onnx --trt
 # --fp16 半精度；--dynamic 动态 batch 轴。
+
+# 直接运行导出的图
+python scripts/infer.py --weights flash-yolo-e300-640.onnx --engine onnx --image assets/traffic.jpg
+python scripts/infer.py --weights flash-yolo-e300-640.engine --engine trt --image assets/traffic.jpg
 ```
 
+`scripts/infer.py` 与 `scripts/eval.py` 都通过 `--engine onnx|trt` 消费导出的 ONNX /
+TensorRT 文件；TensorRT 引擎绑定构建机的 GPU + TensorRT 版本。
 ONNX / TensorRT 选项与输出契约：[docs/zh/pipeline/export.md](docs/zh/pipeline/export.md)。
 
 **推理**
@@ -334,44 +341,49 @@ python scripts/infer.py --weights flash-yolo-seg-e300-640.safetensors \
 **数据**
 
 COCO keypoints json（`person_keypoints_*.json`，17 点，`nc=1`），描述符模板
-`config/datasets/coco-pose.yaml`；关键点描述符字段（`kpt_shape`、`flip_idx`、`skeleton`）见
+`config/datasets/coco-pose.yaml`；复制到 `local/` 并指向数据集：
+
+```bash
+cp config/datasets/coco-pose.yaml config/datasets/local/coco-pose.yaml   # 然后编辑 `path:`
+```
+
+关键点描述符字段（`kpt_shape`、`flip_idx`、`skeleton`）见
 [docs/zh/datasets/README.md](docs/zh/datasets/README.md)。COCO-pose 的 val 协议是
 **2,346 张有有效关键点的图**，不是检测的 5,000 张。
 
 **训练**
 
 ```bash
-# 官方 400 轮配方；微调从官方 pose 权重开始
+# YOLO26-pose 从零训练（default 配方）
 python scripts/train.py --data coco-pose --model yolo26-pose \
-    --weights weights/yolo26n-pose.safetensors \
-    --recipe yolo26-pose-coco --epochs 10 --batch 32 --device 0
+    --name yolo26n-pose-coco --batch 32 --device 0 --no-amp
 
 # Flash-YOLO-pose 从零训练（default 配方）
 python scripts/train.py --data coco-pose --model flash-yolo-pose \
     --name flash-pose --batch 32 --device 0 --no-amp
 ```
 
-Pose 损失（keypoint / kobj / RLE）、官方配方与注意事项：
+官方权重微调、官方 COCO-pose 配方、Pose 损失（keypoint / kobj / RLE）与权重转换：
 [docs/zh/models/yolo26-pose.md](docs/zh/models/yolo26-pose.md)。
 
 **评估**
 
 ```bash
-python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
+python scripts/eval.py --weights yolo26n-pose.safetensors --data coco-pose
 # 默认 E2E（NMS-free）；加 --nms 走 one-to-many + NMS 路径。
 ```
 
 **导出**
 
 ```bash
-python scripts/export.py --weights weights/yolo26n-pose.safetensors --trt --fp16
+python scripts/export.py --weights yolo26n-pose.safetensors --trt --fp16
 # 默认 E2E 单输出 (B,300,57)；--raw 出 (B,56,8400) 解码输出。
 ```
 
 **推理**
 
 ```bash
-python scripts/infer.py --weights weights/yolo26n-pose.safetensors \
+python scripts/infer.py --weights yolo26n-pose.safetensors \
     --image /path/to/person.jpg --data coco-pose
 # 画骨架 + 写 YOLO-pose 标签
 ```
@@ -390,38 +402,31 @@ Flash-YOLO-pose 结构与指标：[docs/zh/models/flash-yolo-pose.md](docs/zh/mo
 支持的架构：**YOLOE-26**（n/s/m/l/x）——检测与实例分割一体，三种 prompt 模式：
 **prompt-free（pf）**、**文本**与**视觉 prompt**。
 
-**权重**
+**前置条件**
 
-转换官方 checkpoint（一次性；词汇 / 模式 metadata 随权重走）；文本/视觉模式用
-MobileCLIP2-B 编码 prompt（`mobileclip2_b.safetensors` 需放在权重同目录）：
-
-```bash
-python scripts/convert_weights.py --src yoloe-26n-seg-pf.pt \
-    --dst weights/yoloe-26n-seg-pf.safetensors                  # prompt-free
-python scripts/convert_weights.py --src yoloe-26n-seg.pt \
-    --dst weights/yoloe-26n-seg.safetensors                     # 文本 / 视觉模式
-```
+官方 checkpoint 转换与 MobileCLIP2-B 文本编码器见
+[docs/zh/models/yoloe.md](docs/zh/models/yoloe.md)；下面的命令直接使用转换后的权重名。
 
 **训练**——PE 线性探测 / 全量微调（文本模式，从官方文本权重出发）：
 
 ```bash
 python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
-    --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.1
+    --weights yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.1
 python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
-    --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
+    --weights yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
 ```
 
 **评估**——pf 走词汇映射；文本模式用数据集类别名作 prompt：
 
 ```bash
-python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco
-python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco
+python scripts/eval.py --weights yoloe-26n-seg-pf.safetensors --data coco
+python scripts/eval.py --weights yoloe-26n-seg.safetensors --data coco
 ```
 
 **导出**——prompt 融合进分类卷积——类锁定、单输入 ONNX / TensorRT：
 
 ```bash
-python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+python scripts/export.py --weights yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --trt [--fp16]
 ```
 
@@ -429,11 +434,11 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 
 ```bash
 # prompt-free E2E
-python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors \
+python scripts/infer.py --weights yoloe-26n-seg-pf.safetensors \
     --image assets/traffic.jpg
 
 # 文本 prompt（任意类别名）
-python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
+python scripts/infer.py --weights yoloe-26n-seg.safetensors \
     --image assets/traffic.jpg --classes "person, bicycle, car"
 ```
 

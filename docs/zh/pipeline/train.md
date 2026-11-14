@@ -145,19 +145,18 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 
 | 层 | 含义 | 保证 |
 |---|---|---|
-| **稳定** | 任何配置不发散不 NaN | fp32 默认 + 梯度裁剪 max_norm=10 |
+| **稳定** | 任何配置不发散不 NaN | fp32 默认 + 梯度裁剪 |
 | **逐位** | 同 commit + 同 seed + 同硬件/驱动 + 同 workers/batch → 权重逐位相同 | 默认达成（`deterministic: true`） |
 | **统计** | 跨硬件/驱动 → 曲线在噪声内一致 | 未量化；A/B 用同机 + `--stop-after` 对齐 |
 
 逐位复现需要同时成立：
 
 1. `deterministic: true`（默认）——关 cuDNN autotune + 确定性算法 + 固定 CUBLAS 工作区。
-2. `workers` / `batch` 是复现条件的一部分（增强种子按 `(seed, epoch, worker_id)` 派生）。
-3. RNG 每 epoch 重播：种子 = `seed + epoch × world_size + rank`（单卡即 `seed + epoch`）。
-4. resume 逐位等价：`resume.pt` 存四套 RNG 状态 + `ema.steps`；前提是同卡数同设备。
+2. `workers` / `batch` 是复现条件的一部分。
+3. resume 在同卡数同设备下逐位等价。
 
-跨机器到不了逐位（kernel 不同），只承诺统计一致。新增随机性不要裸调全局
-`np.random` / `random`。闸门：`FLASH_YOLO_REPRO=1 pytest tests/test_train_repro.py`。
+跨机器到不了逐位（kernel 不同），只承诺统计一致。闸门：
+`FLASH_YOLO_REPRO=1 pytest tests/test_train_repro.py`。
 
 ## 6. 先把 I/O 调对
 
@@ -170,8 +169,6 @@ python scripts/bench_io.py --data coco --loader-only
 
 - **加载器快 ≠ 训练快**：只有端到端数字能决策。
 - workers 不是越多越好（占满核会把主进程饿死）。
-- 不要在 worker 里调 `cv2.setNumThreads`（OpenCV 线程池非 fork 安全，会整体卡死）；
-  线程数由 `data/loader.py` 导入时在父进程设定。
 
 ## 7. 多卡训练（DDP）
 
@@ -184,36 +181,25 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
 
 - `--batch` 是**全局** batch：每卡 = `batch // world_size`，必须整除。
 - `--workers` 是**每卡**进程数。
-- 本工程损失是 Σ_img 口径，DDP backward 按 rank 平均 → 损失需乘 `world_size`
-  （`train/distributed.py::ddp_scale_loss`；world=1 原样返回）。
-- 验证只 rank 0 且全量；checkpoint/CSV/diag/samples/plots/meta.json/run.log 只 rank 0 写。
-- `self.model` / `self.head` 始终是 raw module，DDP 只存 `self.ddp_model`。
+- 验证、checkpoint、CSV、日志等产物只由 rank 0 写；其余 rank 只参与训练。
 - 无 SyncBatchNorm：BN 统计按卡独立；多卡与单卡不逐位一致，同 world_size 重复运行可逐位复现。
-- `find_unused_parameters=True`（覆盖 freeze 与条件分支）；**pose 例外**：`flow_model`
-  在 o2m/o2o 两个损失分支各用一次，DDP 会报 `marked as ready twice`，因此 pose 关闭该开关
-  （所有 pose 参数都通过前向或损失参与计算）。回归闸门：
-  `tests/test_distributed.py::test_ddp_pose_smoke`（yolo26-pose / flash-yolo-pose）。
-- 梯度累积的非边界步把 forward+backward 包进 `no_sync()`。
 - 换卡数/换设备续训支持（`resume.pt` 记录 world_size/device），但轨迹不再逐位一致。
-- 吞吐：数据管线常先饱和；2×5090 / yolo26n@640 / batch 64 / workers 8 实测约 258 img/s
-  vs 单卡 218（~1.2×）。先用 `bench_io.py` 定单卡值。
+- 吞吐：数据管线常先饱和，多卡加速比通常低于线性；先用 `bench_io.py` 定单卡值。
 
 ## 8. 常见坑
 
-1. **`--amp` 从零训练必炸**（fp16 在 640² + BN eps=0.001 下第 1 轮内 NaN）。默认 fp32；
-   微调可试 `--amp`。
+1. **`--amp` 从零训练会 NaN/爆炸**。默认 fp32；微调可试 `--amp`。
 2. **`--close-mosaic` 是“最后 N 轮”**，不是“从第 N 轮开始”；短跑会被 `min(N, epochs//5)` 缩小。
 3. `best.safetensors` 由 FastMetrics（COCO / pose）或 FastLvisMetrics（`eval_style: lvis`）
    选取；对外数字走 `scripts/eval.py`。
 4. val 损失不可与训练损失直接比（增强分布 / EMA vs raw / BN 模式）。
-5. **pose**：COCO-pose val 只评估 2,346 张有有效关键点的图；`val_rle` 恒 0（验证前向不返回
-   sigma，训练仍在算）；`copy_paste > 0` 直接报错；`--single-cls` 不适用。
+5. **pose**：COCO-pose val 只评估 2,346 张有有效关键点的图；`val_rle` 恒为 0 是设计行为；
+   `copy_paste > 0` 直接报错；`--single-cls` 不适用。
    `fliplr` 需要描述符里的 `flip_idx`，否则翻转后的关键点左右语义会错。
-5. 训练日志的损失列名由 `item_keys` 派生：yolo26 为 `box/cls/l1/o2m/o2o`，
-   分割多 `seg/sem`，v3 为 `box/obj/cls`。
-6. 换输入尺寸从零训练时，先验偏置按训练 imgsz 计算；v3 需重聚类锚点。
-7. 分割接受 COCO json 与 YOLO-seg txt；全量 fallback 会报错。
-8. **LVIS 等 federated 数据集**：每图只标注部分类别。训练自动生成「正类 ∪
+6. 训练日志的损失列名：yolo26 为 `box/cls/l1/o2m/o2o`，分割多 `seg/sem`，v3 为 `box/obj/cls`。
+7. 换输入尺寸从零训练时，先验偏置按训练 imgsz 计算；v3 需重聚类锚点。
+8. 分割接受 COCO json 与 YOLO-seg txt；全量 fallback 会报错。
+9. **LVIS 等 federated 数据集**：每图只标注部分类别。训练自动生成「正类 ∪
    `neg_category_ids`」的分类掩码，`not_exhaustive_category_ids` 与未标注类被忽略
    （不再当负样本），并自动关闭 mosaic/mixup/cutmix/copy_paste（掩码按中心图构造）。
    COCO 没有该字段，批次形状与损失路径逐位不变。`--no-federated-mask` 可关闭掩码，

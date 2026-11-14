@@ -190,10 +190,6 @@ The full weight list, download links and latency live on the model pages
 
 ## 8. Gotchas
 
-- **`--limit` must restrict GT too**: the evaluator sets `params.imgIds` to every image traversed
-  (including zero-detection images) — do not regress to "only images with predictions", which
-  would exclude misses.
-- **Empty results**: `loadRes([])` raises IndexError; the evaluator short-circuits to all zeros.
 - **LVIS `frequency`**: `lvis_style=True` requires `frequency` (r/c/f) on every category; a plain
   COCO json with `eval_style: lvis` errors out in the evaluator constructor.
 - **LVIS maxDets default**: faster_coco_eval's `Params.maxDets` defaults to `[1,10,100]`; the

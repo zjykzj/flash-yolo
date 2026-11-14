@@ -10,6 +10,7 @@ export / infer), dataset and model specs, and verification conventions.
 |---|---|
 | Bring in a COCO / YOLO dataset | [datasets/README.md](datasets/README.md) |
 | Pick or learn about a model | [models/README.md](models/README.md) |
+| Open-vocabulary detection / segmentation (YOLOE-26) | [models/yoloe.md](models/yoloe.md) |
 | Train (from scratch / finetune / resume / DDP / pose) | [pipeline/train.md](pipeline/train.md) |
 | Evaluate (pycocotools / E2E / NMS / Box+Mask / Pose) | [pipeline/eval.md](pipeline/eval.md) |
 | Export ONNX / TensorRT | [pipeline/export.md](pipeline/export.md) |
@@ -34,7 +35,8 @@ docs/en/
 │   ├── flash-yolo.md
 │   ├── flash-yolo-seg.md
 │   ├── flash-yolo-pose.md
-│   └── yolov3-tiny.md original + SiLU variant
+│   ├── yolov3-tiny.md original + SiLU variant
+│   └── yoloe.md       open-vocabulary (pf / text / visual)
 ├── pipeline/
 │   ├── README.md      shared CLI / run dir / engine conventions
 │   ├── train.md

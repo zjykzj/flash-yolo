@@ -150,9 +150,6 @@ Release 里每份权重通常配套 9 个文件（本仓库 release 档案的口
 
 ## 6. 坑
 
-- `utils/anchors.py::make_anchors` 必须 **fp32 建网格再 cast**——half 的 `torch.arange`
-  会被 TorchScript ONNX 导出器拒绝。回归闸门
-  `test_export_parity.py::test_make_anchors_half_dtype_is_export_safe`，不要改回去。
 - batch > 1 的引擎需要 `--dynamic` 导出后自行构建；`TRTEngine.predict()` 契约是 batch 1。
 - 边缘工具链优先 `--dynamic` 或固定 shape；**不要手工改 onnx 输入名**（I/O 绑定按名称匹配）。
 - TensorRT 安装不要走 PyPI 同名壳包；按 Dockerfile 的 NVIDIA 索引路线，或直接用 Docker 镜像。

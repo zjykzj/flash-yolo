@@ -34,12 +34,6 @@ batch 1 是 per-run 开销（启动/绑定/发射）主导的**地板**：4090 T
 出来；batch 8 才稳定反映算力差：4090 0.281 vs 0.316 ms/img（−11%）、4060 1.25 vs 1.40
 ms/img（−11%），与 GFLOP 比 1.44 同量级。**GFLOPs ≠ 延迟**——选型时看目标 batch 的口径。
 
-### 数值对齐为什么要抠到 0.1 / 像素级？
-
-差 0.1 可能来自度量实现噪声（可接受）或实现错误导致的系统性偏离（不可接受）。两个真实教训：
-BN eps 用 PyTorch 默认 1e-5（官方 0.001）会让第 0 层起激活偏离；o2m 路径把 xywh 解码成
-xyxy 会得到 ~632 量级误差。对齐测试就是给这类“低 0.1 假象”兜底的闸门。
-
 ### YOLOv3-tiny 官方 33.1 怎么对不上？
 
 口径不同：官方 33.1 是 **test-dev @416 的 AP50**；本仓库同权重 @640 在 val2017 上用
@@ -70,14 +64,7 @@ FastPoseMetrics 是快速近似（贪婪匹配 / 101 点插值 / 忽略 crowd）
 
 ### 从零训练能开 AMP 吗？
 
-不能，实测必炸：fp16 在第 1 轮内 NaN、bf16 首个优化步就炸（BN eps=0.001 对 mosaic 灰边等
-近常数区域的放大级联 + fp16 上限 65504）。**从零训练默认 fp32**；**微调**可试 `--amp`。
-
-### 训练 loss 正常，但权重爆掉 / 第几轮就 NaN？
-
-梯度裁剪 `max_norm=10` 是官方训练循环的一部分，必须每步无条件执行。缺了它，o2o 分类头会
-进入“BN 掩蔽式复利增长”——loss 全程正常，非 bias 权重却逐 step 复利到 1e10+，然后 NaN。
-排查这类问题**盯非 bias 权重的 |W|max，别只看 loss**。
+不能：实测 fp16/bf16 都会在训练早期 NaN/爆炸。**从零训练默认 fp32**；**微调**可试 `--amp`。
 
 ### 第一个 epoch 的 val mAP 是 0，正常吗？
 
@@ -86,21 +73,13 @@ FastPoseMetrics 是快速近似（贪婪匹配 / 101 点插值 / 忽略 crowd）
 
 ### pose 训练日志里的 `val_rle` 为什么恒为 0？
 
-验证前向不返回 `kpts_sigma`（sigma 分支只在训练模式计算），所以 val 的 RLE 项有零项
-短路；训练损失里的 `rle_loss` 仍在正常更新。这与官方训练期 validator 的 `val/rle_loss=0`
-同口径。
-
-### 训练卡死：进程活着、GPU 0%、没有任何报错？
-
-已知场景，框架内已修复：OpenCV 线程池非 fork 安全——父进程跑过 cv2 之后，worker 里再调
-`cv2.setNumThreads()` 会永久阻塞（典型表现：epoch 1 正常，epoch 2 起整体卡死）。契约是
-**线程数在 `data/loader.py` 导入时由父进程设定、worker 只继承**；改数据管线时别破坏它。
+`val_rle` 恒为 0 是设计行为：验证前向不计 RLE 项；训练侧的 `rle_loss` 仍正常更新。
 
 ### 训练要多久 / 显存怎么定 / batch 怎么调？
 
-参考量级：YOLO26n 300 轮 batch 32 @640，单张 RTX 5090 ≈63 h；Flash-YOLO 同预算 ≈62.7 h。
-物理 batch 由显存定即可——**梯度语义与 lr 由 nbs 保证（default 64），调 batch 不用动 lr**。
-吞吐别拍脑袋，用 `scripts/bench_io.py` 实测（见 [pipeline/train.md](pipeline/train.md) §6）。
+训练耗时取决于 GPU、数据管线与轮数，按目标环境用 `scripts/bench_io.py` 实测
+（见 [pipeline/train.md](pipeline/train.md) §6）。物理 batch 由显存定即可——**梯度语义与
+lr 由 nbs 保证（default 64），调 batch 不用动 lr**。
 
 ### 支持多卡 / 分布式训练吗？
 
@@ -165,11 +144,6 @@ val 差异只来自这一项（coco-tiny 全量 0.4080 vs 0.4024）。
 `eval.py` 用 0.001（对齐官方评估口径），`infer.py` 用 0.25（出图省事）。别拿推理图上的
 数量去心算 mAP。
 
-### 早期/未训练模型评估特别慢（NMS 秒级每图）？
-
-原因：conf 0.001 下未训练模型 2535 锚 × 80 类几乎全过筛，逐类全量 NMS 实测 7.2 s/图。
-现在 NMS 是**类感知 + 早停**（凑满 max_det 即返回），~12 ms/图，结果与逐类全量规范化等价。
-
 ### E2E 和 NMS 差多少？该看哪个？
 
 同权重一般差 0.6~1 点（官方 40.89 vs 40.27），两个都报。E2E 是默认路径（部署省一步、
@@ -220,10 +194,10 @@ PyPI 上的 `tensorrt` 同名包是壳（会挂起）；按 Dockerfile 的路线
 读取三级回退：**CLI 显式 > metadata > 文件名/默认**；缺键 = 未知（不猜）。`version` 是发布线、
 `commit` 是精确坐标，两者不要求一致——`describe` 把落差写明。
 
-### 容器里 `nproc` 显示 208 核，该开多少 workers？
+### 容器里 `nproc` 显示的核数偏大，该开多少 workers？
 
-容器常见的 CPU 谎报：affinity mask 报宿主核数，实际是 cgroup 配额（本机实测 25 核）。
-workers 按**实测**选：`scripts/bench_io.py`（两阶段：loader-only 网格 → 端到端）——
+容器常见的 CPU 谎报：affinity mask 报宿主核数，实际受 cgroup 配额限制。workers 按
+**实测**选：`scripts/bench_io.py`（两阶段：loader-only 网格 → 端到端）——
 **加载器快 ≠ 训练快**，且 workers 不是越多越好。
 
 ### WSL2 下耗时/速度偶尔显示异常（负值）？

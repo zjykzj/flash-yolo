@@ -180,7 +180,7 @@ See [docs/docker.md](docs/en/docker.md) for host requirements (NVIDIA driver ≥
 
 From a clean checkout to an annotated image — no dataset preparation, no training required.
 Download `flash-yolo-e300-640.safetensors` from
-[Releases](https://github.com/zjykzj/flash-yolo/releases) into the repository root.
+[Releases](https://github.com/zjykzj/flash-yolo/releases).
 
 ```bash
 # 1) run inference on the bundled sample
@@ -220,7 +220,7 @@ Other released checkpoints and their metrics: [docs/models/README.md](docs/en/mo
 
 ## Usage
 
-Both tasks read datasets through the same descriptor mechanism. Point `--data coco` at your local
+All tasks read datasets through the same descriptor mechanism. Point `--data coco` at your local
 dataset root once:
 
 ```bash
@@ -257,6 +257,8 @@ From-scratch / finetune / DDP details: [docs/pipeline/train.md](docs/en/pipeline
 
 ```bash
 python scripts/eval.py --weights flash-yolo-e300-640.safetensors --data coco
+# after exporting: evaluate the ONNX graph
+python scripts/eval.py --weights flash-yolo-e300-640.onnx --engine onnx --data coco
 # E2E (NMS-free) by default; add --nms for the one-to-many + NMS path.
 ```
 
@@ -265,10 +267,16 @@ python scripts/eval.py --weights flash-yolo-e300-640.safetensors --data coco
 **Export**
 
 ```bash
-python scripts/export.py --weights flash-yolo-e300-640.safetensors --trt
+python scripts/export.py --weights flash-yolo-e300-640.safetensors --out flash-yolo-e300-640.onnx --trt
 # --fp16 for half precision; --dynamic for a dynamic batch axis.
+
+# run the exported graph
+python scripts/infer.py --weights flash-yolo-e300-640.onnx --engine onnx --image assets/traffic.jpg
+python scripts/infer.py --weights flash-yolo-e300-640.engine --engine trt --image assets/traffic.jpg
 ```
 
+`scripts/infer.py` and `scripts/eval.py` consume exported ONNX / TensorRT files with
+`--engine onnx|trt`; TensorRT engines are bound to the build machine's GPU + TensorRT version.
 ONNX / TensorRT options and output contracts: [docs/pipeline/export.md](docs/en/pipeline/export.md).
 
 **Infer**
@@ -345,44 +353,50 @@ Supported architectures: **YOLO26-pose** (n/s/m/l/x) and **Flash-YOLO-pose** (si
 **Data**
 
 COCO keypoints JSON (`person_keypoints_*.json`, 17 points, `nc=1`) with the
-`config/datasets/coco-pose.yaml` descriptor template; keypoint descriptor fields (`kpt_shape`,
-`flip_idx`, `skeleton`): [docs/datasets/README.md](docs/en/datasets/README.md). The COCO-pose
-val protocol is **2,346 images with valid keypoints**, not the 5,000-image detection split.
+`config/datasets/coco-pose.yaml` descriptor template; copy it to `local/` and point it at your
+dataset:
+
+```bash
+cp config/datasets/coco-pose.yaml config/datasets/local/coco-pose.yaml   # then edit `path:`
+```
+
+Keypoint descriptor fields (`kpt_shape`, `flip_idx`, `skeleton`):
+[docs/datasets/README.md](docs/en/datasets/README.md). The COCO-pose val protocol is **2,346
+images with valid keypoints**, not the 5,000-image detection split.
 
 **Train**
 
 ```bash
-# official 400-epoch recipe; finetune from the official pose weights
+# YOLO26-pose from scratch (default recipe)
 python scripts/train.py --data coco-pose --model yolo26-pose \
-    --weights weights/yolo26n-pose.safetensors \
-    --recipe yolo26-pose-coco --epochs 10 --batch 32 --device 0
+    --name yolo26n-pose-coco --batch 32 --device 0 --no-amp
 
 # Flash-YOLO-pose from scratch (default recipe)
 python scripts/train.py --data coco-pose --model flash-yolo-pose \
     --name flash-pose --batch 32 --device 0 --no-amp
 ```
 
-Pose losses (keypoint / kobj / RLE), the official recipe and caveats:
-[docs/en/models/yolo26-pose.md](docs/en/models/yolo26-pose.md).
+Official-weight finetuning, the official COCO-pose recipe, losses (keypoint / kobj / RLE) and
+weight conversion: [docs/en/models/yolo26-pose.md](docs/en/models/yolo26-pose.md).
 
 **Evaluate**
 
 ```bash
-python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
+python scripts/eval.py --weights yolo26n-pose.safetensors --data coco-pose
 # E2E (NMS-free) by default; add --nms for the one-to-many + NMS path.
 ```
 
 **Export**
 
 ```bash
-python scripts/export.py --weights weights/yolo26n-pose.safetensors --trt --fp16
+python scripts/export.py --weights yolo26n-pose.safetensors --trt --fp16
 # default E2E single output (B,300,57); --raw emits the decoded (B,56,8400) graph.
 ```
 
 **Infer**
 
 ```bash
-python scripts/infer.py --weights weights/yolo26n-pose.safetensors \
+python scripts/infer.py --weights yolo26n-pose.safetensors \
     --image /path/to/person.jpg --data coco-pose
 # draws the skeleton and writes YOLO-pose labels
 ```
@@ -401,39 +415,32 @@ Flash-YOLO-pose structure and metrics: [docs/en/models/flash-yolo-pose.md](docs/
 Supported architecture: **YOLOE-26** (n/s/m/l/x) — detection and instance segmentation with
 three prompt modes: **prompt-free (pf)**, **text** and **visual prompts**.
 
-**Weights**
+**Prerequisites**
 
-Convert the official checkpoints once (vocab / mode metadata travel with the weights);
-text/visual modes encode prompts with MobileCLIP2-B (`mobileclip2_b.safetensors` must sit
-next to the weights):
-
-```bash
-python scripts/convert_weights.py --src yoloe-26n-seg-pf.pt \
-    --dst weights/yoloe-26n-seg-pf.safetensors                  # prompt-free
-python scripts/convert_weights.py --src yoloe-26n-seg.pt \
-    --dst weights/yoloe-26n-seg.safetensors                     # text / visual mode
-```
+Official checkpoint conversion and the MobileCLIP2-B text encoder are documented in
+[docs/en/models/yoloe.md](docs/en/models/yoloe.md); the commands below use the converted
+weight names.
 
 **Train** — PE linear probing / full fine-tuning (text mode, from the official text weights):
 
 ```bash
 python scripts/train.py --data coco --model yoloe-26 --scale n --pe \
-    --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.1
+    --weights yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.1
 python scripts/train.py --data coco --model yoloe-26 --scale n --full-finetune \
-    --weights weights/yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
+    --weights yoloe-26n-seg.safetensors --epochs 10 --batch 32 --lr0 0.001
 ```
 
 **Evaluate** — pf uses the vocab mapping; text mode uses the dataset names as prompts:
 
 ```bash
-python scripts/eval.py --weights weights/yoloe-26n-seg-pf.safetensors --data coco
-python scripts/eval.py --weights weights/yoloe-26n-seg.safetensors --data coco
+python scripts/eval.py --weights yoloe-26n-seg-pf.safetensors --data coco
+python scripts/eval.py --weights yoloe-26n-seg.safetensors --data coco
 ```
 
 **Export** — prompts fused into the cls conv — class-locked single-input ONNX / TensorRT:
 
 ```bash
-python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
+python scripts/export.py --weights yoloe-26n-seg.safetensors \
     --classes "person, bicycle, car" --trt [--fp16]
 ```
 
@@ -441,11 +448,11 @@ python scripts/export.py --weights weights/yoloe-26n-seg.safetensors \
 
 ```bash
 # prompt-free E2E
-python scripts/infer.py --weights weights/yoloe-26n-seg-pf.safetensors \
+python scripts/infer.py --weights yoloe-26n-seg-pf.safetensors \
     --image assets/traffic.jpg
 
 # text prompts (arbitrary class names)
-python scripts/infer.py --weights weights/yoloe-26n-seg.safetensors \
+python scripts/infer.py --weights yoloe-26n-seg.safetensors \
     --image assets/traffic.jpg --classes "person, bicycle, car"
 ```
 
