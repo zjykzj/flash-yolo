@@ -1,10 +1,10 @@
 # Flash-YOLO
 
-> ⚡ **超轻量检测与分割框架——检测 GFLOPs 比 YOLO26n 低 31%（分割低 18%），GPU/CPU 毫秒级推理，
-> 以及一条完整独立的流水线：训练（单卡 / DDP）· 评估 · 导出 · 推理（图片 / 视频 / 流）。
-> 原始数据集进，TensorRT 引擎出。**
+> ⚡ **超轻量、完全独立的实时视觉框架——GFLOPs 比 YOLO26n 最多低 31%，GPU/CPU 毫秒级推理，
+> 一条从原始数据集到 TensorRT 引擎的完整流水线。**
 >
-> 核心运行时只有 PyTorch + NumPy——没有庞杂抽象，没有额外安装。
+> 检测、分割、姿态与开放词汇 YOLOE-26 共用同一套训练器、导出路径和推理 API；
+> 无 ultralytics 运行时依赖，模型 / 损失 / 训练循环为纯 PyTorch + NumPy。
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
@@ -20,6 +20,15 @@
   <br>
   <em>Flash-YOLO 检测（左）与 Flash-YOLO-seg 实例分割（右），同一段街景视频——640 输入</em>
 </p>
+
+**核心特性**
+
+- **GFLOPs 最多低 31%**：检测 / 分割 / 姿态分别比 YOLO26n 低 31% / 18% / 22%；检测模型
+  1.97M 参数 / 3.80 GFLOPs @640（−23% / −31%）。
+- **独立可审计**：Apache-2.0；官方 YOLO26 权重零映射加载并逐位一致；每个模块可独立阅读。
+- **完整流水线**：训练（单卡 / DDP）· 评估（COCO / LVIS / pose）· 导出（ONNX / TensorRT）·
+  推理（图片 / 视频 / 流）。
+- **同预算基准**：检测、分割、姿态数字及其精确口径与可复现命令均在仓库内。
 
 COCO val2017，官方 pycocotools（`scripts/eval.py`），640 输入。E2E = NMS-free 默认路径；
 NMS = one-to-many 头 + NMS。官方行为 Objects365 预训练 + COCO 微调；

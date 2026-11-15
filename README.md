@@ -1,11 +1,12 @@
 # Flash-YOLO
 
-> ⚡ **A super-lightweight detection & segmentation framework — 31% fewer GFLOPs than YOLO26n
-> for detection (18% for segmentation), millisecond GPU/CPU inference, and a complete independent
-> pipeline: train (single-GPU / DDP) · evaluate · export · infer (image / video / stream).
-> Raw dataset in, TensorRT engine out.**
+> ⚡ **A super-lightweight, fully independent real-time vision framework — up to 31% fewer
+> GFLOPs than YOLO26n, millisecond GPU/CPU inference, and one pipeline from raw dataset to
+> TensorRT engine.**
 >
-> Core runtime is just PyTorch + NumPy — no monolithic abstractions, no extra installs.
+> Detection, segmentation, pose and open-vocabulary YOLOE-26 share one trainer, one export path
+> and one inference API. No ultralytics runtime dependency; the model, loss and training loop are
+> plain PyTorch + NumPy.
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
@@ -21,6 +22,17 @@
   <br>
   <em>Flash-YOLO detection (left) and Flash-YOLO-seg instance segmentation (right) on a street clip — 640 input</em>
 </p>
+
+**Key features**
+
+- **Up to 31% fewer GFLOPs**: detection 31%, segmentation 18%, pose 22% vs YOLO26n; the detection
+  model is 1.97M params / 3.80 GFLOPs @640 (−23% / −31%).
+- **Independent and auditable**: Apache-2.0; official YOLO26 checkpoints load with zero mapping
+  and run bit-identically; every module is readable on its own.
+- **Complete pipeline**: train (single-GPU / DDP) · evaluate (COCO / LVIS / pose) · export
+  (ONNX / TensorRT) · infer (image / video / stream).
+- **Same-budget benchmarks**: detection, segmentation and pose numbers with their exact protocols
+  and reproducible commands in the repo.
 
 COCO val2017, official pycocotools (`scripts/eval.py`), 640 input. E2E = NMS-free default path;
 NMS = one-to-many head + NMS. Official rows are Objects365 pretraining + COCO finetuning;

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **README positioning**: the front page now presents Flash-YOLO as a fully independent real-time vision framework (detection, segmentation, pose, YOLOE-26) with a four-item key-features block and accurate dependency wording; both READMEs are aligned.
 - **Latency scale semantics**: the scalable-model latency sections now state that the tables use n as the representative scale and that n/s/m/l/x scales differ in latency; fixed-scale pages are unchanged.
 - **Inference latency platforms**: public model pages, READMEs, FAQ and export notes now report RTX 4090 (server) and RTX 4060 Laptop only; the RTX 5090 rows were retired from the public tables.
 - **README and docs layering**: README uses weight names only and from-scratch training commands (acquisition/conversion links to model pages); public training docs drop implementation-level DDP/export notes, training-debug Q&A and server-specific figures, and the docs index lists YOLOE-26.
