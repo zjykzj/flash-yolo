@@ -53,11 +53,12 @@
 
 ## 3. Weight download and initialization
 
-Download links point to the **v1.0.0** release assets.
+This repo's weights download through the script: `python scripts/download_weights.py
+--self <name>` (release details stay inside the script; `--self all` fetches every weight).
 
 | Weights | Training | Input | Download |
 |---|---|---|---|
-| `yolo26n-from-scratch-e300-640` | 300 ep from scratch | 640 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolo26n-from-scratch-e300-640.safetensors) |
+| `yolo26n-from-scratch-e300-640` | 300 ep from scratch | 640 | `--self yolo26n-from-scratch-e300-640` |
 
 Official weights (O365 pretraining + COCO finetuning) are not distributed with the Release;
 download and convert them yourself:

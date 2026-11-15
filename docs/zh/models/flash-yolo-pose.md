@@ -135,5 +135,5 @@ python scripts/infer.py --weights runs/train/<run>/weights/best.safetensors \
 - 官方 `yolo26n-pose` 的参考指标（0.5687 / 0.8250 E2E）**不适用于**本结构；本页的 300 轮
   从零数字见 §3，与 yolo26n-pose 同预算对照也已列出。
 - 结构参数：3,081,432 参数、5.9 GFLOPs @640；与 `flash-yolo` 检测版共用前 24 行结构。
-- 300 轮从零权重为本地训练产物，未随 Release 分发。
+- 300 轮从零权重已发布到统一权重 release：`python scripts/download_weights.py --self flash-yolo-pose-e300-640`。
 - 训练中 `val_rle` 恒 0（验证前向不返回 sigma），不代表 RLE 未训练。

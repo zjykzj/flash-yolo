@@ -61,6 +61,12 @@ python scripts/convert_weights.py --src weights/yolo26n-pose.pt \
 python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
 ```
 
+从零 300 轮权重（本仓库训练）已发布到统一权重 release，经脚本下载：
+
+```bash
+python scripts/download_weights.py --self yolo26n-pose-from-scratch-e300-640
+```
+
 - 转换器写入 `arch=yolo26-pose` / `scale` / `nc=1` / `names=["person"]` /
   `kpt_shape=[17,3]`；strict load 全 key 匹配（含 `cv4*` 与 `flow_model`）。
 - 微调从官方 pose 权重开始时，直接 `--weights`；从 O365 **检测**权重初始化时，
@@ -89,8 +95,7 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
   趋势与 best 选取，正式数字用 `scripts/eval.py`。
 - 400 轮官方配方尚未在本仓库完整复现；300 轮从零基线与 10 轮管线对齐见
   [../development/alignment.md](../development/alignment.md) §3.1 / §3.2。
-- 300 轮从零权重是本地训练产物，未随 Release 分发；Release 只提供权重下载/转换脚本
-  （官方权重不随附）。
+- 300 轮从零权重已发布到统一权重 release：`python scripts/download_weights.py --self yolo26n-pose-from-scratch-e300-640`。
 
 ## 6. 推理延迟（model-only，640）
 

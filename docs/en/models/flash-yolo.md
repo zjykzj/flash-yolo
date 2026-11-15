@@ -34,11 +34,12 @@ tree:
 
 ## 3. Weight download
 
-Download links point to the **v1.0.0** release assets.
+This repo's weights download through the script: `python scripts/download_weights.py
+--self <name>` (release details stay inside the script; `--self all` fetches every weight).
 
 | Weights | Training | Input | Download |
 |---|---|---|---|
-| `flash-yolo-e300-640` | 300 ep from scratch | 640 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/flash-yolo-e300-640.safetensors) |
+| `flash-yolo-e300-640` | 300 ep from scratch | 640 | `--self flash-yolo-e300-640` |
 
 - Weight metadata carries `arch=flash-yolo` / `scale=flash` / `nc` / `imgsz` / `names`, so
   eval/infer/export resolve automatically.

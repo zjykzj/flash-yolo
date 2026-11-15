@@ -92,12 +92,13 @@ wh = anchor · exp(t)               # tw/th use the raw logits, clamp(±8) again
 
 ## 6. Weight download and conversion
 
-Download links point to the **v1.0.0** release assets.
+This repo's weights download through the script: `python scripts/download_weights.py
+--self <name>` (release details stay inside the script; `--self all` fetches every weight).
 
 | Weights | Training | Input | Download |
 |---|---|---|---|
-| `yolov3-tiny-e300-416` | 300 ep from scratch · original + IoU-aware objectness | 416 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolov3-tiny-e300-416.safetensors) |
-| `yolov3-tiny-silu-e300-416` | 300 ep from scratch · SiLU + IoU-aware objectness | 416 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolov3-tiny-silu-e300-416.safetensors) |
+| `yolov3-tiny-e300-416` | 300 ep from scratch · original + IoU-aware objectness | 416 | `--self yolov3-tiny-e300-416` |
+| `yolov3-tiny-silu-e300-416` | 300 ep from scratch · SiLU + IoU-aware objectness | 416 | `--self yolov3-tiny-silu-e300-416` |
 
 The official darknet `.weights` are not distributed with the Release; download and convert them
 yourself:

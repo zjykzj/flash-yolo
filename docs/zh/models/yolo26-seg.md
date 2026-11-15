@@ -43,11 +43,12 @@ backbone/neck 与检测版**逐行相同**（官方 yaml diff 的唯一一行是
 
 ## 4. 权重下载与初始化
 
-下载链接指向 **v1.0.0** 发布资产。
+本仓库权重经脚本统一下载：`python scripts/download_weights.py --self <name>`
+（release 细节封装在脚本内；`--self all` 一次下载全部权重）。
 
 | 权重 | 训练 | 输入 | 下载 |
 |---|---|---|---|
-| `yolo26n-seg-from-scratch-e300-640` | 300 ep 从零 | 640 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolo26n-seg-from-scratch-e300-640.safetensors) |
+| `yolo26n-seg-from-scratch-e300-640` | 300 ep 从零 | 640 | `--self yolo26n-seg-from-scratch-e300-640` |
 
 官方权重不随 Release 分发，需自行下载：
 

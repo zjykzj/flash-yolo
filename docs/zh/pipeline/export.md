@@ -131,7 +131,7 @@ raw / v3 输出才是半精度（`TRTEngine._forward` 统一转回 float32）。
 
 ## 5. 发布产物约定
 
-Release 里每份权重通常配套 9 个文件（本仓库 release 档案的口径）：
+本仓库部署口径下每份权重配套一组文件（最多 9 个，本地部署档案；公开 Releases 只挂权重）：
 
 | 文件 | 口径 |
 |---|---|
@@ -145,7 +145,8 @@ Release 里每份权重通常配套 9 个文件（本仓库 release 档案的口
 - **engine 绑定构建机**（GPU 架构 + TRT 版本）——换机需重建：
   `scripts/export.py --weights <w> --trt [--fp16]`。
 - b8 的 raw 构造需要自行用 `--dynamic` 导出并构建；仓库导出路径固定 b1。
-- 权重文件名与下载链接按各模型页的约定；metadata 随 safetensors header 走，见
+- 权重文件名按各模型页的约定、经 `scripts/download_weights.py --self` 下载；metadata 随
+  safetensors header 走，见
   [../models/README.md](../models/README.md)。
 
 ## 6. 坑

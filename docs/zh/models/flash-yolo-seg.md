@@ -52,11 +52,12 @@
 
 ## 4. 权重下载
 
-下载链接指向 **v1.0.0** 发布资产。
+本仓库权重经脚本统一下载：`python scripts/download_weights.py --self <name>`
+（release 细节封装在脚本内；`--self all` 一次下载全部权重）。
 
 | 权重 | 训练 | 输入 | 下载 |
 |---|---|---|---|
-| `flash-yolo-seg-e300-640` | 300 ep 从零 | 640 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/flash-yolo-seg-e300-640.safetensors) |
+| `flash-yolo-seg-e300-640` | 300 ep 从零 | 640 | `--self flash-yolo-seg-e300-640` |
 
 - 权重 metadata 自带 `arch=flash-yolo-seg` / `scale=flash` / `nc` / `names` / `imgsz`，
   eval/infer/export 可自动解析。

@@ -146,7 +146,7 @@ python scripts/infer.py --weights runs/train/<run>/weights/best.safetensors \
   structure; this page's 300-epoch from-scratch numbers are in §3, together with the same-budget
   yolo26n-pose comparison.
 - Structure: 3,081,432 params / 5.9 GFLOPs @640; the first 24 rows are shared with `flash-yolo`.
-- The 300-epoch from-scratch weights are local training artifacts and are not distributed with
-  the Release.
+- The 300-epoch from-scratch weights are published on the unified weights release:
+  `python scripts/download_weights.py --self flash-yolo-pose-e300-640`.
 - `val_rle` is always 0 in validation logs (the val forward does not return sigma); it does not
   mean RLE was not trained.

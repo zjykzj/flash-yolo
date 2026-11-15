@@ -42,9 +42,10 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
   backbone/BN/掩码分支冻结；产物类锁定，可直接评估/导出）与全量微调（`--full-finetune`：
   全部参数训练，reprta 在图内；产物未 fused，评估需同一数据集描述符）。从零训练尚未接入。
 - 结构定义在 `config/models/<model>.yaml`；`--cfg` 可指向自定义 yaml（自定义变体）。
-- 自训权重的下载链接指向**最新发布**资产（v1.0.0 的 checkpoint）；YOLOE 官方权重见
-  yoloe.md（Ultralytics assets），文本编码器的转换产物 `mobileclip2_b.safetensors` 随
-  Releases 提供（与模型权重同目录，见 yoloe.md）。
+- 自训权重统一经 `scripts/download_weights.py --self` 下载（release 细节封装在脚本内）；
+  YOLOE 官方权重见 yoloe.md（Ultralytics assets），文本编码器经
+  `download_weights.py --model mobileclip2_b` + `convert_mobileclip_ts.py` 获取
+  （AMLR 研究用途限定，不随 Release 分发；见 yoloe.md）。
 
 ## 2. 公共结构约定
 

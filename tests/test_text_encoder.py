@@ -1,7 +1,8 @@
 """MobileCLIP2-B 文本编码器 + CLIP BPE tokenizer 验收（M2 文本模式）
 
-权重依赖（dev-time，工具在私有仓库 tools/convert_mobileclip_ts.py）：
-    python tools/convert_mobileclip_ts.py \
+权重依赖（dev-time，先下载再转换）：
+    python scripts/download_weights.py --model mobileclip2_b
+    python scripts/convert_mobileclip_ts.py \
         --input weights/mobileclip2_b.ts --output weights/mobileclip2_b.safetensors
 
 结构事实（ts 实测）：12 层 512-d transformer（8 头 × 64 维）、LN 在残差加完之后

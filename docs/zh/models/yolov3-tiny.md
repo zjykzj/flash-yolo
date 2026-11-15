@@ -80,12 +80,13 @@ wh = anchor · exp(t)               # tw/th 取原始 logits，clamp(±8) 防 ex
 
 ## 6. 权重下载与转换
 
-下载链接指向 **v1.0.0** 发布资产。
+本仓库权重经脚本统一下载：`python scripts/download_weights.py --self <name>`
+（release 细节封装在脚本内；`--self all` 一次下载全部权重）。
 
 | 权重 | 训练 | 输入 | 下载 |
 |---|---|---|---|
-| `yolov3-tiny-e300-416` | 300 ep 从零 · 原版 + IoU-aware objectness | 416 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolov3-tiny-e300-416.safetensors) |
-| `yolov3-tiny-silu-e300-416` | 300 ep 从零 · SiLU + IoU-aware objectness | 416 | [safetensors](https://github.com/zjykzj/flash-yolo/releases/download/v1.0.0/yolov3-tiny-silu-e300-416.safetensors) |
+| `yolov3-tiny-e300-416` | 300 ep 从零 · 原版 + IoU-aware objectness | 416 | `--self yolov3-tiny-e300-416` |
+| `yolov3-tiny-silu-e300-416` | 300 ep 从零 · SiLU + IoU-aware objectness | 416 | `--self yolov3-tiny-silu-e300-416` |
 
 官方 darknet `.weights` 不随 Release 分发，需自行下载并转换：
 

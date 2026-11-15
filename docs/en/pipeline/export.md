@@ -141,8 +141,8 @@ float32).
 
 ## 5. Release artifact conventions
 
-Each weight on Releases usually ships 9 companion files (this repo's release archive
-convention):
+The repo's deployment convention produces a companion set per weight (up to 9 files, local
+deployment archive; the public Releases carry the weights only):
 
 | File | Convention |
 |---|---|
@@ -156,8 +156,9 @@ convention):
 - **Engines are bound to the build machine** (GPU architecture + TRT version) — rebuild on a new
   machine: `scripts/export.py --weights <w> --trt [--fp16]`.
 - b8 raw graphs need `--dynamic` export plus a manual build; the repo's export path pins b1.
-- Weight filenames and download links follow each model page's convention; metadata travels in
-  the safetensors header — see [../models/README.md](../models/README.md).
+- Weight filenames follow each model page's convention and download via
+  `scripts/download_weights.py --self`; metadata travels in the safetensors header — see
+  [../models/README.md](../models/README.md).
 
 ## 6. Gotchas
 

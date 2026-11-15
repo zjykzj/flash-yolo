@@ -48,10 +48,11 @@ python scripts/train.py --data coco --model yolov3-tiny --imgsz 416
   training is not wired.
 - Structures live in `config/models/<model>.yaml`; `--cfg` can point at a custom yaml (custom
   variants).
-- From-scratch weight download links point to the **latest release** assets (the v1.0.0
-  checkpoints); the official YOLOE weights are linked from yoloe.md (Ultralytics assets), and
-  the text-encoder conversion `mobileclip2_b.safetensors` is provided through Releases (next
-  to the model weights, see yoloe.md).
+- From-scratch weights download through `scripts/download_weights.py --self` (release details
+  stay inside the script); the official YOLOE weights are linked from yoloe.md (Ultralytics
+  assets), and the text encoder is fetched with
+  `download_weights.py --model mobileclip2_b` + `convert_mobileclip_ts.py` (AMLR research-only,
+  not distributed with the Release; see yoloe.md).
 
 ## 2. Shared structure conventions
 

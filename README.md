@@ -191,21 +191,23 @@ See [docs/docker.md](docs/en/docker.md) for host requirements (NVIDIA driver ≥
 ## Quick Start
 
 From a clean checkout to an annotated image — no dataset preparation, no training required.
-Download `flash-yolo-e300-640.safetensors` from
-[Releases](https://github.com/zjykzj/flash-yolo/releases).
 
 ```bash
-# 1) run inference on the bundled sample
+# 1) download the checkpoint (--self all fetches every released weight)
+python scripts/download_weights.py --self flash-yolo-e300-640
+
+# 2) run inference on the bundled sample
 python scripts/infer.py --weights flash-yolo-e300-640.safetensors \
     --image assets/traffic.jpg
 
-# 2) open the result
+# 3) open the result
 # -> runs/predict/predictN/traffic.jpg   (annotated image)
 # -> runs/predict/predictN/labels/traffic.txt
 ```
 
-Segmentation works the same way — use `flash-yolo-seg-e300-640.safetensors` and the instance
-masks are overlaid:
+Segmentation works the same way — download `flash-yolo-seg-e300-640.safetensors`
+(`python scripts/download_weights.py --self flash-yolo-seg-e300-640`) and the instance masks
+are overlaid:
 
 ```bash
 python scripts/infer.py --weights flash-yolo-seg-e300-640.safetensors \
@@ -228,7 +230,8 @@ python scripts/export.py --weights flash-yolo-e300-640.safetensors
 # -> runs/export/flash-yolo-e300-640.onnx
 ```
 
-Other released checkpoints and their metrics: [docs/models/README.md](docs/en/models/README.md).
+Other released checkpoints and their metrics: [docs/models/README.md](docs/en/models/README.md)
+(or browse all assets on the [Releases](https://github.com/zjykzj/flash-yolo/releases) page).
 
 ## Usage
 

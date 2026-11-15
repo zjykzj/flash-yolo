@@ -22,13 +22,22 @@
   official fp32 forward (§4). The 20-image COCO smoke is a pipeline check; the full
   5,000-image cross-implementation numbers are in §4.
 - Text mode needs the MobileCLIP2-B text encoder weights (`mobileclip2_b.safetensors`, converted
-  from Apple's `mobileclip2_b.ts` and provided through this repo's Releases) next to the model
-  weights — it is loaded only when `set_classes` runs (infer/eval) and never enters the exported
-  graph (the embeddings are fused into the cls conv at export). Visual mode needs no text
-  encoder: refer-image bboxes/masks are rasterized on the P3 grid (1/8), and SAVPE aggregates
-  the three feature scales into one L2-normalized vpe per class.
+  from Apple's `mobileclip2_b.ts` via the download + convert scripts, not distributed with the
+  Release) next to the model weights — it is loaded only when `set_classes` runs (infer/eval)
+  and never enters the exported graph (the embeddings are fused into the cls conv at export).
+  Visual mode needs no text encoder: refer-image bboxes/masks are rasterized on the P3 grid
+  (1/8), and SAVPE aggregates the three feature scales into one L2-normalized vpe per class.
 - "Official" refers to the Ultralytics-released YOLOE-26 weights/docs; this repo does not
   redistribute them.
+
+Text-mode prerequisite: download and convert the text encoder (the weights are Apple
+AMLR-licensed — **research use only**; you accept the terms):
+
+```bash
+python scripts/download_weights.py --model mobileclip2_b
+python scripts/convert_mobileclip_ts.py --input weights/mobileclip2_b.ts \
+    --output weights/mobileclip2_b.safetensors
+```
 
 ## 2. Structure (n scale)
 

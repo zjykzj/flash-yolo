@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Release weight downloads**: `scripts/download_weights.py` gains `--self` / `--tag` / `--self all` for the unified weights release, plus `--model mobileclip2_b` for the MobileCLIP2-B encoder; the `scripts/convert_mobileclip_ts.py` converter is promoted to the public repo with contract tests.
 - **YOLO26-pose**: official `yolo26*-pose` checkpoints convert, strict-load and run bit-identically; pt/ONNX/TensorRT inference, COCO keypoint (OKS) evaluation and export are wired, with skeleton drawing and YOLO-pose labels.
 - **YOLO26-pose training**: COCO keypoint data/augmentation, pose + keypoint-objectness + RLE loss, OKS training metrics, the official 400-epoch COCO-pose recipe, and single-GPU/DDP Trainer support.
 - **Flash-YOLO-pose**: the flash-yolo backbone/neck with a Pose26 head (3.08M params / 5.9 GFLOPs @640); training, OKS eval, E2E/raw export and inference are wired, including `kpt_shape` metadata and initialization from flash-yolo detection weights with a random pose head.
@@ -28,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **README YOLOE and pose coverage**: the Usage chapter gains a YOLOE-26 subsection (three prompt modes, PE / full-FT commands), pose and YOLOE demo images close the remaining subsections, and the Citation section adds the YOLOE paper.
 - **README YOLOE metrics, pose latency rows and convert flags**: the front page gains a YOLOE-26 cross-implementation table (COCO / LVIS minival, Non-E2E) and pose rows in the inference-latency table (server cells as placeholders); the YOLOE convert commands now use the required `--src` / `--dst` flags, and the Contributing env-gated list adds FLASH_YOLO_TRT.
 - **CPU latency convention**: public latency tables now report CPU numbers from the Ultra 9 185H laptop only (ONNX Runtime fp32, batch-1, three-round best-case min); the Xeon 8470Q server rows and the ORT b8 column were retired, and the pose / YOLOE laptop tables gained measured ORT b1 rows.
+- **Weight download convention**: model pages and the README quick start now download every weight through `scripts/download_weights.py` — release tags and download URLs no longer appear in the docs (a contract test enforces it); the pose from-scratch checkpoints join the unified weights release, and the MobileCLIP2-B encoder moves to a download + convert flow with an AMLR research-only note.
 
 ### Fixed
 

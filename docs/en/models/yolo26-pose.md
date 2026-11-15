@@ -68,6 +68,13 @@ python scripts/convert_weights.py --src weights/yolo26n-pose.pt \
 python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-pose
 ```
 
+The 300-epoch from-scratch weights (trained in this repo) are published on the unified weights
+release:
+
+```bash
+python scripts/download_weights.py --self yolo26n-pose-from-scratch-e300-640
+```
+
 - The converter writes `arch=yolo26-pose` / `scale` / `nc=1` / `names=["person"]` /
   `kpt_shape=[17,3]`; strict load matches every key (including `cv4*` and `flow_model`).
 - To finetune from the official pose weights, pass `--weights` directly. To initialize from
@@ -100,8 +107,8 @@ python scripts/eval.py --weights weights/yolo26n-pose.safetensors --data coco-po
 - The full 400-epoch official recipe has not been reproduced here; the 300-epoch baseline and
   the 10-epoch pipeline parity check are in
   [../development/alignment.md](../development/alignment.md) §3.1 / §3.2.
-- The 300-epoch from-scratch weights are local training artifacts and are not distributed with
-  the Release; the Release ships download/conversion scripts for the official weights.
+- The 300-epoch from-scratch weights are published on the unified weights release:
+  `python scripts/download_weights.py --self yolo26n-pose-from-scratch-e300-640`.
 
 ## 6. Inference latency (model-only, 640)
 

@@ -181,20 +181,23 @@ docker/run.sh pytest tests/            # 在容器内执行任意命令
 
 ## 快速开始
 
-从干净 checkout 到带标注的图片——无需准备数据集、无需训练。从
-[Releases](https://github.com/zjykzj/flash-yolo/releases) 下载 `flash-yolo-e300-640.safetensors`。
+从干净 checkout 到带标注的图片——无需准备数据集、无需训练。
 
 ```bash
-# 1) 对内置样例跑推理
+# 1) 下载权重（--self all 一次下载全部已发布权重）
+python scripts/download_weights.py --self flash-yolo-e300-640
+
+# 2) 对内置样例跑推理
 python scripts/infer.py --weights flash-yolo-e300-640.safetensors \
     --image assets/traffic.jpg
 
-# 2) 打开结果
+# 3) 打开结果
 # -> runs/predict/predictN/traffic.jpg   （标注图片）
 # -> runs/predict/predictN/labels/traffic.txt
 ```
 
-分割用法相同——换用 `flash-yolo-seg-e300-640.safetensors`，实例掩码直接叠加：
+分割用法相同——下载 `flash-yolo-seg-e300-640.safetensors`
+（`python scripts/download_weights.py --self flash-yolo-seg-e300-640`），实例掩码直接叠加：
 
 ```bash
 python scripts/infer.py --weights flash-yolo-seg-e300-640.safetensors \
@@ -217,7 +220,8 @@ python scripts/export.py --weights flash-yolo-e300-640.safetensors
 # -> runs/export/flash-yolo-e300-640.onnx
 ```
 
-其他已发布 checkpoint 及其指标：[docs/zh/models/README.md](docs/zh/models/README.md)。
+其他已发布 checkpoint 及其指标：[docs/zh/models/README.md](docs/zh/models/README.md)
+（或到 [Releases](https://github.com/zjykzj/flash-yolo/releases) 页面浏览全部资产）。
 
 ## 用法
 
