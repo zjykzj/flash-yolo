@@ -83,25 +83,25 @@ LVIS minival——640 输入，两侧同一打分协议（Non-E2E = o2m + NMS；
   （[docs/zh/models/yoloe.md](docs/zh/models/yoloe.md) §4）。
 
 **推理延迟**——model-only，640 输入（ORT-CPU = Ultra 9 185H（22 线程） · fp32；
-TRT 4090 = RTX 4090 · fp16；TRT 4060 = RTX 4060 Laptop · fp16；b8 = batch 8 每图平均）。
+TRT 4060 = RTX 4060 Laptop · fp16；TRT 4090 = RTX 4090 · fp16；b8 = batch 8 每图平均）。
 完整口径与逐模型表格：[docs/zh/models/README.md](docs/zh/models/README.md)。
 
-| 模型 | ORT-CPU b1 | TRT 4090 fp16 b8 | TRT 4060 fp16 b8 |
+| 模型 | ORT-CPU b1 | TRT 4060 fp16 b8 | TRT 4090 fp16 b8 |
 |---|---:|---:|---:|
-| YOLO26n | 19.5 ms | 0.161 ms | 0.606 ms |
-| Flash-YOLO | 16.2 ms | 0.142 ms | 0.535 ms |
+| YOLO26n | 19.5 ms | 0.606 ms | 0.161 ms |
+| Flash-YOLO | 16.2 ms | 0.535 ms | 0.142 ms |
 | Δ | −17% | −12% | −12% |
-| YOLO26n-seg | 26.7 ms | 0.194 ms | 0.791 ms |
-| Flash-YOLO-seg | 26.6 ms | 0.179 ms | 0.702 ms |
-| Δ | ≈0% | −8% | −11% |
-| YOLO26n-pose | 27.1 ms | 0.177 ms | 1.26 ms |
-| Flash-YOLO-pose | 22.4 ms | 0.168 ms | 1.22 ms |
-| Δ | −17% | −5% | −3% |
+| YOLO26n-seg | 26.7 ms | 0.791 ms | 0.194 ms |
+| Flash-YOLO-seg | 26.6 ms | 0.702 ms | 0.179 ms |
+| Δ | ≈0% | −11% | −8% |
+| YOLO26n-pose | 27.1 ms | 1.26 ms | 0.177 ms |
+| Flash-YOLO-pose | 22.4 ms | 1.22 ms | 0.168 ms |
+| Δ | −17% | −3% | −5% |
 
 - ORT-CPU b1 = Ultra 9 185H（22 线程） · ONNX Runtime 1.29 fp32 · b1 固定图 · 三轮
   best-case min（笔记本散热降频下单轮漂移明显）。
-- RTX 4090 单元格：TensorRT 11.4.0.106 / 驱动 580.76.05 / 24 GB；4060 为笔记本 TRT 11.4
-  fp16。完整口径见各模型页。
+- 4060 为笔记本 TRT 11.4 fp16；RTX 4090 单元格：TensorRT 11.4.0.106 / 驱动 580.76.05 /
+  24 GB。完整口径见各模型页。
 
 ## 目录
 

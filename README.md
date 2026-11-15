@@ -90,25 +90,25 @@ o2m + NMS; the fp32 forward is bit-identical):
   ([docs/en/models/yoloe.md](docs/en/models/yoloe.md) §4).
 
 **Inference latency** — model-only, 640 input (ORT-CPU = Ultra 9 185H (22 threads) · fp32;
-TRT 4090 = RTX 4090 · fp16; TRT 4060 = RTX 4060 Laptop · fp16; b8 = batch-8 per-image). Full
+TRT 4060 = RTX 4060 Laptop · fp16; TRT 4090 = RTX 4090 · fp16; b8 = batch-8 per-image). Full
 protocol and per-model tables: [docs/models/README.md](docs/en/models/README.md).
 
-| Model | ORT-CPU b1 | TRT 4090 fp16 b8 | TRT 4060 fp16 b8 |
+| Model | ORT-CPU b1 | TRT 4060 fp16 b8 | TRT 4090 fp16 b8 |
 |---|---:|---:|---:|
-| YOLO26n | 19.5 ms | 0.161 ms | 0.606 ms |
-| Flash-YOLO | 16.2 ms | 0.142 ms | 0.535 ms |
+| YOLO26n | 19.5 ms | 0.606 ms | 0.161 ms |
+| Flash-YOLO | 16.2 ms | 0.535 ms | 0.142 ms |
 | Δ | −17% | −12% | −12% |
-| YOLO26n-seg | 26.7 ms | 0.194 ms | 0.791 ms |
-| Flash-YOLO-seg | 26.6 ms | 0.179 ms | 0.702 ms |
-| Δ | ≈0% | −8% | −11% |
-| YOLO26n-pose | 27.1 ms | 0.177 ms | 1.26 ms |
-| Flash-YOLO-pose | 22.4 ms | 0.168 ms | 1.22 ms |
-| Δ | −17% | −5% | −3% |
+| YOLO26n-seg | 26.7 ms | 0.791 ms | 0.194 ms |
+| Flash-YOLO-seg | 26.6 ms | 0.702 ms | 0.179 ms |
+| Δ | ≈0% | −11% | −8% |
+| YOLO26n-pose | 27.1 ms | 1.26 ms | 0.177 ms |
+| Flash-YOLO-pose | 22.4 ms | 1.22 ms | 0.168 ms |
+| Δ | −17% | −3% | −5% |
 
 - ORT-CPU b1 = Ultra 9 185H (22 threads) · ONNX Runtime 1.29 fp32 · fixed batch-1 graph ·
   three-round best-case min (single rounds drift under laptop thermal throttling).
-- RTX 4090 cells: TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; 4060 cells are laptop TRT 11.4
-  fp16. Full protocol in the model pages.
+- 4060 cells are laptop TRT 11.4 fp16; RTX 4090 cells: TensorRT 11.4.0.106 / driver 580.76.05 /
+  24 GB. Full protocol in the model pages.
 
 ## Table of Contents
 
