@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-15
+
 ### Added
 
 - **Release weight downloads**: `scripts/download_weights.py` gains `--self` / `--tag` / `--self all` for the unified weights release, plus `--model mobileclip2_b` for the MobileCLIP2-B encoder; the `scripts/convert_mobileclip_ts.py` converter is promoted to the public repo with contract tests.
