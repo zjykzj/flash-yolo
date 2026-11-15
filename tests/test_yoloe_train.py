@@ -137,7 +137,8 @@ def test_pe_all_scales_fuse_backward():
         assert len(grads) == n, f"{scale}: unexpected grads {sorted(grads)[:5]}"
         assert all("cv3" in name and name.endswith((".weight", ".bias")) for name in grads), scale
         tested.append(scale)
-    assert tested, "no official text weights found for any scale"
+    if not tested:
+        pytest.skip("需要官方 yoloe 文本权重（weights/yoloe-26*-seg.safetensors）")
 
 
 def test_loss_dispatch_fused_vs_text():
