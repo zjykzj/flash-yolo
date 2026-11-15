@@ -96,12 +96,9 @@ python scripts/train.py --data coco-pose --model flash-yolo-pose \
 |---|---|---:|---:|
 | RTX 4090 | TensorRT 11.4 · fp32 | 1.73 ms | 0.326 ms |
 | RTX 4090 | TensorRT 11.4 · fp16 | 1.40 ms | 0.168 ms |
-| Xeon 8470Q (25-core quota) | ONNX Runtime 1.30 · fp32 | — | — |
 
-- The 8470Q row is a placeholder to be filled after server measurements; the RTX 4090
-  rows are measured (TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes H2D and
-  readback, b8 is 100 back-to-back pipelined runs). ORT conditions as in
-  [yolo26.md](yolo26.md) §5.
+- The RTX 4090 rows are measured (TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes
+  H2D and readback, b8 is 100 back-to-back pipelined runs).
 
 ### Local laptop
 
@@ -111,9 +108,12 @@ python scripts/train.py --data coco-pose --model flash-yolo-pose \
 | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 4.37 ms | 1.22 ms |
 | RTX 4060 Laptop | PyTorch · CUDA fp32 | 13.8 ms | — |
 | Ultra 9 185H (22 threads) | PyTorch · CPU fp32 | 54.9 ms | — |
+| Ultra 9 185H (22 threads) | ONNX Runtime 1.29 · fp32 | 22.4 ms | — |
 
 - b1 is a multi-round best-case min (laptop GPU dynamic clocks make single shots drift);
   b8 is stable.
+- ORT conditions: intra_op=16 / inter_op=1; fixed batch-1 graph; best-case min over 300 samples
+  (three rounds, min across rounds).
 - fp16 is slower than fp32 at b1 (small graphs are scheduling-overhead-bound, the same
   phenomenon as in [yolov3-tiny.md](yolov3-tiny.md)); b8 reflects the compute difference.
 - TensorRT engines are bound to the build machine's GPU and TRT version; rebuild with

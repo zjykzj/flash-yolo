@@ -99,10 +99,7 @@ The official O365 seg init is **365-class**, while COCO training builds an 80-cl
 |---|---|---:|---:|
 | RTX 4090 | TensorRT 11.4 · fp32 | 2.39 ms | 0.439 ms |
 | RTX 4090 | TensorRT 11.4 · fp16 | 2.97 ms | 0.194 ms |
-| Xeon 8470Q (25-core quota) | ONNX Runtime 1.30 · fp32 | 16.8 ms | 12.0 ms |
 
-- ORT conditions: intra_op=16 / inter_op=1; b1 fixed graph, b8 dynamic graph; best-case min over
-  300 samples.
 - TRT conditions: b1 fixed engine, b8 batch-8 engine; 30 single shots + 100 pipelined runs
   (RTX 4090 / RTX 4060 Laptop share the same protocol).
 - RTX 4090 rows: TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes H2D and
@@ -111,8 +108,7 @@ The official O365 seg init is **365-class**, while COCO training builds an 80-cl
   32×160×160 proto readback and half→float conversion); on the 4060 fp16 is slightly faster
   at b1 (3.73 vs 4.16 ms). b8 is where fp16 wins on both platforms (4090 0.194 vs 0.439 ms;
   4060 0.791 vs 2.01 ms).
-- ORT absolute values are affected by neighbor load on the host; b1 hugs the launch-overhead
-  floor, b8 reflects the compute difference.
+- b1 hugs the launch-overhead floor, b8 reflects the compute difference.
 
 ### Local laptop
 
@@ -120,9 +116,12 @@ The official O365 seg init is **365-class**, while COCO training builds an 80-cl
 |---|---|---:|---:|
 | RTX 4060 Laptop | TensorRT 11.4 · fp32 | 4.16 ms | 2.01 ms |
 | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 3.73 ms | 0.791 ms |
+| Ultra 9 185H (22 threads) | ONNX Runtime 1.29 · fp32 | 26.7 ms | — |
 
 - b1 is the best-case min of three rounds (single shots drift noticeably under laptop GPU
   dynamic clocks); b8 is stable.
+- ORT conditions: intra_op=16 / inter_op=1; fixed batch-1 graph; best-case min over 300 samples
+  (three rounds, min across rounds).
 
 > Mask decode and IoU are currently mostly on the CPU; deployed end-to-end latency is
 > significantly higher than model-only and needs a separate measurement.

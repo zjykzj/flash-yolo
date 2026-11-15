@@ -24,7 +24,7 @@ val2017）——**从零数字和官方数字放在一起比较不是 like for l
 ### Flash-YOLO 比 YOLO26n 低 2.68 点，为什么还值得用？
 
 买的是算力：−31% GFLOPs（3.80 vs 5.48）、−23% 参数、b8 延迟 −11~−12%（TensorRT fp32，
-RTX 4090 / 4060 Laptop）/ −26%（ORT-CPU b8）。精度-算力比是本仓库轻量化的核心指标；结构
+RTX 4090 / 4060 Laptop）/ −17%（ORT-CPU b1）。精度-算力比是本仓库轻量化的核心指标；结构
 取舍的结论见 [models/flash-yolo.md](models/flash-yolo.md)。
 
 ### 延迟表里 b1 在服务器上几乎打平、b8 优势明显，为什么？

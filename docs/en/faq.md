@@ -28,7 +28,7 @@ against the official one.
 ### Flash-YOLO is 2.68 points below YOLO26n — why is it worth using?
 
 What you buy is compute: −31% GFLOPs (3.80 vs 5.48), −23% params, b8 latency −11~−12%
-(TensorRT fp32, RTX 4090 / 4060 Laptop) / −26% (ORT-CPU b8). The accuracy-per-compute ratio is
+(TensorRT fp32, RTX 4090 / 4060 Laptop) / −17% (ORT-CPU b1). The accuracy-per-compute ratio is
 this repo's core lightweighting metric; the structural conclusions are in
 [models/flash-yolo.md](models/flash-yolo.md).
 

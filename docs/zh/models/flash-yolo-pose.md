@@ -89,11 +89,9 @@ python scripts/train.py --data coco-pose --model flash-yolo-pose \
 |---|---|---:|---:|
 | RTX 4090 | TensorRT 11.4 · fp32 | 1.73 ms | 0.326 ms |
 | RTX 4090 | TensorRT 11.4 · fp16 | 1.40 ms | 0.168 ms |
-| Xeon 8470Q（25 核配额） | ONNX Runtime 1.30 · fp32 | — | — |
 
-- 8470Q 行待服务器测量后回填；4090 行已实测（TensorRT 11.4.0.106 · 驱动 580.76.05 ·
-  24 GB；b1 含 H2D/读回，b8 为 100 次背靠背流水线吞吐）。ORT 条件同
-  [yolo26.md](yolo26.md) §5。
+- 4090 行已实测（TensorRT 11.4.0.106 · 驱动 580.76.05 ·
+  24 GB；b1 含 H2D/读回，b8 为 100 次背靠背流水线吞吐）。
 
 ### 本地笔记本
 
@@ -103,8 +101,10 @@ python scripts/train.py --data coco-pose --model flash-yolo-pose \
 | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 4.37 ms | 1.22 ms |
 | RTX 4060 Laptop | PyTorch · CUDA fp32 | 13.8 ms | — |
 | Ultra 9 185H（22 线程） | PyTorch · CPU fp32 | 54.9 ms | — |
+| Ultra 9 185H（22 线程） | ONNX Runtime 1.29 · fp32 | 22.4 ms | — |
 
 - b1 为多轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
+- ORT 条件：intra_op=16 / inter_op=1；b1 固定图；300 样本取 best-case min（三轮 min 定稿）。
 - fp16 的 b1 慢于 fp32（笔记本小图调度开销主导，与 [yolov3-tiny.md](yolov3-tiny.md) 同现象）；
   b8 才反映算力差。
 - TensorRT 引擎与构建机 GPU/TRT 版本绑定；换机需重跑 `scripts/export.py --trt`。

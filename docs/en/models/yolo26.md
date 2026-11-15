@@ -98,16 +98,12 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data coco
 |---|---|---:|---:|
 | RTX 4090 | TensorRT 11.4 · fp32 | 1.71 ms | 0.316 ms |
 | RTX 4090 | TensorRT 11.4 · fp16 | 1.33 ms | 0.161 ms |
-| Xeon 8470Q (25-core quota) | ONNX Runtime 1.30 · fp32 | 14.6 ms | 6.86 ms |
 
-- ORT conditions: intra_op=16 / inter_op=1; b1 fixed graph, b8 dynamic graph; best-case min over
-  300 samples.
 - TRT conditions: b1 fixed engine, b8 batch-8 engine; 30 single shots + 100 pipelined runs
   (RTX 4090 / RTX 4060 Laptop share the same protocol).
 - RTX 4090 rows: TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes H2D and
   readback, b8 is 100 back-to-back pipelined runs.
-- b1 hugs the launch-overhead floor; b8 reflects the compute difference. ORT absolute values are
-  affected by neighbor load on the host.
+- b1 hugs the launch-overhead floor; b8 reflects the compute difference.
 
 ### Local laptop
 
@@ -115,9 +111,12 @@ python scripts/eval.py --weights weights/yolo26n.safetensors --data coco
 |---|---|---:|---:|
 | RTX 4060 Laptop | TensorRT 11.4 · fp32 | 3.63 ms | 1.40 ms |
 | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 3.41 ms | 0.606 ms |
+| Ultra 9 185H (22 threads) | ONNX Runtime 1.29 · fp32 | 19.5 ms | — |
 
 - b1 is the best-case min of three rounds (single shots drift noticeably under laptop GPU
   dynamic clocks); b8 is stable.
+- ORT conditions: intra_op=16 / inter_op=1; fixed batch-1 graph; best-case min over 300 samples
+  (three rounds, min across rounds).
 
 ## 6. Usage
 

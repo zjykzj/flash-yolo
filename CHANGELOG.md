@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **YOLOE and pose latency tables**: YOLOE (pf / text / PE / full-FT) and pose (flash-yolo-pose / yolo26n-pose) model pages document model-only b1/b8 latency for PyTorch and TensorRT on the RTX 4060 Laptop, with RTX 5090 / Xeon 8470Q rows left as placeholders; pf's TRT batch-8 engine is recorded as unbuildable on TRT 11.4.
 - **README YOLOE and pose coverage**: the Usage chapter gains a YOLOE-26 subsection (three prompt modes, PE / full-FT commands), pose and YOLOE demo images close the remaining subsections, and the Citation section adds the YOLOE paper.
 - **README YOLOE metrics, pose latency rows and convert flags**: the front page gains a YOLOE-26 cross-implementation table (COCO / LVIS minival, Non-E2E) and pose rows in the inference-latency table (server cells as placeholders); the YOLOE convert commands now use the required `--src` / `--dst` flags, and the Contributing env-gated list adds FLASH_YOLO_TRT.
+- **CPU latency convention**: public latency tables now report CPU numbers from the Ultra 9 185H laptop only (ONNX Runtime fp32, batch-1, three-round best-case min); the Xeon 8470Q server rows and the ORT b8 column were retired, and the pose / YOLOE laptop tables gained measured ORT b1 rows.
 
 ### Fixed
 

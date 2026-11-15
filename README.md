@@ -89,24 +89,24 @@ o2m + NMS; the fp32 forward is bit-identical):
   0.2228 — a configuration difference, not an implementation gap
   ([docs/en/models/yoloe.md](docs/en/models/yoloe.md) §4).
 
-**Inference latency** — model-only, 640 input (ORT-CPU = Xeon 8470Q · fp32; TRT 4090 = RTX 4090 ·
-fp16; TRT 4060 = RTX 4060 Laptop · fp16; b8 = batch-8 per-image). Full protocol and per-model
-tables: [docs/models/README.md](docs/en/models/README.md).
+**Inference latency** — model-only, 640 input (ORT-CPU = Ultra 9 185H (22 threads) · fp32;
+TRT 4090 = RTX 4090 · fp16; TRT 4060 = RTX 4060 Laptop · fp16; b8 = batch-8 per-image). Full
+protocol and per-model tables: [docs/models/README.md](docs/en/models/README.md).
 
-| Model | ORT-CPU b1 | ORT-CPU b8 | TRT 4090 fp16 b8 | TRT 4060 fp16 b8 |
-|---|---:|---:|---:|---:|
-| YOLO26n | 14.6 ms | 6.86 ms | 0.161 ms | 0.606 ms |
-| Flash-YOLO | 13.2 ms | 5.84 ms | 0.142 ms | 0.535 ms |
-| Δ | −10% | −15% | −12% | −12% |
-| YOLO26n-seg | 16.8 ms | 12.0 ms | 0.194 ms | 0.791 ms |
-| Flash-YOLO-seg | 14.9 ms | 10.8 ms | 0.179 ms | 0.702 ms |
-| Δ | −11% | −10% | −8% | −11% |
-| YOLO26n-pose | 12.4 ms | — | 0.177 ms | 1.26 ms |
-| Flash-YOLO-pose | — | — | 0.168 ms | 1.22 ms |
-| Δ | — | — | −5% | −3% |
+| Model | ORT-CPU b1 | TRT 4090 fp16 b8 | TRT 4060 fp16 b8 |
+|---|---:|---:|---:|
+| YOLO26n | 19.5 ms | 0.161 ms | 0.606 ms |
+| Flash-YOLO | 16.2 ms | 0.142 ms | 0.535 ms |
+| Δ | −17% | −12% | −12% |
+| YOLO26n-seg | 26.7 ms | 0.194 ms | 0.791 ms |
+| Flash-YOLO-seg | 26.6 ms | 0.179 ms | 0.702 ms |
+| Δ | ≈0% | −8% | −11% |
+| YOLO26n-pose | 27.1 ms | 0.177 ms | 1.26 ms |
+| Flash-YOLO-pose | 22.4 ms | 0.168 ms | 1.22 ms |
+| Δ | −17% | −5% | −3% |
 
-- Pose: the 8470Q ORT b1 for YOLO26n-pose carries over from the model page; remaining cells are
-  4090 / 4060 TRT measurements.
+- ORT-CPU b1 = Ultra 9 185H (22 threads) · ONNX Runtime 1.29 fp32 · fixed batch-1 graph ·
+  three-round best-case min (single rounds drift under laptop thermal throttling).
 - RTX 4090 cells: TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; 4060 cells are laptop TRT 11.4
   fp16. Full protocol in the model pages.
 

@@ -381,11 +381,10 @@ lr0 0.001 / batch 32 / 640；单卡 3090 4 h 40 min）。正式评估（pycocoto
 | pf | RTX 4090 | TensorRT 11.4 · fp16 | 12.36 ms | 不可构建 |
 | 文本（80 类，类锁定） | RTX 4090 | TensorRT 11.4 · fp32 | 2.41 ms | 0.454 ms |
 | 文本（80 类，类锁定） | RTX 4090 | TensorRT 11.4 · fp16 | 3.12 ms | 0.208 ms |
-| pf / 文本 | Xeon 8470Q（25 核配额） | ONNX Runtime 1.30 · fp32 | — | — |
 
-- 8470Q 行待服务器测量后回填；4090 行已实测（TensorRT 11.4.0.106 · 驱动 580.76.05 ·
+- 4090 行已实测（TensorRT 11.4.0.106 · 驱动 580.76.05 ·
   24 GB；b1 含 H2D/读回，b8 为 100 次背靠背流水线吞吐）。pf 用 `yoloe-26n-seg-pf.onnx`、
-  文本用 `--classes` 类锁定导出的 onnx；ORT 条件同 [yolo26.md](yolo26.md) §5。
+  文本用 `--classes` 类锁定导出的 onnx。
 
 ### 本地笔记本
 
@@ -395,16 +394,21 @@ lr0 0.001 / batch 32 / 640；单卡 3090 4 h 40 min）。正式评估（pycocoto
 | pf | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 20.7 ms | 不可构建 |
 | pf | RTX 4060 Laptop | PyTorch · CUDA fp32 | 26.6 ms | — |
 | pf | Ultra 9 185H（22 线程） | PyTorch · CPU fp32 | 315 ms | — |
+| pf | Ultra 9 185H（22 线程） | ONNX Runtime 1.29 · fp32 | 102 ms | — |
 | 文本（80 类，类锁定） | RTX 4060 Laptop | TensorRT 11.4 · fp32 | 4.60 ms | 2.72 ms |
 | 文本（80 类，类锁定） | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 5.61 ms | 1.79 ms |
 | 文本（80 类，未 fused） | RTX 4060 Laptop | PyTorch · CUDA fp32 | 16.7 ms | — |
 | 文本（80 类，未 fused） | Ultra 9 185H（22 线程） | PyTorch · CPU fp32 | 69.2 ms | — |
+| 文本（80 类，类锁定） | Ultra 9 185H（22 线程） | ONNX Runtime 1.29 · fp32 | 29.2 ms | — |
 | PE 产物（类锁定 = 文本 fused 图） | RTX 4060 Laptop | PyTorch · CUDA fp32 | 16.8 ms | — |
 | PE 产物 | Ultra 9 185H（22 线程） | PyTorch · CPU fp32 | 61.2 ms | — |
 | 全量微调产物（未 fused） | RTX 4060 Laptop | PyTorch · CUDA fp32 | 16.6 ms | — |
 | 全量微调产物 | Ultra 9 185H（22 线程） | PyTorch · CPU fp32 | 69.8 ms | — |
 
 - b1 为多轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
+- ORT 行：pf 用 `yoloe-26n-seg-pf.onnx`、文本用 `--classes` 80 COCO 类锁定导出；条件同
+  [yolo26.md](yolo26.md) §5（intra_op=16 / inter_op=1、b1 固定图、300 样本取 best-case min、
+  三轮 min 定稿）。
 - **pf 的 TRT b8 引擎不可构建**：TRT 11.4 对 lrpc 相似度 MatMul+Broadcast 在 batch>1 无实现
   （fp32 / fp16 均报 "Could not find any implementation"）；b1 固定引擎不受影响。
 - pf 的 TRT b1 ≈ PyTorch b1（lrpc 提案过滤对 TRT 不友好）；文本类锁定的 TRT 提速明显。

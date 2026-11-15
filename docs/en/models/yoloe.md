@@ -441,12 +441,10 @@ evaluation (pycocotools, all 5,000 images):
 | pf | RTX 4090 | TensorRT 11.4 · fp16 | 12.36 ms | not buildable |
 | text (80 classes, class-locked) | RTX 4090 | TensorRT 11.4 · fp32 | 2.41 ms | 0.454 ms |
 | text (80 classes, class-locked) | RTX 4090 | TensorRT 11.4 · fp16 | 3.12 ms | 0.208 ms |
-| pf / text | Xeon 8470Q (25-core quota) | ONNX Runtime 1.30 · fp32 | — | — |
 
-- The 8470Q row is a placeholder to be filled after server measurements; the RTX 4090
-  rows are measured (TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes H2D and
-  readback, b8 is 100 back-to-back pipelined runs). pf uses `yoloe-26n-seg-pf.onnx`, text
-  uses the `--classes` class-locked export; ORT conditions as in [yolo26.md](yolo26.md) §5.
+- The RTX 4090 rows are measured (TensorRT 11.4.0.106 / driver 580.76.05 / 24 GB; b1 includes
+  H2D and readback, b8 is 100 back-to-back pipelined runs). pf uses `yoloe-26n-seg-pf.onnx`,
+  text uses the `--classes` class-locked export.
 
 ### Local laptop
 
@@ -456,10 +454,12 @@ evaluation (pycocotools, all 5,000 images):
 | pf | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 20.7 ms | not buildable |
 | pf | RTX 4060 Laptop | PyTorch · CUDA fp32 | 26.6 ms | — |
 | pf | Ultra 9 185H (22 threads) | PyTorch · CPU fp32 | 315 ms | — |
+| pf | Ultra 9 185H (22 threads) | ONNX Runtime 1.29 · fp32 | 102 ms | — |
 | text (80 classes, class-locked) | RTX 4060 Laptop | TensorRT 11.4 · fp32 | 4.60 ms | 2.72 ms |
 | text (80 classes, class-locked) | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 5.61 ms | 1.79 ms |
 | text (80 classes, unfused) | RTX 4060 Laptop | PyTorch · CUDA fp32 | 16.7 ms | — |
 | text (80 classes, unfused) | Ultra 9 185H (22 threads) | PyTorch · CPU fp32 | 69.2 ms | — |
+| text (80 classes, class-locked) | Ultra 9 185H (22 threads) | ONNX Runtime 1.29 · fp32 | 29.2 ms | — |
 | PE output (class-locked = text fused graph) | RTX 4060 Laptop | PyTorch · CUDA fp32 | 16.8 ms | — |
 | PE output | Ultra 9 185H (22 threads) | PyTorch · CPU fp32 | 61.2 ms | — |
 | full-FT output (unfused) | RTX 4060 Laptop | PyTorch · CUDA fp32 | 16.6 ms | — |
@@ -467,6 +467,9 @@ evaluation (pycocotools, all 5,000 images):
 
 - b1 is a multi-round best-case min (laptop GPU dynamic clocks make single shots drift);
   b8 is stable.
+- ORT rows: pf uses `yoloe-26n-seg-pf.onnx`, text uses the `--classes` 80-class class-locked
+  export; conditions as in [yolo26.md](yolo26.md) §5 (intra_op=16 / inter_op=1, fixed batch-1
+  graph, best-case min over 300 samples, three rounds min-final).
 - **The pf b8 TRT engine is not buildable**: TRT 11.4 has no implementation for the lrpc
   similarity MatMul+Broadcast at batch>1 (fp32 and fp16 both report "Could not find any
   implementation"); fixed b1 engines are unaffected.

@@ -80,16 +80,14 @@
 |---|---|---:|---:|
 | RTX 4090 | TensorRT 11.4 · fp32 | 2.34 ms | 0.402 ms |
 | RTX 4090 | TensorRT 11.4 · fp16 | 3.10 ms | 0.179 ms |
-| Xeon 8470Q（25 核配额） | ONNX Runtime 1.30 · fp32 | 14.9 ms | 10.8 ms |
 
-- ORT 条件：intra_op=16 / inter_op=1；b1 固定图、b8 动态图；300 样本取 best-case min。
 - TRT 条件：b1 固定引擎、b8 batch-8 引擎；30 次单发 + 100 次流水线（RTX 4090 / RTX 4060 Laptop 同协议）。
 - RTX 4090 行：TensorRT 11.4.0.106 · 驱动 580.76.05 · 24 GB；b1 含 H2D/读回，
   b8 为 100 次背靠背流水线吞吐。
 - **b1 的 fp16 在 4090 上反而慢于 fp32**（3.10 vs 2.34 ms；proto 输出 32×160×160 的读回与
   half→float 转换主导）；4060 上 fp16 略快（3.77 vs 4.07 ms）。b8 两平台都是 fp16 的优势区间
   （4090 0.179 vs 0.402 ms；4060 0.702 vs 1.85 ms）。
-- ORT 绝对值受宿主邻居负载影响；b1 贴近启动开销地板，b8 才能反映算力差。
+- b1 贴近启动开销地板，b8 才能反映算力差。
 
 ### 本地笔记本
 
@@ -97,8 +95,10 @@
 |---|---|---:|---:|
 | RTX 4060 Laptop | TensorRT 11.4 · fp32 | 4.07 ms | 1.85 ms |
 | RTX 4060 Laptop | TensorRT 11.4 · fp16 | 3.77 ms | 0.702 ms |
+| Ultra 9 185H（22 线程） | ONNX Runtime 1.29 · fp32 | 26.6 ms | — |
 
 - b1 为三轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
+- ORT 条件：intra_op=16 / inter_op=1；b1 固定图；300 样本取 best-case min（三轮 min 定稿）。
 
 > 掩码解码与 IoU 目前主要在 CPU；部署时的端到端延迟显著高于 model-only，需单独测量。
 
