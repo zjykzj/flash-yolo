@@ -55,15 +55,17 @@ For `--model yolo26-seg` / `flash-yolo-seg`:
 ## 4. Conversion
 
 ```bash
-# COCO -> YOLO detection (dataflow-cv; writes only labels/ and classes.txt)
+# COCO -> YOLO (detection + segmentation, one command; requires dataflow-cv >= 3.2.0)
 dataflow-cv convert coco2yolo <json> <out-yolo>
-
-# COCO -> YOLO-seg (this repo's script; polygons follow the official merge convention)
-python scripts/convert_coco_seg.py --src <json> --dst <out-yolo>/labels
 ```
 
-dataflow-cv's `coco2yolo` currently writes bbox only, not polygon rows; use
-`convert_coco_seg.py` for segmentation.
+dataflow-cv (`pip install dataflow-cv`, >= 3.2.0 required) writes both detection bbox rows and
+segmentation polygon rows: multi-segment polygons are merged into one outline (official merge
+convention), RLE is decoded to polygons, **iscrowd=1 is skipped by default** (`--save-crowd`
+keeps it), and annotations with missing segmentation fall back to bbox rows. Output =
+`classes.txt` + `labels/<stem>.txt` (`images/` is empty — symlink it); `classes.txt` is a
+conversion by-product this project does not consume — class names come from the descriptor
+`names`.
 
 ## 5. Gotchas
 

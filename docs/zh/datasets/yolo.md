@@ -50,15 +50,15 @@ val:   {images: images/val}
 ## 4. 转换
 
 ```bash
-# COCO -> YOLO 检测（dataflow-cv；只写 labels/ 与 classes.txt）
+# COCO -> YOLO（检测 + 分割，一条命令；需 dataflow-cv >= 3.2.0）
 dataflow-cv convert coco2yolo <json> <out-yolo>
-
-# COCO -> YOLO-seg（本仓库脚本；多边形按官方 merge 口径）
-python scripts/convert_coco_seg.py --src <json> --dst <out-yolo>/labels
 ```
 
-`dataflow-cv` 的 `coco2yolo` 目前优先写 bbox，不生成多边形行；分割转换用
-`convert_coco_seg.py`。
+`dataflow-cv`（`pip install dataflow-cv`，需 ≥3.2.0）的 `coco2yolo` 同时输出检测 bbox 行与
+分割多边形行：多段多边形按官方 merge 口径合并为一条外轮廓、RLE 解码成多边形，
+**iscrowd=1 默认剔除**（`--save-crowd` 显式保留），缺失 segmentation 的标注按 bbox 行回退。
+产物 = `classes.txt` + `labels/<stem>.txt`（`images/` 为空，用符号链接接上）；`classes.txt`
+只是转换副产品，本工程不消费——类别名来自描述符 `names`。
 
 ## 5. 坑
 

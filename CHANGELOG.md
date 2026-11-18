@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **COCO→YOLO conversion via dataflow-cv**: `scripts/convert_coco_seg.py` is retired (reference implementation moves to the private notes); conversion now uses `dataflow-cv convert coco2yolo` (≥3.2.0) — polygons merged, `iscrowd=1` skipped by default with `--save-crowd` opt-in; dataset docs updated.
+
 ## [1.7.0] - 2026-11-15
 
 ### Added

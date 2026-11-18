@@ -110,11 +110,10 @@ val:   {images: val2017,   ann: annotations/person_keypoints_val2017.json}
 python scripts/make_coco_subset.py --src /path/to/coco --dst /path/to/coco-tiny \
     --n-train 2000 --n-val 1000 --seed 0 --link-images --emit-descriptors
 
-# ② YOLO detection conversion (dataflow-cv; writes only labels/ and classes.txt, images/ linked)
+# ② YOLO detection/segmentation conversion (dataflow-cv >= 3.2.0, an external tool needed only
+#    for this step; crowd skipped by default, --save-crowd keeps it; writes only labels/ and
+#    classes.txt, images/ empty — symlink it)
 dataflow-cv convert coco2yolo <json> <out-yolo>
-
-# ②b YOLO segmentation conversion (this repo's script; polygons follow the official merge convention)
-python scripts/convert_coco_seg.py --src <json> --dst <out-yolo>/labels
 
 # ③ afterwards --data coco-tiny / coco-tiny-yolo work directly
 python scripts/train.py --data coco-tiny --epochs 5 --batch 16 --workers 8

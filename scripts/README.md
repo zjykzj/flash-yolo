@@ -23,11 +23,13 @@
 
 - `make_coco_subset.py` —— 从 COCO 抽子集（coco-tiny）：种子抽样、图片硬链接、生成数据集
   描述符。用于本机快速验证全流程，以及作为 YOLO 格式转换的输入。
-- `convert_coco_seg.py` —— COCO 多边形标注 → YOLO-seg txt。dataflow-cv 的 `coco2yolo`
-  即使有 segmentation 也优先写 bbox，多边形要由本脚本按官方 merge 口径生成。
 - `convert_lvis.py` —— 原始 LVIS 注解 → compat COCO json（补 `file_name` / `iscrowd`、
   类别重编号、`neg_category_ids` 同步重映射；`--minival-ref` 可选过滤/补齐 minival）。
   LVIS 训练或评估前先跑一次。
+
+COCO → YOLO 格式转换用外部工具 `dataflow-cv`（`pip install dataflow-cv`，需 ≥3.2.0）：
+检测/分割一条命令，多边形按官方 merge 口径、crowd 默认剔除（`--save-crowd` 保留），
+见 datasets/yolo.md §4。
 
 文档：[datasets/README.md](../docs/datasets/README.md) §6 小数据集循环 ·
 [datasets/coco.md](../docs/datasets/coco.md) · [datasets/yolo.md](../docs/datasets/yolo.md) ·

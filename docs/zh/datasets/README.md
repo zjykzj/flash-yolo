@@ -102,11 +102,9 @@ val:   {images: val2017,   ann: annotations/person_keypoints_val2017.json}
 python scripts/make_coco_subset.py --src /path/to/coco --dst /path/to/coco-tiny \
     --n-train 2000 --n-val 1000 --seed 0 --link-images --emit-descriptors
 
-# ② YOLO 检测格式转换（dataflow-cv；只写 labels/ 与 classes.txt，images/ 用符号链接接上）
+# ② YOLO 检测/分割格式转换（dataflow-cv >= 3.2.0，外部工具仅此步骤需要；crowd 默认剔除，
+#    --save-crowd 可保留；只写 labels/ 与 classes.txt，images/ 为空，用符号链接接上）
 dataflow-cv convert coco2yolo <json> <out-yolo>
-
-# ②b YOLO 分割格式转换（本仓库脚本；多边形按官方 merge 口径）
-python scripts/convert_coco_seg.py --src <json> --dst <out-yolo>/labels
 
 # ③ 之后 --data coco-tiny / coco-tiny-yolo 直接可用
 python scripts/train.py --data coco-tiny --epochs 5 --batch 16 --workers 8
