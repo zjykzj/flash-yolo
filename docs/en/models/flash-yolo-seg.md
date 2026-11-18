@@ -7,7 +7,15 @@
 > [flash-yolo.md](flash-yolo.md), pose variant:
 > [flash-yolo-pose.md](flash-yolo-pose.md).
 
-## 1. Naming and scales
+## 1. Scope
+
+- Formal numbers = 300 epochs from scratch (built-in `default` recipe + `--epochs 300`,
+  batch 32 / nbs 64 / fp32 / mask_ratio 4 / seed 0); the architecture has no official weights,
+  so no like-for-like issue exists.
+- Metric protocol: COCO val2017 @640, `scripts/eval.py` (Box + Mask) — see §6.
+- In-training validation is trend/best-picking only.
+
+## 2. Naming and scales
 
 - Family name first, task suffix last: `flash-yolo-seg` (not `flash-yolo-seg-n`).
 - Single `flash` scale: channels are materialized, there is no n/s/m/l/x dimension; `--scale`
@@ -15,7 +23,7 @@
 - The architecture is inferred from the weights filename (`flash-yolo-seg.safetensors`); the
   long-name regex wins, so the `flash-yolo` prefix never mis-swallows it.
 
-## 2. Structure
+## 3. Structure
 
 25 yaml lines; the only diff vs `flash-yolo.yaml` is the last line:
 
@@ -44,7 +52,7 @@ detection layers stay P3/P4/P5 (idx 17/20/23).
 - GFLOPs roughly double vs the detection variant because of the Proto26 branch (same for the
   official seg).
 
-## 3. Reused pipeline
+## 4. Reused pipeline
 
 | Stage | Reuse |
 |---|---|
@@ -57,7 +65,7 @@ detection layers stay P3/P4/P5 (idx 17/20/23).
 
 Besides `ARCHS`, the loss dispatch table and the weights-name regex, nothing new was added.
 
-## 4. Weight download
+## 5. Weight download
 
 This repo's weights download through the script: `python scripts/download_weights.py
 --self <name>` (release details stay inside the script; `--self all` fetches every weight).
@@ -69,7 +77,7 @@ This repo's weights download through the script: `python scripts/download_weight
 - Weight metadata carries `arch=flash-yolo-seg` / `scale=flash` / `nc` / `names` / `imgsz`, so
   eval/infer/export resolve automatically.
 
-## 5. Formal metrics (COCO val2017 @640)
+## 6. Formal metrics (COCO val2017 @640)
 
 300 epochs from scratch (default recipe, batch 32, nbs 64, fp32, mask_ratio 4, seed 0):
 
@@ -77,7 +85,7 @@ This repo's weights download through the script: `python scripts/download_weight
 |---|---:|---:|---:|---:|---:|---:|
 | From scratch 300 ep | 2,528,248 | 7.6 | 50.74 | **35.05** | 48.14 | **29.98** |
 
-## 6. Inference latency
+## 7. Inference latency
 
 > Protocol: **model-only** (no mask decode / pre/postprocessing), 640 input; b1 = single image,
 > b8 = per-image average of batch 8. Engines warm up at init. b1 is single-shot (with H2D and
@@ -116,7 +124,7 @@ This repo's weights download through the script: `python scripts/download_weight
 > Mask decode and IoU are currently mostly on the CPU; deployed end-to-end latency is
 > significantly higher than model-only and needs a separate measurement.
 
-## 7. Usage
+## 8. Usage
 
 ```bash
 python model/summary.py --model flash-yolo-seg
@@ -130,7 +138,7 @@ python scripts/infer.py --weights flash-yolo-seg-e300-640.safetensors \
     --image assets/traffic.jpg
 ```
 
-## 8. Notes
+## 9. Notes
 
 - Single `flash` scale — don't pass `--scale`.
 - Segmentation training is dominated by the loader and validation; the architecture difference is

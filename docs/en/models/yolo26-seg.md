@@ -4,7 +4,14 @@
 > only the segmentation differences.
 > Structure: `config/models/yolo26-seg.yaml`.
 
-## 1. Structure
+## 1. Scope
+
+- Official seg weights = Objects365 pretrain + COCO finetune (365-class O365 init + 80-class
+  COCO head); the 300-epoch from-scratch numbers are **not like-for-like** with them.
+- Metric protocol: COCO val2017 @640, `scripts/eval.py` (pycocotools Box + Mask) — see §5;
+  in-training validation is trend/best-picking only.
+
+## 2. Structure
 
 backbone/neck are **identical line-by-line** with the detection variant (the official yaml diff
 is exactly the last line); the head becomes `Segment26` = `Detect` + two segmentation-specific
@@ -20,7 +27,7 @@ pieces:
 - n totals **3,126,280 params / 309 layers / 9.3 GFLOPs @640**.
 - The o2o branch's proto is `detach()`ed (gradients flow back through o2m only).
 
-## 2. Inference contract
+## 3. Inference contract
 
 - E2E: `(B, 300, 6+nm)` detections+coefficients + `(B, nm, H/4, W/4)` prototypes.
 - raw: `(B, 4+nc+nm, N)` + prototypes.
@@ -30,21 +37,6 @@ pieces:
   the network input size → binarize `>0` → crop by box → de-letterbox resample to the original
   image → binarize `>0.5` (the official `process_mask(upsample=True)` + `scale_masks` two-stage
   convention).
-
-## 3. Training
-
-- `ComputeLossSeg` reuses the detection dual-branch losses (box/cls/l1 + ProgLoss), with an extra
-  mask term per branch: coefficients @ prototypes → BCE (cropped by the responsible GT box,
-  scaled by normalized box area, summed over the batch / positive samples), mask gain =
-  `box_gain`.
-- Data accepts COCO polygons/RLE and YOLO-seg polygon rows (see
-  [../datasets/coco.md](../datasets/coco.md) / [../datasets/yolo.md](../datasets/yolo.md)).
-- `mask_ratio` (default 4) downsamples GT masks to `imgsz/mask_ratio` (640 → 160, the Proto26
-  grid); `overlap_mask=True` produces an area-descending instance index map.
-- Official seg recipe: `yolo26-seg-coco-ft` (`mask_ratio=1` / `overlap_mask=true` /
-  `copy_paste_mode=flip`), needs the 365-class `yolo26*-objv1-seg` initialization.
-- Validation computes Box + Mask simultaneously; best fitness = box mAP50-95 + mask mAP50-95;
-  formal numbers still come from `scripts/eval.py`.
 
 ## 4. Weight download and initialization
 
@@ -127,7 +119,22 @@ The official O365 seg init is **365-class**, while COCO training builds an 80-cl
 > Mask decode and IoU are currently mostly on the CPU; deployed end-to-end latency is
 > significantly higher than model-only and needs a separate measurement.
 
-## 7. Usage
+## 7. Training
+
+- `ComputeLossSeg` reuses the detection dual-branch losses (box/cls/l1 + ProgLoss), with an extra
+  mask term per branch: coefficients @ prototypes → BCE (cropped by the responsible GT box,
+  scaled by normalized box area, summed over the batch / positive samples), mask gain =
+  `box_gain`.
+- Data accepts COCO polygons/RLE and YOLO-seg polygon rows (see
+  [../datasets/coco.md](../datasets/coco.md) / [../datasets/yolo.md](../datasets/yolo.md)).
+- `mask_ratio` (default 4) downsamples GT masks to `imgsz/mask_ratio` (640 → 160, the Proto26
+  grid); `overlap_mask=True` produces an area-descending instance index map.
+- Official seg recipe: `yolo26-seg-coco-ft` (`mask_ratio=1` / `overlap_mask=true` /
+  `copy_paste_mode=flip`), needs the 365-class `yolo26*-objv1-seg` initialization.
+- Validation computes Box + Mask simultaneously; best fitness = box mAP50-95 + mask mAP50-95;
+  formal numbers still come from `scripts/eval.py`.
+
+## 8. Usage
 
 ```bash
 python scripts/train.py --data coco --model yolo26-seg --name seg-coco --batch 32 --workers 8
@@ -140,7 +147,7 @@ python scripts/infer.py --weights yolo26n-seg-from-scratch-e300-640.safetensors 
     --image assets/traffic.jpg
 ```
 
-## 8. Notes
+## 9. Notes
 
 - Mask decode + IoU currently run on the CPU (the in-training `process_mask_lowres` chunks
   automatically); `process_mask` on GPU uses the engine device, bit-identical.

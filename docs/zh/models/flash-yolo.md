@@ -5,7 +5,14 @@
 > 结构定义：`config/models/flash-yolo.yaml`；分割版见 [flash-yolo-seg.md](flash-yolo-seg.md)，
 > 姿态版见 [flash-yolo-pose.md](flash-yolo-pose.md)。
 
-## 1. 设计命题
+## 1. 口径声明
+
+- 本页数字 = 从零 300 轮（内置 `default` 配方 + `--epochs 300`）；本架构无官方权重，
+  不存在 like-for-like 问题。
+- 指标口径：COCO val2017 @640，`scripts/eval.py`（E2E / NMS 双路径）——见 §5。
+- 延迟口径：model-only b1/b8，RTX 4090 服务器 + RTX 4060 Laptop——见 §6。
+
+## 2. 设计命题
 
 - **YOLOv3-tiny 的廉价空间下采样 × YOLO26 的 CSP 容量分配**；头（Detect / E2E）、损失、
   训练管线完全复用 YOLO26——改动只落在 backbone / neck。
@@ -17,16 +24,16 @@
   C3k2 / SPPF / C2PSA / Detect 与三个检测层原样不动。
 - 结构取舍的结论：DW stem 在同算力下有效；neck 缩容与 LiteBlock 均劣于定稿结构。
 
-## 2. 定稿结构
+## 3. 定稿结构
 
 25 行 yaml（比 YOLO26n 多一行：stem 拆成 DW 3×3 + 1×1），262 层模块树：
 
 - 规模：**1,974,248 参数（1.97M，−23% vs YOLO26n）· 3.80 GFLOPs @640（−31%）**。
 - 检测层 P3/P4/P5 与 Detect 头原样保留；权重键与 YOLO26 前缀一一对应，构建/引擎/训练
   链路零特判。
-- 速度：b1 与 YOLO26n 接近（per-run 开销主导），b8 优势明显；完整延迟见 §5。
+- 速度：b1 与 YOLO26n 接近（per-run 开销主导），b8 优势明显；完整延迟见 §6。
 
-## 3. 权重下载
+## 4. 权重下载
 
 本仓库权重经脚本统一下载：`python scripts/download_weights.py --self <name>`
 （release 细节封装在脚本内；`--self all` 一次下载全部权重）。
@@ -38,13 +45,13 @@
 - 权重 metadata 自带 `arch=flash-yolo` / `scale=flash` / `nc` / `imgsz` / `names`，
   eval/infer/export 可自动解析。
 
-## 4. 正式指标（COCO val2017 @640）
+## 5. 正式指标（COCO val2017 @640）
 
 | 训练 | E2E mAP50-95 | E2E mAP50 | NMS mAP50-95 | NMS mAP50 | Params | GFLOPs |
 |---|---:|---:|---:|---:|---:|---:|
 | 从零 300 ep | **35.14** | **50.15** | **36.09** | **51.56** | 1.97M | 3.80 |
 
-## 5. 推理延迟
+## 6. 推理延迟
 
 > 口径：**model-only**（不含前后处理），输入 640；b1 = 单图，b8 = batch 8 每图平均。
 > 引擎 init 已做 warmup，数字为重复测量的稳态值；同一架构不同权重的延迟相同。
@@ -72,7 +79,7 @@
 - b1 为三轮 best-case min（笔记本 GPU 动态频率下单发漂移明显）；b8 稳定。
 - ORT 条件：intra_op=16 / inter_op=1；b1 固定图；300 样本取 best-case min（三轮 min 定稿）。
 
-## 6. 用法
+## 7. 用法
 
 ```bash
 # 结构自检（无需数据）
@@ -91,7 +98,7 @@ python scripts/infer.py --weights flash-yolo-e300-640.safetensors \
     --image assets/traffic.jpg
 ```
 
-## 7. 注意
+## 8. 注意
 
 - `flash-yolo` 只有 `flash` 单档，不要传 `--scale`。
 - 结构改动只在 backbone/neck；新增算子（PoolConv/DW stem）在 `model/basic/` 与

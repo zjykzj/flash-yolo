@@ -3,7 +3,14 @@
 > 检测版的结构、损失与训练管线见 [yolo26.md](yolo26.md)；本文只写分割差异。
 > 结构定义：`config/models/yolo26-seg.yaml`。
 
-## 1. 结构
+## 1. 口径声明
+
+- 官方 seg 权重 = Objects365 预训练 + COCO 微调（365 类 O365 初始化 + 80 类 COCO 头）；
+  从零 300 轮与官方数字**不是 like-for-like**。
+- 指标口径：COCO val2017 @640，`scripts/eval.py`（pycocotools Box + Mask）——见 §5；
+  训练中验证只作趋势与 best 选取。
+
+## 2. 结构
 
 backbone/neck 与检测版**逐行相同**（官方 yaml diff 的唯一一行是最后一行），头换成
 `Segment26` = `Detect` + 两个分割专属件：
@@ -18,7 +25,7 @@ backbone/neck 与检测版**逐行相同**（官方 yaml diff 的唯一一行是
 - n 档合计 **3,126,280 参数 / 309 层 / 9.3 GFLOPs @640**。
 - o2o 分支的 proto 走 `detach()`（梯度只经 o2m 回流）。
 
-## 2. 推理契约
+## 3. 推理契约
 
 - E2E：`(B, 300, 6+nm)` 检测+系数 + `(B, nm, H/4, W/4)` 原型。
 - raw：`(B, 4+nc+nm, N)` + 原型。
@@ -26,20 +33,6 @@ backbone/neck 与检测版**逐行相同**（官方 yaml diff 的唯一一行是
 - 掩码解码 `utils/postprocess.process_mask`：系数 @ 原型 → bilinear 上采样到网络输入尺寸 →
   `>0` 二值化 → 按框裁剪 → 反 letterbox 重采样到原图 → `>0.5` 再二值化（与官方
   `process_mask(upsample=True)` + `scale_masks` 两段口径一致）。
-
-## 3. 训练
-
-- `ComputeLossSeg` 复用检测双分支损失（box/cls/l1 + ProgLoss），每个分支额外计算掩码项：
-  系数 @ 原型 → BCE（按责任 GT 框裁剪、按归一化框面积缩放，全 batch 求和 / 正样本数），
-  掩码增益 = `box_gain`。
-- 数据侧接受 COCO 多边形/RLE 与 YOLO-seg 多边形行（见
-  [../datasets/coco.md](../datasets/coco.md) / [../datasets/yolo.md](../datasets/yolo.md)）。
-- `mask_ratio`（默认 4）把 GT 掩码降采样到 `imgsz/mask_ratio`（640 → 160，与 Proto26 同网格）；
-  `overlap_mask=True` 生成面积降序实例索引图。
-- 官方 seg 配方：`yolo26-seg-coco-ft`（`mask_ratio=1` / `overlap_mask=true` /
-  `copy_paste_mode=flip`），需要 `yolo26*-objv1-seg` 365 类初始化。
-- 验证同时算 Box + Mask；best fitness = box mAP50-95 + mask mAP50-95；正式数字仍以
-  `scripts/eval.py` 为准。
 
 ## 4. 权重下载与初始化
 
@@ -116,7 +109,21 @@ python scripts/convert_weights.py --src weights/yolo26n-objv1-seg.pt \
 
 > 掩码解码与 IoU 目前主要在 CPU；部署时的端到端延迟显著高于 model-only，需单独测量。
 
-## 7. 用法
+## 7. 训练
+
+- `ComputeLossSeg` 复用检测双分支损失（box/cls/l1 + ProgLoss），每个分支额外计算掩码项：
+  系数 @ 原型 → BCE（按责任 GT 框裁剪、按归一化框面积缩放，全 batch 求和 / 正样本数），
+  掩码增益 = `box_gain`。
+- 数据侧接受 COCO 多边形/RLE 与 YOLO-seg 多边形行（见
+  [../datasets/coco.md](../datasets/coco.md) / [../datasets/yolo.md](../datasets/yolo.md)）。
+- `mask_ratio`（默认 4）把 GT 掩码降采样到 `imgsz/mask_ratio`（640 → 160，与 Proto26 同网格）；
+  `overlap_mask=True` 生成面积降序实例索引图。
+- 官方 seg 配方：`yolo26-seg-coco-ft`（`mask_ratio=1` / `overlap_mask=true` /
+  `copy_paste_mode=flip`），需要 `yolo26*-objv1-seg` 365 类初始化。
+- 验证同时算 Box + Mask；best fitness = box mAP50-95 + mask mAP50-95；正式数字仍以
+  `scripts/eval.py` 为准。
+
+## 8. 用法
 
 ```bash
 python scripts/train.py --data coco --model yolo26-seg --name seg-coco --batch 32 --workers 8
@@ -129,7 +136,7 @@ python scripts/infer.py --weights yolo26n-seg-from-scratch-e300-640.safetensors 
     --image assets/traffic.jpg
 ```
 
-## 8. 注意
+## 9. 注意
 
 - 掩码解码 + IoU 目前在 CPU（训练验证的 `process_mask_lowres` 自动分块）；GPU 上 `process_mask`
   会使用引擎设备，逐位一致。

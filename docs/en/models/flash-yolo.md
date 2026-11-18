@@ -7,7 +7,14 @@
 > [flash-yolo-seg.md](flash-yolo-seg.md), pose variant:
 > [flash-yolo-pose.md](flash-yolo-pose.md).
 
-## 1. Design proposition
+## 1. Scope
+
+- This page's numbers = 300 epochs from scratch (built-in `default` recipe + `--epochs 300`);
+  the architecture has no official weights, so no like-for-like issue exists.
+- Metric protocol: COCO val2017 @640, `scripts/eval.py` (E2E / NMS dual path) — see §5.
+- Latency protocol: model-only b1/b8, RTX 4090 server + RTX 4060 Laptop — see §6.
+
+## 2. Design proposition
 
 - **YOLOv3-tiny's cheap spatial downsampling × YOLO26's CSP capacity allocation**; the head
   (Detect / E2E), loss and training pipeline are fully reused from YOLO26 — changes land only in
@@ -21,7 +28,7 @@
 - Structural conclusions: the DW stem pays off at equal compute; neck channel cuts and LiteBlock
   both lose to the final structure.
 
-## 2. Final structure
+## 3. Final structure
 
 25 yaml lines (one more than YOLO26n: the stem split into DW 3×3 + 1×1), a 262-layer module
 tree:
@@ -30,9 +37,9 @@ tree:
 - Detection layers P3/P4/P5 and the Detect head stay untouched; weight keys map one-to-one with
   the YOLO26 prefixes — zero special cases in build/engine/training.
 - Speed: close to YOLO26n at b1 (per-run overhead dominates), clearly faster at b8; full latency
-  in §5.
+  in §6.
 
-## 3. Weight download
+## 4. Weight download
 
 This repo's weights download through the script: `python scripts/download_weights.py
 --self <name>` (release details stay inside the script; `--self all` fetches every weight).
@@ -44,13 +51,13 @@ This repo's weights download through the script: `python scripts/download_weight
 - Weight metadata carries `arch=flash-yolo` / `scale=flash` / `nc` / `imgsz` / `names`, so
   eval/infer/export resolve automatically.
 
-## 4. Formal metrics (COCO val2017 @640)
+## 5. Formal metrics (COCO val2017 @640)
 
 | Training | E2E mAP50-95 | E2E mAP50 | NMS mAP50-95 | NMS mAP50 | Params | GFLOPs |
 |---|---:|---:|---:|---:|---:|---:|
 | From scratch 300 ep | **35.14** | **50.15** | **36.09** | **51.56** | 1.97M | 3.80 |
 
-## 5. Inference latency
+## 6. Inference latency
 
 > Protocol: **model-only** (no pre/postprocessing), 640 input; b1 = single image, b8 = per-image
 > average of batch 8. Engines warm up at init; numbers are steady-state repeats. Latency is the
@@ -82,7 +89,7 @@ This repo's weights download through the script: `python scripts/download_weight
 - ORT conditions: intra_op=16 / inter_op=1; fixed batch-1 graph; best-case min over 300 samples
   (three rounds, min across rounds).
 
-## 6. Usage
+## 7. Usage
 
 ```bash
 # structure self-check (no data needed)
@@ -101,7 +108,7 @@ python scripts/infer.py --weights flash-yolo-e300-640.safetensors \
     --image assets/traffic.jpg
 ```
 
-## 7. Notes
+## 8. Notes
 
 - `flash-yolo` has only the single `flash` scale — don't pass `--scale`.
 - Structural changes land only in backbone/neck; the new operators (PoolConv/DW stem) are

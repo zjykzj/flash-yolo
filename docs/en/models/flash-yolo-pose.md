@@ -8,7 +8,18 @@
 > Status: structure / training / evaluation / export / inference are wired; **300-epoch
 > from-scratch result: E2E 0.5004 / NMS 0.5055** on COCO-pose val2017 (2,346 images).
 
-## 1. Structure
+## 1. Scope
+
+- Formal numbers = 300 epochs from scratch (built-in `default` recipe + `--epochs 300`,
+  batch 32 / nbs 64 / fp32 / single GPU), COCO-pose val2017 2,346 images, pycocotools OKS,
+  maxDets=20 — see §4.
+- The official `yolo26n-pose` numbers (O365 detection pretrain + 400-epoch finetune) are **not
+  like-for-like** with from-scratch training; §4 lists the same-budget (300-epoch from-scratch)
+  yolo26n-pose comparison.
+- In-training FastPoseMetrics is trend/best-picking only; formal numbers come from
+  `scripts/eval.py`.
+
+## 2. Structure
 
 - The backbone/neck is line-for-line identical to `flash-yolo` (the first 24 rows of the
   25-row yaml); only the final `Detect` becomes `Pose26`: `config/models/flash-yolo-pose.yaml`.
@@ -21,7 +32,7 @@
 - `kpt_shape = (17, 3)` is structural and travels in the weights metadata; custom keypoint
   datasets must update the descriptor/weights metadata, not just `nc`.
 
-## 2. Contracts
+## 3. Contracts
 
 - **E2E (default)**: `(B, 300, 6 + nk)` = `[x1,y1,x2,y2,score,cls, kpts...]`; keypoints share
   the same two-stage top-k with the boxes. For COCO 17 points `nk=51`, i.e. `(B, 300, 57)`.
@@ -33,7 +44,7 @@
 - Validation computes Box + Pose; best fitness = box + pose mAP50-95; formal numbers still come
   from `scripts/eval.py`.
 
-## 3. Formal metrics (300 epochs from scratch)
+## 4. Formal metrics (300 epochs from scratch)
 
 Protocol: COCO-pose val2017, 2,346 images, pycocotools OKS, maxDets=20; `default` recipe,
 batch 32, nbs 64, fp32, single GPU; best = ep300.
@@ -52,35 +63,6 @@ batch 32, nbs 64, fp32, single GPU; best = ep300.
 - FastPoseMetrics now follows the COCO keypoint convention (ignores `num_keypoints==0`, uses the
   annotation `area`); on the same best checkpoint it reads 0.4791, within ~0.02 of the formal
   0.5004, with AR@20 matching.
-
-## 4. Training
-
-Use the built-in `default` recipe from scratch (100 epochs by default; the formal run below uses
-300) — `yolo26-pose-coco` is the official pose checkpoint's 400-epoch finetune recipe and relies
-on an O365-pretrained start; do not use it directly for a from-scratch flash model:
-
-```bash
-# architecture sanity check (no data)
-python model/summary.py --model flash-yolo-pose
-
-# from scratch (COCO-pose; fp32 by default)
-python scripts/train.py --data coco-pose --model flash-yolo-pose \
-    --epochs 300 --batch 32 --workers 12 --no-amp \
-    --name flash-pose-scratch-300ep
-
-# optional: initialize backbone/neck from flash-yolo detection weights; pose head is random
-python scripts/train.py --data coco-pose --model flash-yolo-pose \
-    --weights flash-yolo-e300-640.safetensors \
-    --name flash-pose-ft --batch 32 --workers 8 --amp
-```
-
-- When initializing from detection weights, `cv4/cv4_kpts/cv4_sigma/flow_model` are absent;
-  `load_weights_finetune(..., allow_missing_head=True)` initializes them randomly and loads
-  every other key bit-for-bit (see `tests/test_finetune_load.py`).
-- `copy_paste > 0` errors out for pose; `fliplr` uses the descriptor's `flip_idx`.
-- The FastPoseMetrics correction and its re-evaluation are in §3; training logs remain
-  trend/best-picking only — formal numbers come from `scripts/eval.py` (same protocol as
-  [yolo26-pose.md](yolo26-pose.md)).
 
 ## 5. Inference latency (model-only, 640)
 
@@ -121,7 +103,36 @@ python scripts/train.py --data coco-pose --model flash-yolo-pose \
 - Build commands: `scripts/export.py --weights <best.safetensors> --trt [--fp16]` (E2E single
   output (B,300,57)); batch-8 engines are built separately per the b8 protocol.
 
-## 6. Evaluate / export / infer
+## 6. Training
+
+Use the built-in `default` recipe from scratch (100 epochs by default; the formal run below uses
+300) — `yolo26-pose-coco` is the official pose checkpoint's 400-epoch finetune recipe and relies
+on an O365-pretrained start; do not use it directly for a from-scratch flash model:
+
+```bash
+# architecture sanity check (no data)
+python model/summary.py --model flash-yolo-pose
+
+# from scratch (COCO-pose; fp32 by default)
+python scripts/train.py --data coco-pose --model flash-yolo-pose \
+    --epochs 300 --batch 32 --workers 12 --no-amp \
+    --name flash-pose-scratch-300ep
+
+# optional: initialize backbone/neck from flash-yolo detection weights; pose head is random
+python scripts/train.py --data coco-pose --model flash-yolo-pose \
+    --weights flash-yolo-e300-640.safetensors \
+    --name flash-pose-ft --batch 32 --workers 8 --amp
+```
+
+- When initializing from detection weights, `cv4/cv4_kpts/cv4_sigma/flow_model` are absent;
+  `load_weights_finetune(..., allow_missing_head=True)` initializes them randomly and loads
+  every other key bit-for-bit (see `tests/test_finetune_load.py`).
+- `copy_paste > 0` errors out for pose; `fliplr` uses the descriptor's `flip_idx`.
+- The FastPoseMetrics correction and its re-evaluation are in §4; training logs remain
+  trend/best-picking only — formal numbers come from `scripts/eval.py` (same protocol as
+  [yolo26-pose.md](yolo26-pose.md)).
+
+## 7. Evaluate / export / infer
 
 ```bash
 python scripts/eval.py --weights runs/train/<run>/weights/best.safetensors --data coco-pose
@@ -139,11 +150,11 @@ python scripts/infer.py --weights runs/train/<run>/weights/best.safetensors \
   end2end`; infer/eval no longer need the original `.safetensors`.
 - `--nms` is supported (pose o2m branch); `--single-cls` is not applicable to pose.
 
-## 7. Notes
+## 8. Notes
 
 - Only the `flash` scale exists; do not pass `--scale`.
 - The official `yolo26n-pose` reference numbers (E2E 0.5687 / 0.8250) do **not** apply to this
-  structure; this page's 300-epoch from-scratch numbers are in §3, together with the same-budget
+  structure; this page's 300-epoch from-scratch numbers are in §4, together with the same-budget
   yolo26n-pose comparison.
 - Structure: 3,081,432 params / 5.9 GFLOPs @640; the first 24 rows are shared with `flash-yolo`.
 - The 300-epoch from-scratch weights are published on the unified weights release:
