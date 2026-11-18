@@ -1,11 +1,17 @@
 # Eval
 
 > Entry point: `python scripts/eval.py --weights <w> --data <name|.yaml>`.
-> **This script is the only source of external numbers**: COCO protocol runs on pycocotools,
-> LVIS protocol on faster_coco_eval (`lvis_style`); the FastMetrics / FastLvisMetrics printed
-> during training are for trends and best-picking only.
 
-## 1. Usage
+## 1. Scope
+
+- **This script is the only source of external numbers**: COCO protocol runs on pycocotools,
+  LVIS protocol on faster_coco_eval (`lvis_style`); the FastMetrics / FastLvisMetrics printed
+  during training are for trends and best-picking only.
+- Default convention: conf 0.001 / iou 0.7 / maxDets 300 (COCO protocol fixed 100, pose 20),
+  evaluating the descriptor's `val` role in full (`--limit` takes the first N images and
+  restricts GT to the same subset).
+
+## 2. Usage
 
 ```bash
 python scripts/eval.py --weights weights/yolo26n.safetensors --data coco                # E2E
@@ -47,7 +53,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 | `--single-cls` | off | single-class evaluation: map GT classes to 0 (not applicable to pose; the CLI errors out) |
 | `--device` | auto | pt engine device |
 
-## 2. Metric conventions and evaluation protocols
+## 3. Metric conventions and evaluation protocols
 
 | Convention | Implementation | Use | Approximations |
 |---|---|---|---|
@@ -58,7 +64,7 @@ python scripts/eval.py --weights w.safetensors --data lvis-minival --eval-max-de
 FastMetrics tracks the formal convention well, but **cross-run comparisons and external
 references always use the formal convention**.
 
-### 2.1 LVIS protocol (`eval_style: lvis`)
+### 3.1 LVIS protocol (`eval_style: lvis`)
 
 Dataset layout, compat conversion and descriptor: [../datasets/lvis.md](../datasets/lvis.md).
 
@@ -88,7 +94,7 @@ predictions can differ by several times) and must not be compared with published
   same checkpoint it is within ~0.005–0.009 AP of the formal LVIS evaluator; training logs
   remain trend/best-picking only. The COCO path keeps using `FastMetrics`.
 
-## 3. Reading the output
+## 4. Reading the output
 
 ```text
       Class           Images Instances         P         R     mAP50  mAP50-95    AR@100
@@ -109,7 +115,7 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - Results land in `runs/val/valN/` (with `run.log`); `results.json` is a COCO result list that
   can be rescored directly with faster_coco_eval.
 
-## 4. E2E vs NMS
+## 5. E2E vs NMS
 
 - **E2E (default)**: o2o head, no NMS, output `(B,300,6)`; the official 40.1 goes through this.
 - **NMS**: o2m head + class-aware NMS, usually ~0.9 points higher, slightly slower;
@@ -118,7 +124,7 @@ Speed: 27.0 ms/image = load 2.5 + preprocess 1.8 + inference 7.5 + postprocess 1
 - **Single-class models**: `--single-cls` maps GT classes to 0 (model nc must be 1).
 - YOLOv3-tiny has a single "decode + obj×cls + NMS" path; `--nms` / `--raw` error out.
 
-## 5. Segmentation (yolo26-seg / flash-yolo-seg)
+## 6. Segmentation (yolo26-seg / flash-yolo-seg)
 
 Segmentation weights automatically produce two tables: the same results evaluated by **box IoU
 (Box)** and by **mask IoU (Mask)**.
@@ -132,7 +138,7 @@ Segmentation weights automatically produce two tables: the same results evaluate
 - In-training validation computes Box + Mask simultaneously (low-resolution approximation), best
   fitness = box + mask mAP50-95; formal numbers still come from this script.
 
-### 5.1 Pose (yolo26-pose / flash-yolo-pose)
+## 7. Pose (yolo26-pose / flash-yolo-pose)
 
 - `--data coco-pose`: COCO `person_keypoints_*.json`; the evaluator uses
   `iou_type="keypoints"` (pycocotools OKS, `maxDets=20`). **Val only evaluates the 2,346 images
@@ -150,11 +156,7 @@ Segmentation weights automatically produce two tables: the same results evaluate
   reference — evaluate it with this script; structure:
   [../models/flash-yolo-pose.md](../models/flash-yolo-pose.md).
 
-**Official yolo26n-seg @640 acceptance**: Box 0.3967 / 0.5548, Mask 0.3367 / 0.5276 (mAP50-95 /
-mAP50). The official training-time validator records box 0.3975 / mask 0.3386 — the ~0.002 gap
-is metric-implementation noise.
-
-## 6. YOLOE (open-vocabulary)
+## 8. YOLOE (open-vocabulary)
 
 - **prompt-free (`-pf` weights)**: the head's baked 4,585-name vocabulary is mapped onto the
   dataset classes — exact name match first, `vocab_synonyms` fallback (11 COCO entries built
@@ -164,7 +166,7 @@ is metric-implementation noise.
   (`set_classes`); `--data lvis` evaluates against the 1,203 LVIS categories
   (`config/datasets/lvis.yaml`, first-synonym names — the official LVIS prompt convention).
   Compare with the official LVIS minival numbers via `--data lvis-minival` (faster_coco_eval
-  `lvis_style`, see §2.1). The pt path defaults to `mobileclip2_b.safetensors` next to the
+  `lvis_style`, see §3.1). The pt path defaults to `mobileclip2_b.safetensors` next to the
   model weights (run-dir fine-tune checkpoints use `--text-encoder`); `onnx` / `trt` consume
   the class-locked graph (the locked classes must cover every
   dataset class — use a subset descriptor for a subset export) and map the deploy-metadata class
@@ -178,7 +180,7 @@ is metric-implementation noise.
 - All three modes report Box + Mask tables like the other segmentation architectures.
 - Model details: [../models/yoloe.md](../models/yoloe.md).
 
-## 7. Reference baselines (COCO val2017)
+## 9. Reference baselines (COCO val2017)
 
 | Weights | Input | E2E mAP50-95 / mAP50 | NMS mAP50-95 / mAP50 |
 |---|---|---|---|
@@ -190,7 +192,11 @@ is metric-implementation noise.
 The full weight list, download links and latency live on the model pages
 ([../models/README.md](../models/README.md)).
 
-## 8. Gotchas
+**Official yolo26n-seg @640 acceptance**: Box 0.3967 / 0.5548, Mask 0.3367 / 0.5276 (mAP50-95 /
+mAP50). The official training-time validator records box 0.3975 / mask 0.3386 — the ~0.002 gap
+is metric-implementation noise.
+
+## 10. Gotchas
 
 - **LVIS `frequency`**: `lvis_style=True` requires `frequency` (r/c/f) on every category; a plain
   COCO json with `eval_style: lvis` errors out in the evaluator constructor.

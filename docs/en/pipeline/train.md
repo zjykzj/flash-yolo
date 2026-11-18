@@ -4,7 +4,16 @@
 > Data: [../datasets/README.md](../datasets/README.md), models:
 > [../models/README.md](../models/README.md), formal evaluation: [eval.md](eval.md).
 
-## 1. Five ways to run
+## 1. Scope
+
+- **From-scratch training uses only the built-in `default` recipe**; `yolo26-coco-ft` /
+  `yolo26-seg-coco-ft` / `yolo26-pose-coco` are finetune recipes for an O365-pretrained
+  starting point — running them from scratch pins the model in a slow gear (see §3).
+- In-training metrics (FastMetrics / FastPoseMetrics / FastLvisMetrics) are trend/
+  best-picking only; external numbers always come from `scripts/eval.py` (see
+  [eval.md](eval.md)).
+
+## 2. Five ways to run
 
 ```bash
 # from scratch (default; the built-in default recipe, 100 epochs)
@@ -40,7 +49,7 @@ python scripts/train.py --data coco-pose --model flash-yolo-pose \
     --name flash-pose --batch 32 --workers 8 --no-amp
 ```
 
-## 2. Recipes
+## 3. Recipes
 
 Priority: `config/train.yaml` base values → recipe file overrides → CLI overrides.
 
@@ -83,7 +92,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
   start). Initializing from `flash-yolo` detection weights keeps the backbone/neck and
   randomizes the pose head.
 
-## 3. Common arguments
+## 4. Common arguments
 
 | Argument | Default | Description |
 |---|---|---|
@@ -129,7 +138,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 Every other hyperparameter has a same-name CLI override — `--help` lists them all; defaults are
 `config/train.yaml`.
 
-## 4. Run artifacts (`runs/train/train-<name>/`)
+## 5. Run artifacts (`runs/train/train-<name>/`)
 
 | Artifact | Content |
 |---|---|
@@ -146,7 +155,7 @@ Every other hyperparameter has a same-name CLI override — `--help` lists them 
 
 Weight metadata: [../models/README.md](../models/README.md).
 
-## 5. Reproducibility
+## 6. Reproducibility
 
 Three levels:
 
@@ -166,7 +175,7 @@ Bit-identical reproduction needs all of the following:
 Bit-identical across machines is impossible (different kernels); only statistical agreement is
 promised. Gate: `FLASH_YOLO_REPRO=1 pytest tests/test_train_repro.py`.
 
-## 6. Tune I/O first
+## 7. Tune I/O first
 
 `--batch` / `--workers` are machine-dependent values, deliberately not in the default config:
 
@@ -178,7 +187,7 @@ python scripts/bench_io.py --data coco --loader-only
 - **A fast loader ≠ fast training**: only end-to-end numbers can decide.
 - More workers is not better (filling all cores starves the main process).
 
-## 7. Multi-GPU training (DDP)
+## 8. Multi-GPU training (DDP)
 
 Training only; eval / export / infer remain single-process.
 
@@ -197,7 +206,7 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
 - Throughput: the data pipeline usually saturates first, so multi-GPU scaling is usually
   sublinear; use `bench_io.py` to pick the single-GPU values first.
 
-## 8. Common gotchas
+## 9. Common gotchas
 
 1. **`--amp` NaNs or explodes in from-scratch training**. Default is fp32; finetuning may try
    `--amp`.
@@ -205,12 +214,12 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
    scaled down by `min(N, epochs//5)`.
 3. `best.safetensors` is picked by FastMetrics (COCO / pose) or FastLvisMetrics
    (`eval_style: lvis`); external numbers go through `scripts/eval.py`.
-4. **Pose**: COCO-pose val only evaluates the 2,346 images with valid keypoints; `val_rle` is
+4. Val losses cannot be compared directly with training losses (augmentation distribution / EMA
+   vs raw / BN mode).
+5. **Pose**: COCO-pose val only evaluates the 2,346 images with valid keypoints; `val_rle` is
    always 0 by design; `copy_paste > 0` errors out; `--single-cls` is not applicable. `fliplr`
    needs the descriptor's `flip_idx`, otherwise left/right keypoint semantics break after
    flipping.
-5. Val losses cannot be compared directly with training losses (augmentation distribution / EMA
-   vs raw / BN mode).
 6. Training-log loss columns: yolo26 → `box/cls/l1/o2m/o2o`, segmentation adds `seg/sem`,
    v3 → `box/obj/cls`.
 7. From-scratch training at a different input size computes the bias prior at the training imgsz;

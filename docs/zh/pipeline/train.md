@@ -4,7 +4,15 @@
 > 数据见 [../datasets/README.md](../datasets/README.md)，模型见
 > [../models/README.md](../models/README.md)，正式评估见 [eval.md](eval.md)。
 
-## 1. 五种运行方式
+## 1. 定位与口径
+
+- **从零训练只用内置 `default` 配方**；`yolo26-coco-ft` / `yolo26-seg-coco-ft` /
+  `yolo26-pose-coco` 是"已有 O365 预训练起点"的微调档，从零跑等于把模型按在慢速档上
+  （详见 §3）。
+- 训练中指标（FastMetrics / FastPoseMetrics / FastLvisMetrics）只用于趋势与选
+  `best.safetensors`；对外数字一律 `scripts/eval.py`（见 [eval.md](eval.md)）。
+
+## 2. 五种运行方式
 
 ```bash
 # 从零训练（默认；内置 default 配方 100 轮）
@@ -39,7 +47,7 @@ python scripts/train.py --data coco-pose --model flash-yolo-pose \
     --name flash-pose --batch 32 --workers 8 --no-amp
 ```
 
-## 2. 配方（recipe）
+## 3. 配方（recipe）
 
 优先级：`config/train.yaml` 基础值 → 配方文件覆盖 → CLI 覆盖。
 
@@ -77,7 +85,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
   `yolo26-pose-coco`（其 lr/轮数是针对官方 pose 起点调的）。从 `flash-yolo` 检测权重
   初始化时 pose 头随机，backbone/neck 逐位加载。
 
-## 3. 常用参数
+## 4. 常用参数
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
@@ -122,7 +130,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 
 其余超参都有同名 CLI 覆盖项，`--help` 列出全量；默认值即 `config/train.yaml`。
 
-## 4. 运行产物（`runs/train/train-<name>/`）
+## 5. 运行产物（`runs/train/train-<name>/`）
 
 | 产物 | 内容 |
 |---|---|
@@ -139,7 +147,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 
 权重 metadata 见 [../models/README.md](../models/README.md)。
 
-## 5. 复现性
+## 6. 复现性
 
 三层口径：
 
@@ -158,7 +166,7 @@ python scripts/train.py --data coco --recipe yolo26-seg-coco-ft \
 跨机器到不了逐位（kernel 不同），只承诺统计一致。闸门：
 `FLASH_YOLO_REPRO=1 pytest tests/test_train_repro.py`。
 
-## 6. 先把 I/O 调对
+## 7. 先把 I/O 调对
 
 `--batch` / `--workers` 是机器相关值，仓库刻意不写进默认配置：
 
@@ -170,7 +178,7 @@ python scripts/bench_io.py --data coco --loader-only
 - **加载器快 ≠ 训练快**：只有端到端数字能决策。
 - workers 不是越多越好（占满核会把主进程饿死）。
 
-## 7. 多卡训练（DDP）
+## 8. 多卡训练（DDP）
 
 只覆盖训练；eval / export / infer 仍是单进程。
 
@@ -186,7 +194,7 @@ python scripts/train.py --data coco --device 0,1 --batch 32 --workers 8 --name d
 - 换卡数/换设备续训支持（`resume.pt` 记录 world_size/device），但轨迹不再逐位一致。
 - 吞吐：数据管线常先饱和，多卡加速比通常低于线性；先用 `bench_io.py` 定单卡值。
 
-## 8. 常见坑
+## 9. 常见坑
 
 1. **`--amp` 从零训练会 NaN/爆炸**。默认 fp32；微调可试 `--amp`。
 2. **`--close-mosaic` 是“最后 N 轮”**，不是“从第 N 轮开始”；短跑会被 `min(N, epochs//5)` 缩小。
